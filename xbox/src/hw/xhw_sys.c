@@ -54,6 +54,9 @@ static void com1_write(const char* s, size_t n) {
     }
 }
 
+/* No locks: safe at any IRQL (crash reports inside a DPC). */
+void xhw_com1_raw(const char* s, size_t n) { com1_write(s, n); }
+
 #define TAIL_SIZE 4096
 static char s_tail[TAIL_SIZE];
 static volatile unsigned s_tail_pos;
@@ -74,22 +77,52 @@ void xhw_log_open_file(void) {
     s_bootlog = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 }
 
-static void log_write(const char* s, size_t n) {
+static void log_write_locked(const char* s, size_t n) {
     size_t i;
-    if (!s_log_cs_init) {
-        InitializeCriticalSection(&s_log_cs);
-        s_log_cs_init = 1;
-    }
-    EnterCriticalSection(&s_log_cs);
     for (i = 0; i < n; i++) s_tail[(s_tail_pos + i) % TAIL_SIZE] = s[i];
     s_tail_pos += (unsigned)n;
     com1_write(s, n);
     if (s_bootlog != INVALID_HANDLE_VALUE && s_bootlog_bytes < BOOTLOG_MAX) {
         DWORD w;
+        static uint64_t last_flush;
+        uint64_t now = xhw_time_ns();
         WriteFile(s_bootlog, s, (DWORD)n, &w, NULL);
-        xhw_flush_handle(s_bootlog);   /* a hard freeze must still leave the line on disk */
+        /* Every line while booting, so a hard freeze still leaves it on disk;
+         * after that at most once a second: a flush per line costs a disk
+         * write, and a chatty scene then runs at a few fps. crash.log and
+         * hang.log carry their own copy of the log tail. */
+        if (xhw_frame_count() < 600 || now - last_flush > 1000000000ull) {
+            xhw_flush_handle(s_bootlog);
+            last_flush = now;
+        }
         s_bootlog_bytes += (unsigned)n;
     }
+}
+
+/* One line, newline appended if missing, under one lock so lines from other
+ * threads never land inside it. */
+static void log_write(const char* s, size_t n, int newline) {
+    if (!s_log_cs_init) {
+        InitializeCriticalSection(&s_log_cs);
+        s_log_cs_init = 1;
+    }
+    EnterCriticalSection(&s_log_cs);
+    log_write_locked(s, n);
+    if (newline && (n == 0 || s[n - 1] != '\n')) log_write_locked("\n", 1);
+    LeaveCriticalSection(&s_log_cs);
+}
+
+/* COM1 only, one whole line: bulk output (screenshots) that would drown
+ * boot.log, whose every line is flushed to disk. */
+void xhw_log_com1_line(const char* line) {
+    size_t n = strlen(line);
+    if (!s_log_cs_init) {
+        InitializeCriticalSection(&s_log_cs);
+        s_log_cs_init = 1;
+    }
+    EnterCriticalSection(&s_log_cs);
+    com1_write(line, n);
+    if (n == 0 || line[n - 1] != '\n') com1_write("\n", 1);
     LeaveCriticalSection(&s_log_cs);
 }
 
@@ -103,9 +136,7 @@ size_t xhw_log_tail(char* out, size_t cap) {
 }
 
 void xhw_log(const char* line) {
-    size_t n = strlen(line);
-    log_write(line, n);
-    if (n == 0 || line[n - 1] != '\n') log_write("\n", 1);
+    log_write(line, strlen(line), 1);
 }
 
 void xhw_logf(const char* fmt, ...) {
@@ -117,8 +148,7 @@ void xhw_logf(const char* fmt, ...) {
     va_end(ap);
     if (n < 0) return;
     if (n >= (int)sizeof buf) n = (int)sizeof buf - 1;
-    log_write(buf, (size_t)n);
-    if (n == 0 || buf[n - 1] != '\n') log_write("\n", 1);
+    log_write(buf, (size_t)n, 1);
 }
 
 void xhw_vlog_raw(const char* fmt, va_list ap) {
@@ -126,7 +156,7 @@ void xhw_vlog_raw(const char* fmt, va_list ap) {
     int n = vsnprintf(buf, sizeof buf, fmt, ap);
     if (n < 0) return;
     if (n >= (int)sizeof buf) n = (int)sizeof buf - 1;
-    log_write(buf, (size_t)n);
+    log_write(buf, (size_t)n, 0);
 }
 
 /* ======================================================================

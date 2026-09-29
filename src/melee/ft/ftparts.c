@@ -750,7 +750,12 @@ int ftPartsRemap(size_t to_table_idx, size_t from_table_idx, size_t joint_idx)
     if (joint_idx < from_table->parts_num) {
         size_t part_idx = (size_t)(s8) DP(s8, from_table->joint_to_part)[joint_idx];
         if (part_idx != (size_t)(s8) FTPART_INVALID) {
-            return DP(s8, get_parts_tbl(to_table_idx)->part_to_joint)[part_idx];
+            /* PORT: the byte loads unsigned, as on GameCube: "no such joint"
+             * in the target skeleton must come back as FTPART_INVALID (0xFF),
+             * which every caller tests for. Sign-extended it was -1, passed
+             * the `!= 0xFFU` checks in ftAnim, and fp->parts[-1] handed a
+             * garbage jobj to lbAnim_8001E7E8 (cross-fighter throws). */
+            return DP(u8, get_parts_tbl(to_table_idx)->part_to_joint)[part_idx];
         }
     }
     return FTPART_INVALID;

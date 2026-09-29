@@ -11,6 +11,19 @@ Installs LLVM 21.1.8 (GitHub release), nxdk at the commit OpenCrossing-Xbox
 pins (built with that LLVM), and builds `disc_lower`. Host packages are
 listed at the top of the script.
 
+**macOS / Docker.** `tools/xbox/docker/Dockerfile` builds the same SDK
+image OpenCrossing-Xbox uses, plus the LLVM development packages that
+`disc_lower` needs. Its first part copies OpenCrossing's Dockerfile line
+for line, so the two images share layers.
+
+```sh
+docker build -t melee-x:sdk tools/xbox/docker   # once
+tools/xbox/docker/build.sh                      # disc_lower if stale, then xbox/build.sh
+```
+
+`XBOX_CFLAGS`, `XBOX_CMAKE_ARGS`, `XBOX_NINJA_ARGS`, `XBOX_FORCE` and
+`XBOX_KEEP_TEMPS` pass through to the container.
+
 ## Game code
 
 ```sh
@@ -28,7 +41,10 @@ Each unit goes through four steps (`compile_game.py`):
 3. `disc_lower` (LibTooling) rewrites every scalar access to an annotated
    struct into `__os_be_*` loads/stores (`tools/lower/disc_access.h`),
    bit-fields included, using the byte offsets of the game triple's layout.
-4. `clang -c` with the same triple.
+4. `clang -c` with the same triple. Warnings are off (`-Wno-everything`),
+   but implicit function declarations are errors, in the game and in the
+   SDK layer alike. An undeclared float function returns `int`, so its
+   result would be read from EAX instead of st(0).
 
 ### The game triple
 

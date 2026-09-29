@@ -23,6 +23,25 @@
 #define asinf melee_asinf
 #define expf melee_expf
 #define powf melee_powf
+/* <math.h> is already in (its guard keeps later includes out), so without
+ * these the renamed functions are implicitly declared: int return, double
+ * argument, and the float result in st(0) is never read. */
+float melee_atan2f(float, float);
+float melee_acosf(float);
+float melee_asinf(float);
+float melee_expf(float);
+float melee_powf(float, float);
+/* melee-pc links its vendored musl sinf/cosf/tanf/atanf (src/pc/libm) in
+ * place of the platform's, so every build rounds the simulation alike;
+ * nxdk's are bare x87 fsin/fptan/fpatan. */
+#define sinf pc_sinf
+#define cosf pc_cosf
+#define tanf pc_tanf
+#define atanf pc_atanf
+float pc_sinf(float);
+float pc_cosf(float);
+float pc_tanf(float);
+float pc_atanf(float);
 
 #ifndef M_PI
 #define M_E 2.7182818284590452354

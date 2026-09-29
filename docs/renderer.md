@@ -89,8 +89,10 @@ with y flipped.
 
 ### Culling
 
-The viewport y-flip is folded into the projection, so the front face is CCW
-(verified on hardware by OpenCrossing). `GX_CULL_BACK` maps to 0x405 (back),
+The viewport y-flip is folded into the projection, and GX's front faces then
+come out clockwise, so the front face is CW. (OpenCrossing's GL shim uses
+CCW; its projection differs. Checked in xemu against Dolphin on the memory
+card screen, whose panels use `GX_CULL_BACK`.) `GX_CULL_BACK` maps to 0x405 (back),
 `GX_CULL_FRONT` to 0x404 and `GX_CULL_ALL` to 0x408 (front and back).
 
 ## TEV -> register combiners (`nv2a_rc.c`)
@@ -102,8 +104,16 @@ can't be represented exactly, it is approximated and counted. The
 `[NV2A] frame N: D draws (A approximated)` log line reports that count
 every 600 frames (10 seconds).
 
+Constants are unsigned, and reading PREV back clamps at 0. So the signed,
+unclamped arithmetic of Nintendo's THP YUV -> RGB recipe (used for
+`sobjlib.c`'s movie sprite) is recognised as a whole. It is replaced by a
+three-stage program that does the same maths with signed registers and
+fixed constants (`RREF_FIXED`).
+
 Current limits:
 
+- signed TEV colours (`GXSetTevColorS10` below 0) and unclamped stages
+  work only in the movie recipe;
 - TEV swap tables: only the alpha broadcast (`AAAA`) is supported;
 - indirect texturing is ignored (some stage effects);
 - fog is off;
@@ -133,4 +143,9 @@ Current limits:
 - EFB copies (`GXCopyTex`) read the framebuffer back on the CPU and make a
   texture, which the cache registers under the copy's destination pointer.
   This is slow; GPU-side copies are on the roadmap.
-- THP movie frames are not decoded yet (they show black).
+- Movie frames (`xbox/src/sdk/thp.c`) are baseline JPEGs without byte
+  stuffing. They are decoded MCU by MCU, with stb_image's IDCT, straight
+  into the game's I8-tiled Y/Cb/Cr planes. The TEV then converts them to
+  RGB.
+- Known wrong in xemu: Mute City's road renders as bright static, and a
+  black wedge covers part of that stage (not yet diagnosed).

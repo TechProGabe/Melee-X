@@ -367,10 +367,13 @@ int xsdk_dvd_open(const char* path, char* why, size_t why_cap) {
         snprintf(why, why_cap, "This is not Melee NTSC-U (GALE01): the image says %.6s.", (const char*)hdr);
         return 0;
     }
-    if (hdr[7] != 2) {
+    /* The code is the 1.02 build; the revisions differ mostly in main.dol,
+     * which isn't run. 1.00/1.01 data is accepted but not the tested target. */
+    if (hdr[7] > 2) {
         snprintf(why, why_cap, "This is Melee revision 1.0%u; Melee-X needs 1.02.", hdr[7]);
         return 0;
     }
+    if (hdr[7] != 2) xhw_logf("[DVD] warning: revision 1.0%u, Melee-X targets 1.02", hdr[7]);
     memcpy(&s_disk_id, hdr, sizeof s_disk_id);
     xsdk_fill_disc_id(hdr);
     fst_off = be32(hdr + 0x424);

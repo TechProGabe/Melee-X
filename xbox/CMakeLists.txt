@@ -54,7 +54,7 @@ set(SDK_FLAGS
     -mno-stack-arg-probe -fno-asynchronous-unwind-tables
     -U_WIN32 -U__MINGW32__ -U__MINGW64__ -UWIN32 -U__WIN32 -U__WIN32__
     -DTARGET_PC=1 -DMELEE_PC=1 -DTARGET_XBOX=1 -DNXDK -D__STDC__=1
-    -Wno-everything
+    -Wno-everything -Werror=implicit-function-declaration -Werror=implicit-int
     "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/include/game/xbox_game_prelude.h"
     "SHELL:-include ${ROOT}/src/pc/compat.h")
 set(SDK_INCLUDES
@@ -82,7 +82,8 @@ target_include_directories(mx_hw PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/hw
     ${NXDK_DIR}/lib/sdl/SDL2/include
     ${NXDK_DIR}/lib/usb/libusbohci/inc
-    ${NXDK_DIR}/lib/usb/libusbohci_xbox)
+    ${NXDK_DIR}/lib/usb/libusbohci_xbox
+    ${NXDK_DIR}/lib/zlib/zlib)
 target_compile_definitions(mx_hw PRIVATE XBOX "USBH_USE_EXTERNAL_CONFIG=\"usbh_config_xbox.h\"")
 target_compile_options(mx_hw PRIVATE -O2 -march=pentium3 -Wall -Wno-unused-function)
 
@@ -93,6 +94,7 @@ set_property(TARGET melee_x APPEND PROPERTY LINK_DEPENDS ${GAME_OUT}/objects.sta
 target_link_libraries(melee_x
     mx_pbkit
     ${NXDK_DIR}/lib/libSDL2.lib
+    ${NXDK_DIR}/lib/libzlib.lib
     ${NXDK_DIR}/lib/libnxdk_automount_d.lib)
 # The game objects come from outside CMake; the response file lists them.
 target_link_options(melee_x PRIVATE

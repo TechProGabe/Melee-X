@@ -36,6 +36,7 @@ void gx_tex_bind(uint32_t map, const GXTexObj* obj);
 void gx_tex_frame_end(void);
 void gx_tex_invalidate_all(void);
 void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h, uint32_t fmt);
+uint32_t gx_tex_efb_texture(const void* dest);
 void gx_tex_init(void);
 
 /* Big-endian readers for disc data (display lists, vertex arrays, textures). */

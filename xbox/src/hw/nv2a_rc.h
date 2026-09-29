@@ -32,6 +32,7 @@ enum {
     RREF_TEVREG_A,
     RREF_KONST_C,      /* param: kcsel */
     RREF_KONST_A,      /* param: kasel */
+    RREF_FIXED,        /* param: index into nv2a.c's k_rc_fixed (rgb and a) */
 };
 #define RREF(t, p) ((uint16_t)(((t) << 8) | ((p) & 0xFF)))
 

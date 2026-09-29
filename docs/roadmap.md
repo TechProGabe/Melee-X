@@ -21,9 +21,11 @@
         (NPOT resampled), TLUTs, EFB copies (CPU)
   - [x] 720p 16:9 content rect for melee-pc's hor+ widescreen
 - [x] default.xbe links
-- [ ] boots to the title screen in xemu
+- [x] boots to the title screen in xemu ("TechProGabe Presents..." card first)
+- [x] attract-demo VS matches run in xemu (slowly: about 5 fps there)
 - [x] memory fit, first pass: native texture formats; MEM1 and ARAM committed on demand
 - [ ] memory fit measured on hardware (boot.log `[MEM]`); disc-backed ARAM if needed
 - [ ] fog, indirect texturing, TEV swap tables beyond alpha broadcast, GPU EFB copies
 - [ ] VS mode with 4 players on hardware at 60 fps
-- [ ] THP movies, release packaging
+- [x] movie frames decoded (`thp.c`)
+- [ ] release packaging

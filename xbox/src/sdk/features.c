@@ -18,14 +18,6 @@ int pc_get_hud_mode(void) { return 1; }
 /* gobj.c records which GX link is drawing (a debugging aid on aurora). */
 unsigned int aurora_draw_tag;
 
-/* THP movies (the intro, character and classic-mode clips). The JPEG
- * decoder is not ported yet: frames come out black (Y 16, U/V 128), with
- * the audio intact. The planes are GX I8 tiles, Y at full size, U/V at half. */
+/* THP movies (the intro, character and classic-mode clips): the frames
+ * are decoded by thp.c. */
 BOOL THPInit(void) { return TRUE; }
-
-void pc_thp_decode_frame(const void* jpeg, void* tile_y, void* tile_u, void* tile_v) {
-    (void)jpeg;
-    (void)tile_y;
-    (void)tile_u;
-    (void)tile_v;
-}

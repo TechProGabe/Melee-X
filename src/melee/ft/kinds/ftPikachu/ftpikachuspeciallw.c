@@ -140,6 +140,11 @@ void ftPk_SpecialLw_Enter(HSD_GObj* gobj)
     fp->throw_flags = 0;
     fp->mv.pk.specialhi.x4 = 1;
     fp->mv.pk.specialhi.x0 = 0;
+    /* PORT: on GameCube the line above also cleared the thunder gobj
+     * (speciallw.x0 was gp+00). It lives at +08 here (ftPikachu/types.h),
+     * so clear it by name, or SpawnThunder sees the previous state's +08
+     * word as a live thunder and 8012765C dereferences it. */
+    fp->mv.pk.speciallw.x0 = NULL;
     Fighter_ChangeMotionState(gobj, 359, Ft_MF_None, 0.0f, 1.0f, 0.0f, 0);
     ftAnim_8006EBA4(gobj);
 }
@@ -151,6 +156,11 @@ void ftPk_SpecialAirLw_Enter(HSD_GObj* gobj)
     fp->throw_flags = 0;
     fp->mv.pk.specialhi.x4 = 1;
     fp->mv.pk.specialhi.x0 = 0;
+    /* PORT: on GameCube the line above also cleared the thunder gobj
+     * (speciallw.x0 was gp+00). It lives at +08 here (ftPikachu/types.h),
+     * so clear it by name, or SpawnThunder sees the previous state's +08
+     * word as a live thunder and 8012765C dereferences it. */
+    fp->mv.pk.speciallw.x0 = NULL;
     Fighter_ChangeMotionState(gobj, 363, Ft_MF_None, 0.0f, 1.0f, 0.0f, 0);
     ftAnim_8006EBA4(gobj);
 }

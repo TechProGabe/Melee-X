@@ -78,7 +78,11 @@ int xhw_pad_get(int port, xhw_pad* out) {
     };
     size_t i;
     memset(out, 0, sizeof *out);
-    if (port < 0 || port >= PORTS || !(gc = s_pad[port])) return 0;
+    if (port < 0 || port >= PORTS) return 0;
+    if (!(gc = s_pad[port])) {
+        xhw_autopad_apply(port, out);
+        return out->connected;
+    }
     out->connected = 1;
     for (i = 0; i < sizeof k_map / sizeof k_map[0]; i++)
         if (SDL_GameControllerGetButton(gc, k_map[i].b)) out->buttons |= k_map[i].bit;
@@ -88,6 +92,7 @@ int xhw_pad_get(int port, xhw_pad* out) {
     out->ry = (int16_t)~SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTY);
     out->lt = (uint8_t)(SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT) >> 7);
     out->rt = (uint8_t)(SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) >> 7);
+    xhw_autopad_apply(port, out);
     return 1;
 }
 

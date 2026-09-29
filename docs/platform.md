@@ -30,12 +30,18 @@ code. It:
 `xhw_main.c` runs these steps:
 
 1. Mount E:, create `E:\UDATA\4d580001\`, and open `boot.log`.
-2. Find the first `.iso`, `.gcm` or `.ciso` in the XBE's folder (D:\).
-3. `xsdk_early`: load settings.
-4. `xhw_video_boot`: pick the video mode.
+2. `xhw_splash_show` (`xhw_splash.c`, from OpenCrossing-Xbox): the
+   "TechProGabe Presents..." card, drawn by the CPU into a 640x480
+   framebuffer. It fades in and holds 2 s (any button skips). A load bar
+   under it advances through the next steps. `-DXHW_NO_SPLASH` turns it
+   off, `-DXHW_SPLASH_MS=<n>` sets the hold, and `-DXHW_SPLASH_DUMP`
+   screenshots it.
+3. Find the first `.iso`, `.gcm` or `.ciso` in the XBE's folder (D:\).
+4. `xsdk_early`: load settings.
 5. `xsdk_boot` (`boot.c`): OSInit, open the disc image and check that it
-   is GALE01 revision 2, then region, fonts and widescreen mode, then
-   `melee_main`.
+   is GALE01 (revision 2 is the target; 0 and 1 load with a warning), then
+   region and fonts. Then `xhw_video_boot` picks the video mode, which ends
+   the card, and then widescreen mode and `melee_main`.
 
 The game thread runs inside `xhw_crash_guard`, and so does every thread
 started with `xhw_thread_start`.

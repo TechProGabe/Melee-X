@@ -82,7 +82,9 @@ void grDisplay_801C5DB0(HSD_GObj* gobj, intptr_t code)
     gp = GET_GROUND(gobj);
     if (gp->x11_flags.b012 == Camera_8003108C()) {
         if (gp->x18 != NULL) {
-            if (((intptr_t) gp->x18 & ~0x7FFFFFFF) == 0) {
+            /* PORT: "not a main-RAM pointer" was `< 0x80000000` on the
+             * GameCube; the Xbox maps MEM1 below that. */
+            if (PC_IS_ARAM_ADDR(gp->x18)) {
                 OSReport("oioi... %08x\n", gp->x18);
             }
             if (HSD_GObj_804D7818->hsd_obj != gp->x18->hsd_obj) {

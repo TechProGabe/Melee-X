@@ -1758,7 +1758,8 @@ void ftData_80085CD8(Fighter* fp, Fighter* arg1, int msid)
                     }
                 } else {
                     temp_r4_2 = temp_r3->x14;
-                    if (temp_r4_2 < 0x80000000UL) {
+                    /* PORT: ARAM offset test, see lbFile_800164A4 */
+                    if (PC_IS_ARAM_ADDR(temp_r4_2)) {
                         lbArq_80014BD0(temp_r4_2, fp->x59C,
                                        OSRoundUp32B(temp_r3->x8), 0, 0);
                     } else {
@@ -1809,7 +1810,8 @@ FigaTree* ftData_80085E50(Fighter* arg0, int msid)
                     }
                 } else {
                     temp_r4_2 = temp_r3->x14;
-                    if (temp_r4_2 < 0x80000000UL) {
+                    /* PORT: ARAM offset test, see lbFile_800164A4 */
+                    if (PC_IS_ARAM_ADDR(temp_r4_2)) {
                         lbArq_80014BD0(temp_r4_2, arg0->x5A0,
                                        OSRoundUp32B(temp_r3->x8), 0, 0);
                     } else {

@@ -3,8 +3,11 @@
  * ARAM is a host buffer at a fixed VA; ARAM "addresses" are offsets into it,
  * which is what PC_IS_ARAM_ADDR (below 16 MB) relies on. It is committed on
  * demand (xhw_reserve_lazy): only the parts the game fills cost Xbox RAM. ARQ transfers are
- * plain copies done at post time; their callbacks are queued and delivered
- * on the game thread with the alarms, where the ARAM interrupt ran. */
+ * plain copies done at post time; their callbacks are queued and delivered by
+ * a worker thread holding the interrupt lock, the way the ARAM interrupt ran:
+ * as soon as the poster re-enables interrupts, whatever the game thread is
+ * doing. Loaders spin on flags those callbacks set (HSD_SynthSFXWaitForLoad-
+ * Completion), so waiting for the game thread's next frame would deadlock. */
 #include <dolphin/ar.h>
 #include <dolphin/os.h>
 #include <string.h>
@@ -104,8 +107,23 @@ void __ARClearInterrupt(void) {}
 static ARQRequest* s_done[QMAX];
 static int s_done_head, s_done_n;
 static int s_arq_init;
+static xhw_event* s_arq_event;
 
-void ARQInit(void) { s_arq_init = 1; }
+static void arq_worker(void* arg) {
+    (void)arg;
+    for (;;) {
+        xhw_event_wait(s_arq_event, 100);
+        xsdk_arq_deliver();
+    }
+}
+
+void ARQInit(void) {
+    if (!s_arq_event) {
+        s_arq_event = xhw_event_create();
+        xhw_thread_start(arq_worker, NULL, 1, 64 * 1024);
+    }
+    s_arq_init = 1;
+}
 void ARQReset(void) {}
 BOOL ARQCheckInit(void) { return s_arq_init; }
 void ARQSetChunkSize(u32 size) { (void)size; }
@@ -123,6 +141,9 @@ void ARQPostRequest(ARQRequest* r, uintptr_t owner, u32 type, u32 priority, uint
     r->dest = dest;
     r->length = length;
     r->callback = callback;
+    if ((type == 0 ? dest : source) + length > ARAM_SIZE)
+        xhw_logf("[AR] ARQ type %u %08x -> %08x + %u from %p", (unsigned)type, (unsigned)source, (unsigned)dest,
+                 (unsigned)length, __builtin_return_address(0));
     if (type == 0) copy(0, source, dest, length);
     else copy(1, dest, source, length);
     if (!callback) return;
@@ -130,6 +151,7 @@ void ARQPostRequest(ARQRequest* r, uintptr_t owner, u32 type, u32 priority, uint
     if (s_done_n == QMAX) OSPanic(__FILE__, __LINE__, "ARQ completion queue overflow");
     s_done[(s_done_head + s_done_n++) % QMAX] = r;
     OSRestoreInterrupts(intr);
+    if (s_arq_event) xhw_event_signal(s_arq_event);
 }
 
 void ARQRemoveRequest(ARQRequest* r) {
@@ -152,13 +174,15 @@ void ARQRemoveOwnerRequest(uintptr_t owner) {
 
 void ARQFlushQueue(void) { xsdk_arq_deliver(); }
 
+/* Callbacks run with interrupts disabled, as in the interrupt handler, so
+ * the worker and the game thread's frame-boundary delivery never overlap. */
 void xsdk_arq_deliver(void) {
+    BOOL intr = OSDisableInterrupts();
     while (s_done_n > 0) {
-        BOOL intr = OSDisableInterrupts();
         ARQRequest* r = s_done[s_done_head];
         s_done_head = (s_done_head + 1) % QMAX;
         s_done_n--;
-        OSRestoreInterrupts(intr);
         if (r && r->callback) r->callback(r);
     }
+    OSRestoreInterrupts(intr);
 }

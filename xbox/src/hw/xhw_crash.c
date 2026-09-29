@@ -141,8 +141,11 @@ __attribute__((cdecl)) static int on_exception(EXCEPTION_RECORD* er, void* frame
     }
     build_report(er, cx);
     show_screen();
-    if (KeGetCurrentIrql() >= DISPATCH_LEVEL)
+    if (KeGetCurrentIrql() >= DISPATCH_LEVEL) {
+        xhw_com1_raw("[CRASH] at raised IRQL\n", 24);
+        xhw_com1_raw(s_rep, (size_t)s_len);
         for (;;) {}   /* no waits or file I/O at raised IRQL */
+    }
     xhw_log(s_rep);
     write_crash_log();
     for (;;) Sleep(1000);

@@ -70,6 +70,7 @@ GXFifoObj* GXInit(void* base, u32 size) {
     g_xgx.scissor[2] = XGX_EFB_W;
     g_xgx.scissor[3] = XGX_EFB_H;
     g_xgx.dirty = XGX_DIRTY_ALL;
+    g_xgx.posmtx_mask = (1u << XGX_NUM_POSMTX) - 1;
     g_gx.clear_z = 0xFFFFFF;
     gx_tex_init();
     gx_vtx_reset();
@@ -103,9 +104,27 @@ void xsdk_gx_draw_done(void) {
 }
 
 /* ---- transform ---- */
+/* The hardware keeps six terms and rebuilds the rest from the type, so a
+ * matrix passed with the "wrong" type (sislib's screen text: MTXOrtho with
+ * GX_PERSPECTIVE) must be read the way the GameCube reads it. */
 void GXSetProjection(const void* mtx, GXProjectionType type) {
+    const float(*m)[4] = (const float(*)[4])mtx;
+    float(*p)[4] = g_xgx.proj;
     FLUSH();
-    memcpy(g_xgx.proj, mtx, sizeof g_xgx.proj);
+    memset(g_xgx.proj, 0, sizeof g_xgx.proj);
+    p[0][0] = m[0][0];
+    p[1][1] = m[1][1];
+    p[2][2] = m[2][2];
+    p[2][3] = m[2][3];
+    if (type == GX_ORTHOGRAPHIC) {
+        p[0][3] = m[0][3];
+        p[1][3] = m[1][3];
+        p[3][3] = 1.0f;
+    } else {
+        p[0][2] = m[0][2];
+        p[1][2] = m[1][2];
+        p[3][2] = -1.0f;
+    }
     g_xgx.proj_ortho = type == GX_ORTHOGRAPHIC;
     DIRTY(XGX_DIRTY_PROJ);
 }
@@ -163,6 +182,7 @@ void GXLoadPosMtxImm(const void* mtx, u32 id) {
     if (k >= XGX_NUM_POSMTX) return;
     FLUSH();
     memcpy(g_xgx.posmtx[k], mtx, sizeof g_xgx.posmtx[k]);
+    g_xgx.posmtx_mask |= 1u << k;
     DIRTY(XGX_DIRTY_POSMTX);
 }
 
@@ -176,6 +196,7 @@ void GXLoadNrmMtxImm(const void* mtx, u32 id) {
         g_xgx.nrmmtx[k][r][1] = m[r][1];
         g_xgx.nrmmtx[k][r][2] = m[r][2];
     }
+    g_xgx.posmtx_mask |= 1u << k;
     DIRTY(XGX_DIRTY_POSMTX);
 }
 
@@ -184,6 +205,7 @@ void GXLoadNrmMtxImm3x3(const void* mtx, u32 id) {
     if (k >= XGX_NUM_POSMTX) return;
     FLUSH();
     memcpy(g_xgx.nrmmtx[k], mtx, sizeof g_xgx.nrmmtx[k]);
+    g_xgx.posmtx_mask |= 1u << k;
     DIRTY(XGX_DIRTY_POSMTX);
 }
 
@@ -198,6 +220,7 @@ void GXLoadTexMtxImm(const void* mtx, u32 id, GXTexMtxType type) {
         dst = g_xgx.texmtx[(id - GX_TEXMTX0) / 3];
     } else if (id < GX_TEXMTX0) {
         dst = g_xgx.posmtx[id / 3];   /* texgens may read position matrices */
+        g_xgx.posmtx_mask |= 1u << (id / 3);
     } else {
         return;
     }

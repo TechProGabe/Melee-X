@@ -9,11 +9,14 @@ draws with its NV2A GPU.
 - Needs your own Melee disc image: NTSC-U 1.02 (`GALE01`, revision 2). No
   game data is in this repository or in any build.
 
-> **Status: early bring-up.** `default.xbe` builds and links: all 1008 game
-> units, the Dolphin SDK on the Xbox, and a first GX → NV2A renderer. It has
-> not been run yet (no console or emulator here). See
-> [docs/roadmap.md](docs/roadmap.md), and [docs/testing.md](docs/testing.md)
-> for how to try it and what logs to send.
+> **Status: runs in xemu, untested on hardware.** In xemu it boots to the
+> "TechProGabe Presents..." card and then the intro movie. The title screen
+> and the attract-demo VS matches follow; they are slow there (about 5 fps,
+> because xemu emulates the CPU). Known problems: an occasional hang when
+> the texture pool fills, and Mute City's road renders wrong. See
+> [docs/roadmap.md](docs/roadmap.md), and
+> [docs/testing.md](docs/testing.md) for how to try it and what logs to
+> send.
 
 ## How it is put together
 
@@ -40,6 +43,15 @@ xbox/build.sh                     # -> build-xbox/xbe/default.xbe
 tools/lower/test_lower.py         # lowering oracle tests
 tools/xbox/test_vp_encoder.py     # vertex-program encoder vs nv2a-vsh
 tools/xbox/test_tex_convert.py    # native texture formats vs the GX decoder
+```
+
+On macOS, build in Docker instead and boot the result in xemu
+([docs/testing.md](docs/testing.md)):
+
+```sh
+docker build -t melee-x:sdk tools/xbox/docker   # once
+tools/xbox/docker/build.sh
+MX_ISO=/path/to/your/melee.iso tools/xbox/xemu_run.sh 120
 ```
 
 To play: copy `default.xbe` into a folder on the Xbox HDD (e.g.

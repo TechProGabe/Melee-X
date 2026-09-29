@@ -63,6 +63,9 @@ PREPROCESS_FLAGS = [
 # so single-precision math rounds to single like Gekko instead of x87's 80 bits.
 COMPILE_FLAGS = [
     *TRIPLE, '-ffreestanding', '-O2', '-fsigned-char', '-Wno-everything', '-ferror-limit=5',
+    # An implicitly declared function returns int: a float result would be
+    # read from EAX instead of st(0). Never silently.
+    '-Werror=implicit-function-declaration', '-Werror=implicit-int',
     '-msse', '-mfpmath=sse', '-mno-stack-arg-probe',
     '-ffp-contract=off', '-fno-fast-math',
     '-fno-builtin-sinf', '-fno-builtin-cosf', '-fno-builtin-tanf', '-fno-builtin-atanf',

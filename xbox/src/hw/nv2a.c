@@ -25,6 +25,7 @@
 #include <xboxkrnl/xboxkrnl.h>
 #include <math.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "nv2a_rc.h"
@@ -195,9 +196,40 @@ static void pb_close(void) {
     s_pb_open = 0;
 }
 
+/* per-interval counters for the [NV2A] frame line */
+static uint32_t s_st_waits, s_st_efb, s_st_tex_kb, s_st_verts;
+
+/* GPU faults, recorded by the patched pbkit (ocx_pb_gpu_fault below) */
+static volatile uint32_t s_gf_count, s_gf_storms, s_gf_last[5];
+
+/* A GPU that stops fetching (bad method or state) otherwise hangs the game
+ * thread here with nothing in the log: after 2 s, report once where the
+ * FIFO stopped. The push buffer is contiguous memory, mapped at
+ * 0x80000000 | physical, and DMA_GET is its physical address. */
+static void report_gpu_stall(void) {
+    uint32_t get = *(volatile uint32_t*)(0xFD000000u + 0x3244), put = *(volatile uint32_t*)(0xFD000000u + 0x3240);
+    const uint32_t* w = (const uint32_t*)(0x80000000u | (get & 0x03FFFFFFu));
+    xhw_logf("[NV2A] GPU stalled: get %08x put %08x dma_state %08x pgraph %08x, faults %u (last kind %u %08x %08x)",
+             get, put, *(volatile uint32_t*)(0xFD000000u + 0x3228), *(volatile uint32_t*)(0xFD000000u + 0x400700),
+             (unsigned)s_gf_count, (unsigned)s_gf_last[0], (unsigned)s_gf_last[1], (unsigned)s_gf_last[2]);
+    xhw_logf("[NV2A]  at get-32: %08x %08x %08x %08x %08x %08x %08x %08x", w[-8], w[-7], w[-6], w[-5], w[-4], w[-3],
+             w[-2], w[-1]);
+    xhw_logf("[NV2A]  at get:    %08x %08x %08x %08x %08x %08x %08x %08x", w[0], w[1], w[2], w[3], w[4], w[5], w[6],
+             w[7]);
+}
+
 static void wait_idle(void) {
+    uint64_t t0 = 0;
+    int reported = 0;
+    s_st_waits++;
     pb_close();
-    while (pb_busy()) {}
+    while (pb_busy()) {
+        if (!t0) t0 = xhw_time_ns();
+        else if (!reported && xhw_time_ns() - t0 > 2000000000ull) {
+            report_gpu_stall();
+            reported = 1;
+        }
+    }
 }
 
 static uint32_t pb_used(void) {
@@ -207,7 +239,6 @@ static uint32_t pb_used(void) {
 
 /* GPU faults, recorded by the patched pbkit (tools/xbox/patch_pbkit.py) */
 volatile int ocx_pb_irq_off;
-static volatile uint32_t s_gf_count, s_gf_storms, s_gf_last[5];
 static uint32_t s_gf_logged;
 
 void ocx_pb_gpu_fault(unsigned kind, unsigned a, unsigned b, unsigned c, unsigned d) {
@@ -396,6 +427,7 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     }
     id = alloc_handle();
     if (!id) return 0;
+    s_st_tex_kb += bytes / 1024;
     mem = (uint8_t*)pool_alloc(bytes);
     if (!mem) {
         wait_idle();
@@ -440,6 +472,8 @@ void xgx_tex_destroy(uint32_t tex) {
 static int s_frame_open;
 static uint32_t s_frame;
 static uint32_t s_draws, s_approx;
+
+unsigned xgx_present_count(void) { return s_frame; }
 static void frame_open(void);
 
 static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int depth, uint32_t z24) {
@@ -500,10 +534,23 @@ static void pb_budget(void) {
     s_ring_pos = 0;
 }
 
+#ifndef XGX_STATS_EVERY
+#define XGX_STATS_EVERY 600   /* [NV2A] frame line every N presents */
+#endif
+#ifndef XHW_FBDUMP_EVERY
+#define XHW_FBDUMP_EVERY 0   /* [FBDUMP] screenshot every N presents (xhw_fbdump.c) */
+#endif
+static volatile int s_fbdump_once;
+void xgx_fbdump_next(void) { s_fbdump_once = 1; }
+
 void xgx_present(int black) {
     frame_open();
     if (black) clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 0, 0);
     wait_idle();
+    if (s_fbdump_once || (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0)) {
+        s_fbdump_once = 0;
+        xhw_fbdump(pb_back_buffer(), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());
+    }
     release_deferred();
     if (s_gf_count != s_gf_logged) {
         xhw_logf("[NV2A] GPU fault x%u: kind %u %08x %08x %08x %08x%s", (unsigned)s_gf_count, (unsigned)s_gf_last[0],
@@ -519,9 +566,14 @@ void xgx_present(int black) {
         while (guard-- && (PCRTC_START_REG & 0x03FFFFFF) == ((uint32_t)pb_back_buffer() & 0x03FFFFFF)) pb_wait_for_vbl();
     }
     s_frame++;
-    if (s_frame % 600 == 0)
-        xhw_logf("[NV2A] frame %u: %u draws (%u approximated), tex pool %u KB free", s_frame, s_draws, s_approx,
-                 xgx_tex_pool_free_kb());
+    if (s_frame % XGX_STATS_EVERY == 0) {
+        /* draws/approximated: the last frame; the rest summed over the interval */
+        xhw_logf("[NV2A] frame %u: %u draws (%u approximated), tex pool %u KB free | per %u: %u idle waits, "
+                 "%u EFB reads, %u KB textures, %u verts",
+                 s_frame, s_draws, s_approx, xgx_tex_pool_free_kb(), XGX_STATS_EVERY, s_st_waits, s_st_efb,
+                 s_st_tex_kb, s_st_verts);
+        s_st_waits = s_st_efb = s_st_tex_kb = s_st_verts = 0;
+    }
     s_draws = s_approx = 0;
     s_frame_open = 0;
     frame_open();
@@ -600,8 +652,15 @@ static void vp_select(const VpKey* k) {
 static float s_vc[VPC_COUNT][4];
 static float s_vc_shadow[VPC_COUNT][4];
 static int s_vc_valid;
+/* rows written since the last emit_vc: only these are compared and sent */
+static uint32_t s_vc_dirty[(VPC_COUNT + 31) / 32];
+
+static void vc_mark(int r, int n) {
+    for (; n > 0; n--, r++) s_vc_dirty[r >> 5] |= 1u << (r & 31);
+}
 
 static void set_row(int r, float x, float y, float z, float w) {
+    vc_mark(r, 1);
     s_vc[r][0] = x;
     s_vc[r][1] = y;
     s_vc[r][2] = z;
@@ -616,6 +675,7 @@ static void build_proj(const XgxState* st) {
     float sx = vw * 0.5f, ox = vx + vw * 0.5f, sy = -vh * 0.5f, oy = vy + vh * 0.5f;
     int c;
     /* GX clip z/w runs -1 (near) .. 0 (far); depth = z/w * (far - near) + far */
+    vc_mark(VPC_PROJ, 4);
     for (c = 0; c < 4; c++) {
         s_vc[VPC_PROJ][c] = sx * p[0][c] + ox * p[3][c];
         s_vc[VPC_PROJ + 1][c] = sy * p[1][c] + oy * p[3][c];
@@ -624,17 +684,23 @@ static void build_proj(const XgxState* st) {
     }
 }
 
-static void build_mtx(const XgxState* st) {
+/* only the matrices the front end loaded since the last draw (posmtx_mask) */
+static void build_mtx(XgxState* st) {
     int k, r;
-    for (k = 0; k < XGX_NUM_POSMTX; k++)
+    for (k = 0; k < XGX_NUM_POSMTX; k++) {
+        if (!(st->posmtx_mask & (1u << k))) continue;
+        vc_mark(VPC_POS + k * 3, 3);
         for (r = 0; r < 3; r++) {
             memcpy(s_vc[VPC_POS + k * 3 + r], st->posmtx[k][r], 16);
             set_row(VPC_NRM + k * 3 + r, st->nrmmtx[k][r][0], st->nrmmtx[k][r][1], st->nrmmtx[k][r][2], 0);
         }
+    }
+    st->posmtx_mask = 0;
 }
 
 static void build_chans(const XgxState* st) {
     int c, k;
+    vc_mark(VPC_CHAN, 4);
     for (c = 0; c < 2; c++)
         for (k = 0; k < 4; k++) {
             s_vc[VPC_CHAN + c * 2][k] = st->mat[c][k] / 255.0f;
@@ -688,12 +754,14 @@ static void build_texgen(const XgxState* st, int u, const XgxTexGen* tg) {
     }
     if (tg->normalize) {
         memcpy(out, m, 48);
+        vc_mark(VPC_POSTMTX + u * 3, 3);
         for (r = 0; r < 3; r++) memcpy(s_vc[VPC_POSTMTX + u * 3 + r], pt[r], 16);
     } else {
         for (r = 0; r < 3; r++)
             for (c = 0; c < 4; c++)
                 out[r][c] = pt[r][0] * m[0][c] + pt[r][1] * m[1][c] + pt[r][2] * m[2][c] + (c == 3 ? pt[r][3] : 0);
     }
+    vc_mark(VPC_TEXGEN + u * 3, 3);
     for (r = 0; r < 3; r++) memcpy(s_vc[VPC_TEXGEN + u * 3 + r], out[r], 16);
 }
 
@@ -709,25 +777,35 @@ static void push_vc_rows(int first, int n) {
     }
 }
 
+/* Send the rows that changed. Only rows marked dirty are compared; runs a
+ * few unchanged rows apart are merged to save method headers. */
 static void emit_vc(void) {
-    int r = 0;
+    int w, run_start = -1, run_end = -1;
     if (!s_vc_valid) {
         push_vc_rows(0, VPC_COUNT);
-    } else {
-        while (r < VPC_COUNT) {
-            int end, gap;
-            if (memcmp(s_vc_shadow[r], s_vc[r], 16) == 0) { r++; continue; }
-            end = r + 1;
-            for (gap = 0; end + gap < VPC_COUNT && gap < 3;) {
-                if (memcmp(s_vc_shadow[end + gap], s_vc[end + gap], 16) != 0) { end += gap + 1; gap = 0; }
-                else gap++;
+        memcpy(s_vc_shadow, s_vc, sizeof s_vc);
+        memset(s_vc_dirty, 0, sizeof s_vc_dirty);
+        s_vc_valid = 1;
+        return;
+    }
+    for (w = 0; w < (int)(sizeof s_vc_dirty / sizeof s_vc_dirty[0]); w++) {
+        uint32_t bits = s_vc_dirty[w];
+        s_vc_dirty[w] = 0;
+        while (bits) {
+            int r = w * 32 + __builtin_ctz(bits);
+            bits &= bits - 1;
+            if (r >= VPC_COUNT || memcmp(s_vc_shadow[r], s_vc[r], 16) == 0) continue;
+            memcpy(s_vc_shadow[r], s_vc[r], 16);
+            if (run_start >= 0 && r - run_end <= 3) {
+                run_end = r + 1;
+            } else {
+                if (run_start >= 0) push_vc_rows(run_start, run_end - run_start);
+                run_start = r;
+                run_end = r + 1;
             }
-            push_vc_rows(r, end - r);
-            r = end;
         }
     }
-    memcpy(s_vc_shadow, s_vc, sizeof s_vc);
-    s_vc_valid = 1;
+    if (run_start >= 0) push_vc_rows(run_start, run_end - run_start);
 }
 
 /* ======================================================================
@@ -768,9 +846,21 @@ static const RcProg* rc_lookup(const RcCfg* cfg) {
 
 static uint8_t clamp_s10(int v) { return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v); }
 
+/* RREF_FIXED constants: rgb, a (nv2a_rc.c's movie YUV program) */
+static const uint8_t k_rc_fixed[4][4] = {
+    { 90, 0, 0, 44 },     /* 0.351, 0, 0 | 0.1725 */
+    { 0, 0, 113, 91 },    /* 0, 0, 0.443 | 0.357 */
+    { 255, 0, 255, 0 },
+    { 0, 255, 0, 0 },
+};
+
 static void ref_val(const XgxState* st, uint16_t ref, uint8_t rgb[3], uint8_t* a) {
     int t = ref >> 8, p = ref & 0xFF, k;
     switch (t) {
+        case RREF_FIXED:
+            for (k = 0; k < 3; k++) rgb[k] = k_rc_fixed[p & 3][k];
+            *a = k_rc_fixed[p & 3][3];
+            break;
         case RREF_TEVREG_RGB:
             for (k = 0; k < 3; k++) rgb[k] = clamp_s10(st->tevreg[p & 3][k]);
             break;
@@ -919,7 +1009,11 @@ static uint32_t blend_factor(uint32_t gx, int is_src) {
 
 static void emit_fixed(const XgxState* st) {
     int x0, y0, x1, y1;
+#ifdef XGX_DEBUG_NOZ
+    SETF(0, NV097_SET_DEPTH_TEST_ENABLE, 0);
+#else
     SETF(0, NV097_SET_DEPTH_TEST_ENABLE, st->z_enable ? 1 : 0);
+#endif
     SETF(1, NV097_SET_DEPTH_FUNC, 0x200 + (st->z_func & 7));
     SETF(2, NV097_SET_DEPTH_MASK, st->z_update ? 1 : 0);
     switch (st->blend_type) {
@@ -947,7 +1041,11 @@ static void emit_fixed(const XgxState* st) {
             SETF(7, NV097_SET_LOGIC_OP_ENABLE, 0);
             break;
     }
+#ifdef XGX_DEBUG_NOCULL
+    SETF(9, NV097_SET_CULL_FACE_ENABLE, 0);
+#else
     SETF(9, NV097_SET_CULL_FACE_ENABLE, st->cull != GX_CULL_NONE);
+#endif
     if (st->cull != GX_CULL_NONE)
         SETF(10, NV097_SET_CULL_FACE, st->cull == GX_CULL_FRONT ? 0x404 : st->cull == GX_CULL_BACK ? 0x405 : 0x408);
     SETF(11, NV097_SET_COLOR_MASK,
@@ -1042,7 +1140,10 @@ static void emit_vertex_arrays(const XgxLayout* l, const XgxState* st) {
     attr(VPI_COL0, l->off_col[0], NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_OGL, 4, s);
     attr(VPI_COL1, l->off_col[1], NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_OGL, 4, s);
     for (n = 0; n < 8; n++) attr(vpi_tex(n), l->off_tc[n], NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 2, s);
-    /* inline values for the absent ones */
+    /* inline values for the absent ones. An array draw leaves its last vertex
+     * in the attribute's inline value (NV2A, and xemu models it), so after a
+     * skinned draw the cached default matrix index is gone. */
+    if (l->off_mtx >= 0) s_default_mtx = 0xFFFFFFFFu;
     if (l->off_mtx < 0 && s_default_mtx != st->cur_posmtx) {
         putf(NV097_SET_VERTEX_DATA4F_M + VPI_MTX * 16, (float)st->cur_posmtx);
         putf(NV097_SET_VERTEX_DATA4F_M + VPI_MTX * 16 + 4, 0);
@@ -1070,6 +1171,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     uint32_t spec_lights = 0, first;
 
     if (!count) return;
+    s_st_verts += count;
     frame_open();
     pb_budget();
     pb_open();
@@ -1174,52 +1276,72 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
  * EFB -> texture / memory (CPU readback)
  * ====================================================================== */
 static void read_rect(const int32_t src[4], uint32_t dw, uint32_t dh, uint32_t* argb) {
+    static int32_t col[1024];
     const uint8_t* fb;
     uint32_t pitch, x, y;
+    s_st_efb++;
     frame_open();
     wait_idle();
     pb_open();
     fb = (const uint8_t*)pb_back_buffer();
     pitch = pb_back_buffer_pitch();
+    if (dw > 1024) dw = 1024;
+    /* the column map is the same for every row: once per copy, not per pixel */
+    for (x = 0; x < dw; x++) {
+        int fx = map_x(src[0] + (x + 0.5f) * (float)src[2] / (float)dw);
+        col[x] = fx >= s_fbw ? s_fbw - 1 : fx < 0 ? 0 : fx;
+    }
     for (y = 0; y < dh; y++) {
-        float ly = src[1] + (y + 0.5f) * (float)src[3] / (float)dh;
-        int fy = map_y(ly);
+        int fy = map_y(src[1] + (y + 0.5f) * (float)src[3] / (float)dh);
+        const uint8_t* row;
+        uint32_t* out = argb + y * dw;
         if (fy >= s_fbh) fy = s_fbh - 1;
         if (fy < 0) fy = 0;
-        for (x = 0; x < dw; x++) {
-            float lx = src[0] + (x + 0.5f) * (float)src[2] / (float)dw;
-            int fx = map_x(lx);
-            uint32_t c;
-            if (fx >= s_fbw) fx = s_fbw - 1;
-            if (fx < 0) fx = 0;
-            if (s_bpp == 16) {
-                uint32_t v = *(const uint16_t*)(fb + (size_t)fy * pitch + (size_t)fx * 2);
+        row = fb + (size_t)fy * pitch;
+        if (s_bpp == 16) {
+            const uint16_t* r16 = (const uint16_t*)row;
+            for (x = 0; x < dw; x++) {
+                uint32_t v = r16[col[x]];
                 uint32_t r = v >> 11, g = (v >> 5) & 63, b = v & 31;
-                c = 0xFF000000u | (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
-            } else {
-                c = *(const uint32_t*)(fb + (size_t)fy * pitch + (size_t)fx * 4);
+                out[x] = 0xFF000000u | (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
             }
-            argb[y * dw + x] = c;
+        } else {
+            const uint32_t* r32 = (const uint32_t*)row;
+            for (x = 0; x < dw; x++) out[x] = r32[col[x]];
         }
     }
 }
 
-uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int intensity) {
-    uint32_t* buf;
-    uint32_t tex, i;
+uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int intensity, uint32_t reuse) {
+    static uint32_t* buf;
+    static uint32_t buf_texels;
+    uint32_t pw, ph, n, i;
     if (!dst_w || !dst_h || dst_w > 1024 || dst_h > 1024) return 0;
-    buf = (uint32_t*)malloc(dst_w * dst_h * 4);
-    if (!buf) return 0;
-    read_rect(src, dst_w, dst_h, buf);
+#ifdef XGX_DEBUG_NOEFB
+    return 0;
+#endif
+    pw = (uint32_t)pot((int)dst_w);
+    ph = (uint32_t)pot((int)dst_h);
+    n = pw * ph;
+    if (n > buf_texels) {
+        free(buf);
+        buf = (uint32_t*)malloc(n * 4);
+        buf_texels = buf ? n : 0;
+        if (!buf) return 0;
+    }
+    read_rect(src, pw, ph, buf);   /* waits for the GPU: nothing is reading `reuse` now */
     if (intensity)
-        for (i = 0; i < dst_w * dst_h; i++) {
+        for (i = 0; i < n; i++) {
             uint32_t c = buf[i], r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
             uint32_t yv = (r * 77 + g * 150 + b * 29) >> 8;
             buf[i] = (c & 0xFF000000u) | yv << 16 | yv << 8 | yv;
         }
-    tex = xgx_tex_create(dst_w, dst_h, 1, XGX_TEX_ARGB8, buf);
-    free(buf);
-    return tex;
+    if (reuse && reuse < MAX_TEX && s_tex[reuse].used && s_tex[reuse].w == pw && s_tex[reuse].h == ph &&
+        s_tex[reuse].levels == 1 && s_tex[reuse].nvfmt == nv_format(XGX_TEX_ARGB8)) {
+        write_level(s_tex[reuse].mem, buf, (int)pw, (int)ph, (int)pw, (int)ph, 4);
+        return reuse;
+    }
+    return xgx_tex_create(pw, ph, 1, XGX_TEX_ARGB8, buf);
 }
 
 void xgx_read_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, uint8_t* rgba) {
@@ -1251,9 +1373,11 @@ static void setup_state(void) {
     p = pb_push1(p, NV097_SET_FOG_ENABLE, 0);
     p = pb_push1(p, NV097_SET_SKIN_MODE, NV097_SET_SKIN_MODE_OFF);
     p = pb_push1(p, NV097_SET_SHADER_OTHER_STAGE_INPUT, 0);
-    /* CCW, with the viewport y-flip folded into the projection: verified on
-     * hardware by OpenCrossing-Xbox (traps.md) */
-    p = pb_push1(p, NV097_SET_FRONT_FACE, NV097_SET_FRONT_FACE_V_CCW);
+    /* CW: GX's front faces, as seen after the viewport y-flip this renderer
+     * folds into the projection. (OpenCrossing's GL shim flips differently and
+     * uses CCW.) Checked in xemu against Dolphin: with CCW the memory card
+     * screen's panels, which are drawn with GX_CULL_BACK, vanish. */
+    p = pb_push1(p, NV097_SET_FRONT_FACE, NV097_SET_FRONT_FACE_V_CW);
     p = pb_push1(p, NV097_SET_WINDOW_CLIP_TYPE, 0);
     p = pb_push1(p, NV097_SET_ZMIN_MAX_CONTROL,
                  NV097_SET_ZMIN_MAX_CONTROL_CULL_NEAR_FAR | NV097_SET_ZMIN_MAX_CONTROL_ZCLAMP_CULL);

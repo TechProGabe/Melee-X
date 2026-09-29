@@ -79,7 +79,8 @@ static int is_intensity(uint32_t fmt) {
 void GXCopyTex(void* dest, GXBool clear) {
     uint32_t tex;
     gx_vtx_flush();
-    tex = xgx_tex_from_efb(g_gx.tex_copy_src, g_gx.tex_copy_w, g_gx.tex_copy_h, is_intensity(g_gx.tex_copy_fmt));
+    tex = xgx_tex_from_efb(g_gx.tex_copy_src, g_gx.tex_copy_w, g_gx.tex_copy_h, is_intensity(g_gx.tex_copy_fmt),
+                           gx_tex_efb_texture(dest));
     gx_tex_note_efb_copy(dest, tex, g_gx.tex_copy_w, g_gx.tex_copy_h, g_gx.tex_copy_fmt);
     if (clear) clear_rect(g_gx.tex_copy_src, 1, 1);
 }

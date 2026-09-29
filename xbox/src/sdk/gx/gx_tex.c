@@ -7,6 +7,7 @@
  * sampled hash at most once a frame: HSD reuses archive memory, so a pointer
  * alone can go stale. EFB copies (GXCopyTex) register their destination
  * pointer, and a texture object pointing there binds the copy. */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -51,6 +52,7 @@ static int s_count;
 static uint32_t s_frame = 1;
 static uint32_t* s_scratch;
 static uint32_t s_scratch_texels;   /* in 32-bit words */
+static uint32_t s_st_uploads, s_st_evicts;
 
 void gx_tex_init(void) {}
 
@@ -241,7 +243,10 @@ static void evict_oldest(void) {
     int i, pick = -1;
     for (i = 0; i < s_count; i++)
         if (!s_cache[i].efb && (pick < 0 || s_cache[i].last_used < s_cache[pick].last_used)) pick = i;
-    if (pick >= 0) drop(&s_cache[pick]);
+    if (pick >= 0) {
+        s_st_evicts++;
+        drop(&s_cache[pick]);
+    }
 }
 
 /* ---- native formats ----
@@ -352,6 +357,7 @@ static uint32_t upload(const TexObj* o, const TlutObj* tl, uint32_t levels, uint
         w = w > 1 ? w / 2 : 1;
         h = h > 1 ? h / 2 : 1;
     }
+    s_st_uploads++;
     tex = xgx_tex_create(o->w, o->h, levels, xfmt, s_scratch);
     while (!tex && s_count > 0) {
         evict_oldest();
@@ -427,11 +433,26 @@ void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
     g_xgx.dirty |= XGX_DIRTY_MAPS;
 }
 
+/* the texture the last EFB copy to `dest` made, for xgx_tex_from_efb to refill */
+uint32_t gx_tex_efb_texture(const void* dest) {
+    int i;
+    for (i = 0; i < s_count; i++)
+        if (s_cache[i].efb && s_cache[i].data == (const uint8_t*)dest) return s_cache[i].tex;
+    return 0;
+}
+
 /* EFB copy: remember which texture now holds the pixels at `dest` */
 void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h, uint32_t fmt) {
     int i;
     for (i = 0; i < s_count; i++)
         if (s_cache[i].data == (const uint8_t*)dest) {
+            if (tex && s_cache[i].efb && s_cache[i].tex == tex) {   /* refilled in place */
+                s_cache[i].w = (uint16_t)w;
+                s_cache[i].h = (uint16_t)h;
+                s_cache[i].fmt = (uint8_t)fmt;
+                s_cache[i].last_used = s_frame;
+                return;
+            }
             drop(&s_cache[i]);
             i--;
         }
@@ -452,8 +473,31 @@ void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h
 }
 
 /* textures unused for ~10 s are released */
+#ifndef XGX_STATS_EVERY
+#define XGX_STATS_EVERY 600
+#endif
 void gx_tex_frame_end(void) {
     int i;
+    if (s_frame % XGX_STATS_EVERY == 0) {
+        /* working set of the last frame, by GX format: count / KB as GX data */
+        uint32_t n[16] = { 0 }, kb[16] = { 0 }, live = 0;
+        char line[256];
+        int k, len;
+        for (i = 0; i < s_count; i++)
+            if (s_cache[i].last_used == s_frame && !s_cache[i].efb) {
+                uint32_t f = s_cache[i].fmt & 15;
+                n[f]++;
+                kb[f] += GXGetTexBufferSize(s_cache[i].w, s_cache[i].h, s_cache[i].fmt, s_cache[i].levels > 1,
+                                            s_cache[i].levels) / 1024;
+                live++;
+            }
+        len = snprintf(line, sizeof line, "[TEX] %d cached, %u used last frame; per %u: %u uploads, %u evictions; fmt n/KB:",
+                       s_count, live, XGX_STATS_EVERY, s_st_uploads, s_st_evicts);
+        for (k = 0; k < 16; k++)
+            if (n[k]) len += snprintf(line + len, sizeof line - (size_t)len, " %x:%u/%u", k, n[k], kb[k]);
+        xhw_log(line);
+        s_st_uploads = s_st_evicts = 0;
+    }
     s_frame++;
     for (i = 0; i < s_count; i++)
         if (s_frame - s_cache[i].last_used > 600) {

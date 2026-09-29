@@ -114,7 +114,11 @@ int xhw_video_480p_allowed(void);
 int xhw_video_widescreen_set(void);
 /* Before boot (settings.ini): 0 keeps 480 even where 720p is allowed. */
 void xhw_video_set_pref_720p(int on);
+/* Picks 480/720 and sets the mode, before pbkit starts. Ends the splash. */
+void xhw_video_boot(void);
 void xhw_wait_vblank(void);
+/* Boot title card (xhw_splash.c): load bar, 0..1; nothing once the mode is set. */
+void xhw_splash_progress(float f);
 
 /* ---- system ---- */
 void xhw_quit_to_dashboard(void) __attribute__((noreturn));

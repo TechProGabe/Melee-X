@@ -137,7 +137,9 @@ void lbFile_800164A4(int file, uintptr_t dst, size_t* size, int pri,
 {
     int type;
     *size = lbFile_8001634C(file);
-    type = (dst >= 0x80000000) ? 0x21 : 0x23;
+    /* PORT: the GameCube tells ARAM from main RAM by `< 0x80000000`; the
+     * Xbox maps MEM1 below that, so use the port's own test. */
+    type = !PC_IS_ARAM_ADDR(dst) ? 0x21 : 0x23;
     HSD_DevComRequest(file, 0, dst, OSRoundUp32B(*size), type, pri, callback,
                       args);
 }

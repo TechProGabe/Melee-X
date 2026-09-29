@@ -74,6 +74,25 @@ marked `PORT:`:
   melee-pc's libm is still exact there.
 - `src/pc/discfont.c`: the Xbox reads the DOL through its DVD layer
   (`DVDGetDOLLocation`), as the emscripten build does, not through `nod`.
+- `src/melee/lb/lbfile.c`, `ft/ftdata.c` (two places), `gr/grdisplay.c`:
+  "is this ARAM?" tests used the GameCube's `addr < 0x80000000`. Main memory
+  sits at 0x10000000 here, so they use `PC_IS_ARAM_ADDR`.
+- `src/sysdolphin/baselib/hsd_3A76.c`: the default kerning table is
+  indexed by glyph number. It was indexed by a byte offset, twice too far.
+- `src/melee/ft/ftparts.c` (`ftPartsRemap`): the joint byte is read
+  unsigned, as on GameCube. Sign-extended, "no such joint" became -1,
+  passed the callers' `!= 0xFF` tests and indexed `fp->parts[-1]`. It
+  crashed when a fighter was thrown by a different character.
+- `src/melee/ft/kinds/ftPikachu/ftpikachuspeciallw.c`: Thunder's entry
+  clears `speciallw.x0` by name. On GameCube, the `specialhi.x0 = 0` just
+  before it cleared that pointer too. melee-pc moved it to +08, so a stale
+  word from the previous state was read as the thunder gobj.
+
+Game files are compiled with `-Werror=implicit-function-declaration`. The
+prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after
+`<math.h>` is already in, so their prototypes have to be in the prelude.
+Without them, every call read its float result from EAX. That gave
+garbage angles, and the sword afterimage then overran its stack buffer.
 
 To sync a newer melee-pc:
 1. Copy its `src/melee`, `src/sysdolphin`, `src/pc` and the headers again.
@@ -84,7 +103,12 @@ To sync a newer melee-pc:
 
 ## Known risks
 
-- **Untested on hardware or xemu.** The XBE links, but it has never booted.
+- **Untested on hardware.** In xemu it boots, reaches the title screen and
+  runs the attract-demo matches. It has not run on a console.
+- **Hang when the texture pool fills.** About one boot in five of the
+  attract loop in xemu stops at around frame 2100. The game thread spins in
+  `xgx_tex_create` -> `pb_busy`, waiting for the GPU while evicting. The
+  watchdog's `hang.log` shows it.
 - **The demand-commit fault handler** relies on the Xbox kernel sending
   kernel-mode access violations on reserved memory to the thread's SEH
   chain. That is how nxdk's `__try` works, but it hasn't been exercised.

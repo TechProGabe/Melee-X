@@ -1,8 +1,9 @@
 /* xhw_main.c - Xbox entry point.
  *
  * Boot: mount E:, create the save folder, open boot.log, find the user's disc
- * image next to default.xbe (D:\), pick the video mode, then hand over to the
- * Dolphin SDK side (xsdk_boot -> OSInit ... melee_main), which never returns. */
+ * image next to default.xbe (D:\), show the title card, then hand over to the
+ * Dolphin SDK side (xsdk_boot -> OSInit ... video mode ... melee_main), which
+ * never returns. */
 #include <hal/debug.h>
 #include <hal/video.h>
 #include <hal/xbox.h>
@@ -22,7 +23,7 @@ static int ends_ci(const char* s, const char* suf) {
 }
 
 /* First .iso/.gcm/.ciso in the XBE's folder, any name. xsdk_boot checks that
- * it really is GALE01 revision 2. */
+ * it really is GALE01 (revision 2 is the target; 0 and 1 are accepted). */
 static int find_disc_image(char* out, size_t cap) {
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA("D:\\*", &fd);
@@ -41,6 +42,7 @@ static int find_disc_image(char* out, size_t cap) {
 
 void xhw_error_screen(const char* title, const char* const* lines) {
     int i;
+    xhw_watchdog_disable();
     pb_show_debug_screen();
     debugClearScreen();
     debugPrint("\n\n    Melee-X\n\n    %s\n\n", title);
@@ -95,14 +97,17 @@ static void main_body(void* arg) {
     xhw_log_open_file();
     read_image_range();
     xhw_logf("[BOOT] image %08x-%08x", xhw_image_base, xhw_image_end);
+    xhw_watchdog_start();
     xhw_mem_log("boot");
+    xhw_splash_show();
 
     if (!find_disc_image(disc, sizeof disc)) fatal_no_disc();
     xhw_logf("[BOOT] disc image %s", disc);
+    xhw_autopad_load();
+    xhw_splash_progress(0.1f);
 
     xsdk_early();
-    xhw_video_boot();
-    xsdk_boot(disc);
+    xsdk_boot(disc);   /* sets the video mode once the disc checks out */
 }
 
 unsigned xsdk_frame_count(void);

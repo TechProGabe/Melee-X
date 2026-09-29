@@ -27,13 +27,44 @@ needed, as for any xemu title. xemu is useful for crashes and rendering, but
 timing, audio (it uses the APU fallback there) and memory headroom differ
 from hardware, so check fixes on a console too.
 
+On macOS the scripts do all of this for you. They use Docker (colima works)
+and xemu at `/Applications/Xemu.app`, with its BIOS, MCPX and HDD already
+set up in xemu's settings:
+
+```sh
+docker build -t melee-x:sdk tools/xbox/docker   # once
+tools/xbox/docker/build.sh                      # -> build-xbox/xbe/default.xbe
+MX_ISO=~/roms/melee.iso tools/xbox/xemu_run.sh 120 'melee_main'
+```
+
+`xemu_run.sh [seconds] [stop-regex]` packs the XISO, boots it, logs COM1 to
+`~/xemu/mx-run/serial.log`, and stops after that many seconds or when the
+regex matches. See the script header for the `MX_*` variables:
+
+- `MX_STAGE_EXTRA` adds files to the disc, for example `autopad.txt`.
+- `MX_GUI=1` leaves xemu running.
+- `MX_XEMU_ARGS="-monitor unix:/tmp/mxmon.sock,server,nowait"` adds a QEMU
+  monitor. `tools/xbox/xemu_prof.py` then samples where the CPU spends its
+  time.
+- `XBOX_CFLAGS` (for example `-DXHW_AUTOPAD=1`) passes through to the
+  platform build.
+
+Screenshots come out of the serial log as `[FBDUMP]` lines. Decode them
+with `tools/xbox/fbdump_to_png.py serial.log shot`.
+
+If the log stops dead, heartbeat included, the guest has bugchecked. In the
+monitor, `info registers` then shows `HLT=1` with IF clear, and the
+bugcheck code is on the stack (`0x7F, 8` is a double fault). A double fault
+arrives through a task gate, so the faulting EIP and ESP are in the TSS
+that the current TSS's link field names (read the GDT to find it).
+
 ## Logs
 
 Everything is written to `E:\UDATA\4d580001\` (the title ID is `4d580001`):
 
 | file | contents |
 |---|---|
-| `boot.log` | the log, flushed as it goes. Tags: `[BOOT]` `[MEM]` `[OS]` `[DVD]` `[NV2A]` `[PAD]` `[AUDIO]` `[CARD]` |
+| `boot.log` | the log (first 256 KB), every line flushed during the first 600 frames, then at most once a second. Tags: `[BOOT]` `[MEM]` `[OS]` `[DVD]` `[NV2A]` `[PAD]` `[AUDIO]` `[CARD]` |
 | `crash.log` | written on a CPU exception: the last log lines, the fault, registers, XBE addresses found on the stack |
 | `settings.ini` | options (`docs/platform.md`) |
 | `card_a\*.gci` | memory card saves |
@@ -77,9 +108,14 @@ report.
 |---|---|
 | `-DXHW_CRASH_GUARD=0` | no SEH guard. Crashes become bugchecks, and demand-committed memory stops working, so debug only |
 | `-DXHW_AUDIO_APU=0` | never use the xemu APU fallback |
+| `-DXHW_AUTOPAD=1` | scripted input from `D:\autopad.txt`: `<frame> <buttons/SHOT> [for N]` per line (`xhw_autopad.c`) |
+| `-DXHW_FBDUMP_EVERY=<n>` | screenshot every n presented frames |
+| `-DXGX_STATS_EVERY=<n>` | `[NV2A]` / `[TEX]` stats period, in frames (default 600) |
+| `-DXHW_WATCHDOG=0`, `-DXHW_HEARTBEAT_SECS=<n>` | hang dumper off; `[BEAT]` period (0 = off) |
+| `-DXHW_NO_SPLASH`, `-DXHW_SPLASH_MS=<n>` | boot title card off; its hold time |
 | `XBOX_FORCE=1 tools/xbox/compile_game.py` | rebuild every game unit |
 | `XBOX_KEEP_TEMPS=1` | keep the `.i` / `.lowered.c` intermediates |
-| `XBOX_CMAKE_ARGS`, `XBOX_NINJA_ARGS` | passed through by `xbox/build.sh` |
+| `XBOX_CFLAGS`, `XBOX_CMAKE_ARGS`, `XBOX_NINJA_ARGS` | passed through by `xbox/build.sh`; `XBOX_CFLAGS` sets the platform's C flags |
 
 ## First-boot checklist
 

@@ -85,6 +85,7 @@ typedef struct {
     float texmtx[XGX_NUM_TEXMTX][3][4];
     float ptmtx[XGX_NUM_PTMTX][3][4];
     uint32_t cur_posmtx;            /* GX_PNMTX0..9 (0, 3, .. 27) */
+    uint32_t posmtx_mask;           /* matrices (bit per PNMTX) loaded since the back end last read them */
     uint32_t cur_texmtx[XGX_MAX_TEXGEN];
 
     /* lighting: COLOR0, ALPHA0, COLOR1, ALPHA1 */
@@ -171,6 +172,10 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
 void xgx_clear(const int32_t rect[4], const uint8_t rgba[4], uint32_t z24, int color, int alpha, int depth);
 /* End the frame and flip; black: output black (VISetBlack). */
 void xgx_present(int black);
+/* Frames presented so far (the watchdog's heartbeat line). */
+unsigned xgx_present_count(void);
+/* One [FBDUMP] screenshot of the next presented frame. */
+void xgx_fbdump_next(void);
 
 /* Texture data formats handed to the back end. All but DXT1 are rows top to
  * bottom (the back end swizzles); DXT1 is 4x4 blocks in rows. Level 0 then
@@ -186,9 +191,13 @@ enum {
 uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data);
 void xgx_tex_destroy(uint32_t tex);   /* deferred until the GPU is done */
 uint32_t xgx_tex_pool_free_kb(void);
-/* EFB -> texture: copies the logical rect into a new texture of dst_w x dst_h
- * (box-filtered when half-size). intensity: convert to grey (I4/I8/IA copies). */
-uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int intensity);
+/* EFB -> texture: copies the logical rect into a texture of dst_w x dst_h
+ * (point-sampled). intensity: convert to grey (I4/I8/IA copies).
+ * reuse: the texture the previous copy to the same destination made; when it
+ * has the same size it is refilled in place (no allocation, no deferred free)
+ * and returned. Otherwise a new texture is made. The copy is read at the next
+ * power-of-two size, so it is never resampled. */
+uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int intensity, uint32_t reuse);
 /* EFB -> CPU (GXCopyTex into memory the game reads): logical rect, RGBA8 out */
 void xgx_read_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, uint8_t* rgba);
 

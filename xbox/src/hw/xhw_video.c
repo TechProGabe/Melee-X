@@ -35,6 +35,7 @@ int xhw_video_widescreen_set(void) { return (XVideoGetEncoderSettings() & VIDEO_
 void xhw_video_set_pref_720p(int on) { s_pref_720p = on; }
 
 void xhw_video_boot(void) {
+    xhw_splash_release();   /* XVideoSetMode frees the splash's framebuffer */
     s_mode.widescreen = xhw_video_widescreen_set();
     if (s_pref_720p && xhw_video_720p_allowed() && xhw_mem_free_kb() >= 32 * 1024 &&
         XVideoSetMode(1280, 720, 16, REFRESH_DEFAULT)) {

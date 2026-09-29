@@ -266,11 +266,83 @@ static uint32_t make_icw(Term ab, Term cd) {
 
 static uint32_t make_ocw(uint8_t dst, uint8_t op) { return (uint32_t)(dst & 0xF) << 8 | (uint32_t)(op & 7) << 15; }
 
+/* ---- movies: YUV -> RGB ----
+ * sobjlib.c draws THP frames with Nintendo's stock 4-stage recipe (Cb, Cr,
+ * Y as I8 textures; a negative S10 bias in REG0; unclamped intermediates;
+ * G computed in the alpha path and moved over by a KONST lerp). Constants
+ * here are unsigned and PREV reads clamp at 0, so the bias would vanish
+ * and the picture go magenta. Recognise it and emit the same arithmetic
+ * with signed registers:
+ *   R = Y + 1.404 Cr - 0.702     = Y + 2 * 0.351 * (2Cr - 1)
+ *   B = Y + 1.772 Cb - 0.886     = Y + 2 * 0.443 * (2Cb - 1)
+ *   G = Y + 0.529 - 0.345 Cb - 0.714 Cr
+ *     ~ Y - 0.1725 (2Cb - 1) - 0.357 (2Cr - 1)
+ * The GX version subtracts 0.894 in B and keeps 0.0005 in G; the
+ * difference is under one step of 8-bit colour. */
+static int is_yuv_recipe(const RcCfg* c) {
+    static const uint8_t cin[4][4] = { { 15, 8, 14, 2 }, { 15, 8, 14, 0 }, { 15, 8, 12, 0 }, { 1, 0, 14, 15 } };
+    static const uint8_t ain[3][4] = { { 7, 4, 6, 1 }, { 7, 4, 6, 0 }, { 4, 7, 7, 0 } };
+    int s, i;
+    if (c->nstages != 4) return 0;
+    for (s = 0; s < 4; s++)
+        for (i = 0; i < 4; i++)
+            if (c->st[s].cin[i] != cin[s][i]) return 0;
+    for (s = 0; s < 3; s++)
+        for (i = 0; i < 4; i++)
+            if (c->st[s].ain[i] != ain[s][i]) return 0;
+    return c->st[0].aop == 1 && c->st[1].aop == 1 && c->st[1].cscale == 1 && c->st[3].kcsel == 0x0E &&
+           c->st[0].unit >= 0 && c->st[1].unit >= 0 && c->st[2].unit >= 0;
+}
+
+static void yuv_program(const RcCfg* cfg, RcProg* out) {
+    const Op cb = { (uint8_t)(S_T0 + cfg->st[0].unit), 0, M_EXPN, 0 };
+    const Op cr = { (uint8_t)(S_T0 + cfg->st[1].unit), 0, M_EXPN, 0 };
+    const Op y = { (uint8_t)(S_T0 + cfg->st[2].unit), 0, M_UID, 0 };
+    const Op c0 = { S_C0, 0, M_UID, 0 }, c1 = { S_C1, 0, M_UID, 0 };
+    const Op r0 = { S_R0, 0, M_SID, 0 }, r0a = { S_R0, 1, M_SID, 0 };
+    Term ab, cd, z = { OP_ZERO, OP_ZERO };
+    Op cbn = cb, crn = cr;
+    cbn.alpha = crn.alpha = 1;
+    cbn.map = crn.map = M_EXPNEG;
+
+    /* 0: rgb = 2 (0.351 (2Cr-1), 0, 0.443 (2Cb-1)); a = -(0.1725 (2Cb-1) + 0.357 (2Cr-1)) */
+    ab.a = cr; ab.b = c0; cd.a = cb; cd.b = c1;
+    out->cicw[0] = make_icw(ab, cd);
+    out->cocw[0] = make_ocw(S_R0, OP_SHL1);
+    ab.a = cbn; ab.b = c0; cd.a = crn; cd.b = c1;
+    ab.b.alpha = cd.b.alpha = 1;
+    out->aicw[0] = make_icw(ab, cd);
+    out->aocw[0] = make_ocw(S_R0, OP_NOSHIFT);
+    out->cref[0][0] = out->cref[0][1] = RREF(RREF_FIXED, 0);
+    out->cref[0][2] = out->cref[0][3] = RREF(RREF_FIXED, 1);
+    /* 1: rgb = (r, a, b) */
+    ab.a = r0; ab.b = c0; cd.a = r0a; cd.b = c1;
+    out->cicw[1] = make_icw(ab, cd);
+    out->cocw[1] = make_ocw(S_R0, OP_NOSHIFT);
+    out->aicw[1] = make_icw(z, z);
+    out->aocw[1] = make_ocw(S_R0, OP_NOSHIFT);
+    out->cref[1][0] = RREF(RREF_FIXED, 2);
+    out->cref[1][2] = RREF(RREF_FIXED, 3);
+    /* 2: rgb = Y + prev; alpha 0, as GX's stage 3 leaves it */
+    ab.a = y; ab.b = OP_ONE; cd.a = r0; cd.b = OP_ONE;
+    out->cicw[2] = make_icw(ab, cd);
+    out->cocw[2] = make_ocw(S_R0, OP_NOSHIFT);
+    out->aicw[2] = make_icw(z, z);
+    out->aocw[2] = make_ocw(S_R0, OP_NOSHIFT);
+    out->nstages = 3;
+    out->cw0 = (uint32_t)S_R0 << 8;
+    out->cw1 = (uint32_t)(S_R0 | 1 << 4) << 8 | 0x80;
+}
+
 void rc_compile(const RcCfg* cfg, RcProg* out) {
     Alloc al;
     int s, n = 0, u;
 
     memset(out, 0, sizeof *out);
+    if (is_yuv_recipe(cfg)) {
+        yuv_program(cfg, out);
+        return;
+    }
     memset(&al, 0, sizeof al);
     al.cfg = cfg;
     al.pool_rgb[al.npool_rgb++] = S_R1;
