@@ -1,0 +1,39 @@
+/* xhw_internal.h - shared between the xbox/src/hw files (nxdk triple). */
+#ifndef XHW_INTERNAL_H
+#define XHW_INTERNAL_H
+#include <stdarg.h>
+#include <stddef.h>
+#include <windows.h>
+
+/* Saves, settings and logs. Always on the HDD, so a burned-disc boot can
+ * still save. "MX" 0001; cxbe has no TitleID flag, so the name is fixed here. */
+#define XHW_UDATA_ROOT "E:\\UDATA\\4d580001"
+#define XHW_UDATA_DIR XHW_UDATA_ROOT "\\"
+
+void xhw_log_open_file(void);
+void xhw_vlog_raw(const char* fmt, va_list ap);
+size_t xhw_log_tail(char* out, size_t cap);
+void xhw_mem_log(const char* where);
+void xhw_flush_handle(HANDLE h);
+void xhw_flush_volume(char drive);
+
+/* xhw_crash.c: run fn under the CPU exception reporter (crash.log + screen). */
+void xhw_crash_guard(void (*fn)(void*), void* arg);
+extern unsigned int xhw_image_base, xhw_image_end;
+unsigned xhw_frame_count(void);
+
+/* xhw_video.c */
+void xhw_video_boot(void);           /* picks 480/720 before pbkit starts */
+void xhw_error_screen(const char* title, const char* const* lines);
+
+/* xhw_audio.c / xhw_pad.c: stop DMA and USB before leaving the XBE (a quick
+ * reboot into the next XBE doesn't reset them; OpenCrossing traps.md). */
+void xhw_audio_shutdown(void);
+void xhw_pad_shutdown(void);
+
+/* sdk side (game triple): settings before the video mode is chosen, then
+ * the game on the disc image (never returns) */
+void xsdk_early(void);
+void xsdk_boot(const char* disc_path);
+
+#endif

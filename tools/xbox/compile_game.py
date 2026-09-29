@@ -80,13 +80,30 @@ def game_sources():
     return [s for s in sources if s.name not in skip]
 
 
+def up_to_date(obj, dep, source):
+    """The object is newer than the source, every header it included (from
+    the preprocessor's depfile), and this script and the lowering tool."""
+    if not obj.exists() or not dep.exists():
+        return False
+    stamp = obj.stat().st_mtime
+    deps = dep.read_text().replace('\\\n', ' ').split(':', 1)[-1].split()
+    for d in [str(source), __file__, str(DISC_LOWER), *deps]:
+        path = pathlib.Path(d) if os.path.isabs(d) else ROOT / d
+        try:
+            if path.stat().st_mtime > stamp:
+                return False
+        except FileNotFoundError:
+            return False
+    return True
+
+
 def build(source, cmd_log):
     rel = source.relative_to(ROOT)
     base = OUT / rel
     base.parent.mkdir(parents=True, exist_ok=True)
     preprocessed, lowered = base.with_suffix('.i'), base.with_suffix('.lowered.c')
-    obj, log = base.with_suffix('.obj'), base.with_suffix('.log')
-    if obj.exists() and obj.stat().st_mtime > source.stat().st_mtime and not os.environ.get('XBOX_FORCE'):
+    obj, log, dep = base.with_suffix('.obj'), base.with_suffix('.log'), base.with_suffix('.d')
+    if up_to_date(obj, dep, source) and not os.environ.get('XBOX_FORCE'):
         return {'source': str(rel), 'status': 'passed', 'cached': True}
 
     def run(stage, cmd, stdout):
@@ -95,7 +112,8 @@ def build(source, cmd_log):
         return None
 
     with log.open('w') as err:
-        failed = run('preprocess', [LLVM / 'bin/clang', *PREPROCESS_FLAGS, '-E', source, '-o', preprocessed], err)
+        failed = run('preprocess', [LLVM / 'bin/clang', *PREPROCESS_FLAGS, '-E', '-MD', '-MF', dep, '-MT', obj,
+                                    source, '-o', preprocessed], err)
         if failed:
             return failed
         preprocessed.write_text(cp932_literals(preprocessed.read_text(errors='surrogateescape')),
@@ -136,8 +154,15 @@ def main():
 
     report = OUT / ('report-partial.json' if args.source else 'report.json')
     report.write_text(json.dumps(results, indent=2) + '\n')
-    (OUT / 'objects.txt').write_text(''.join(
-        str((OUT / r['source']).with_suffix('.obj')) + '\n' for r in results if r['status'] == 'passed'))
+    if not args.source:
+        listing = ''.join(str((OUT / r['source']).with_suffix('.obj')) + '\n' for r in results if r['status'] == 'passed')
+        objects = OUT / 'objects.txt'
+        changed = not objects.exists() or objects.read_text() != listing
+        if changed:
+            objects.write_text(listing)
+        # the link depends on this stamp (xbox/CMakeLists.txt LINK_DEPENDS)
+        if changed or any(r['status'] == 'passed' and not r.get('cached') for r in results):
+            (OUT / 'objects.stamp').touch()
     passed = sum(r['status'] == 'passed' for r in results)
     print(f'{passed} / {len(results)} compiled')
     raise SystemExit(passed != len(results))

@@ -3,21 +3,26 @@
 - [x] Toolchain: nxdk + LLVM 21, `disc_lower` for DISC_STRUCT, game triple chosen and
       ABI-checked against nxdk (`docs/toolchain.md`)
 - [x] All 1008 game translation units compile to i386 COFF
-- [ ] Platform layer, first pass (links, stubs where needed)
-  - [ ] OS: arena at a fixed VA, heaps, alarms, time, interrupts (mutex)
-  - [ ] DVD: FST over the user's .iso/.gcm/.ciso, async reads on a thread
-  - [ ] AR/ARQ: ARAM buffer (disc-backed later)
-  - [ ] PAD: four ports, GC-like layout, rumble
-  - [ ] VI: vblank pacing at 60 Hz, 480/720p mode select
-  - [ ] AX/AI: melee-pc mixer -> AC97 (OpenCrossing's polled driver)
-  - [ ] CARD: GCI files in `E:\UDATA\<title id>\`
-  - [ ] MTX: C implementations
-- [ ] GX -> NV2A
-  - [ ] state, immediate mode, display lists (big-endian, indexed arrays)
-  - [ ] matrix palette skinning in the vertex program
-  - [ ] TEV -> register combiners (OpenCrossing's `xbox_tev_rc.c`)
-  - [ ] textures (GC formats -> swizzled A8R8G8B8, TLUTs), EFB copies
-  - [ ] 720p 16:9 through melee-pc's widescreen
-- [ ] default.xbe links; boots to the title screen in xemu
+- [x] Platform layer, first pass
+  - [x] OS: MEM1 at a fixed VA, SDK heaps, alarms, time, interrupts (recursive lock)
+  - [x] DVD: FST over the user's .iso/.gcm/.ciso, async reads on a worker
+  - [x] AR/ARQ: ARAM buffer
+  - [x] PAD: four ports by physical port, GC-like layout, dead zones, rumble, settings.ini
+  - [x] VI: 60.000 Hz pacing; 720p / 480p / 480i chosen from the dashboard
+  - [x] AX/AI: melee-pc's mixer -> AC97 (OpenCrossing's polled driver; APU voice in xemu)
+  - [x] CARD: slot A as .gci files in `E:\UDATA\4d580001\card_a\`
+  - [x] MTX: aurora's C implementations
+- [x] GX -> NV2A, first pass
+  - [x] state, immediate mode, display lists (big-endian, indexed arrays)
+  - [x] generated vertex programs: a0-indexed skinning, GX lighting (spot, distance,
+        specular), texgen; encoder checked bit for bit against nv2a-vsh
+  - [x] TEV -> register combiners (from OpenCrossing's compiler, 8 stages, 4 units)
+  - [x] textures (all GC formats -> A8R8G8B8, NPOT resampled), TLUTs, EFB copies (CPU)
+  - [x] 720p 16:9 content rect for melee-pc's hor+ widescreen
+- [x] default.xbe links
+- [ ] boots to the title screen in xemu
+- [ ] memory fit on 64 MB: CMPR -> DXT1 and 16-bit texture formats, ARAM committed
+      on demand, arena sized to the GameCube's
+- [ ] fog, indirect texturing, TEV swap tables beyond alpha broadcast, GPU EFB copies
 - [ ] VS mode with 4 players on hardware at 60 fps
 - [ ] THP movies, memory fit on 64 MB, release packaging

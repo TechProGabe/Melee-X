@@ -9,9 +9,10 @@ draws with its NV2A GPU.
 - Needs your own Melee disc image: NTSC-U 1.02 (`GALE01`, revision 2). No
   game data is in this repository or in any build.
 
-> **Status: early bring-up.** All 1008 game translation units compile for the
-> Xbox. The platform layer (DVD, OS, PAD, AX, CARD, VI) and the GX → NV2A
-> renderer are being written. See [docs/roadmap.md](docs/roadmap.md).
+> **Status: early bring-up.** `default.xbe` builds and links: all 1008 game
+> units, the Dolphin SDK on the Xbox, and a first GX → NV2A renderer. It has
+> not been run yet (no console or emulator here). See
+> [docs/roadmap.md](docs/roadmap.md).
 
 ## How it is put together
 
@@ -35,9 +36,14 @@ See [docs/toolchain.md](docs/toolchain.md). In short:
 
 ```sh
 tools/xbox/setup.sh               # once: LLVM 21, nxdk, disc_lower
+xbox/build.sh                     # -> build-xbox/xbe/default.xbe
 tools/lower/test_lower.py         # lowering oracle tests
-tools/xbox/compile_game.py        # game code -> build-xbox/game/*.obj
+tools/xbox/test_vp_encoder.py     # vertex-program encoder vs nv2a-vsh
 ```
+
+To play: copy `default.xbe` into a folder on the Xbox HDD (e.g.
+`E:\Games\Melee-X\`) together with your own `GALE01` disc image (`.iso`,
+`.gcm` or `.ciso`, any name), and launch it from your dashboard.
 
 ## Licensing
 

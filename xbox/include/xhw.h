@@ -1,0 +1,116 @@
+/* xhw.h - the Xbox hardware layer (xbox/src/hw, nxdk's i386-pc-win32 triple)
+ * as seen by the Dolphin SDK implementation (xbox/src/sdk, the game triple).
+ *
+ * Only scalars, pointers and structs without bit-fields or 64-bit members
+ * cross this boundary, so both triples agree on every layout here. */
+#ifndef XHW_H
+#define XHW_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ---- logging (COM1 when present, E:\UDATA\...\boot.log / last.log) ---- */
+void xhw_log(const char* line);
+void xhw_logf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+/* Unrecoverable: draw the message on screen, log it, wait, go to the dashboard. */
+void xhw_fatal(const char* title, const char* msg) __attribute__((noreturn));
+
+/* ---- time ---- */
+uint64_t xhw_ticks(void);            /* rdtsc */
+uint64_t xhw_ticks_per_sec(void);
+uint64_t xhw_time_ns(void);          /* monotonic */
+/* Wall clock: seconds since 2000-01-01 00:00:00 local time, plus the
+ * sub-second part in nanoseconds (the GameCube RTC epoch). */
+int64_t xhw_wallclock_2000(uint32_t* ns_out);
+void xhw_sleep_ms(uint32_t ms);
+void xhw_yield(void);
+
+/* ---- threads and locks ---- */
+typedef struct xhw_mutex xhw_mutex;
+xhw_mutex* xhw_mutex_create(void);   /* recursive */
+void xhw_mutex_lock(xhw_mutex* m);
+void xhw_mutex_unlock(xhw_mutex* m);
+typedef struct xhw_event xhw_event;
+xhw_event* xhw_event_create(void);   /* auto-reset */
+void xhw_event_signal(xhw_event* e);
+int xhw_event_wait(xhw_event* e, uint32_t timeout_ms);   /* 1 signalled, 0 timeout */
+/* Thread-local slots (TlsAlloc): the game triple can't use __thread here. */
+uint32_t xhw_tls_alloc(void);
+void* xhw_tls_get(uint32_t slot);
+void xhw_tls_set(uint32_t slot, void* value);
+/* priority: -2 (lowest) .. +2 (highest), relative to the game thread (0) */
+int xhw_thread_start(void (*fn)(void*), void* arg, int priority, uint32_t stack_bytes);
+
+/* ---- memory ---- */
+/* Reserve and commit `bytes` at exactly `va` (page aligned); NULL on failure. */
+void* xhw_alloc_at(uintptr_t va, uint32_t bytes);
+uint32_t xhw_mem_free_kb(void);
+
+/* ---- files and paths ---- */
+/* The folder default.xbe runs from, mounted as D:\ ("D:\\"). */
+const char* xhw_game_dir(void);
+/* Writable data folder: "E:\\UDATA\\<title id>\\" (created at boot). */
+const char* xhw_save_dir(void);
+/* Directory helpers (FATX): mkdir ignores "already exists". */
+int xhw_mkdir(const char* path);
+typedef struct xhw_dir_entry { char name[64]; int is_dir; uint32_t size; } xhw_dir_entry;
+/* pattern like "E:\\dir\\*.gci"; returns a handle (NULL: nothing found).
+ * xhw_dir_next returns 0 at the end and closes the handle. */
+void* xhw_dir_first(const char* pattern, xhw_dir_entry* out);
+int xhw_dir_next(void* handle, xhw_dir_entry* out);
+/* Flush a stdio FILE's data and the volume's directory entry to disk. */
+void xhw_flush(void* stdio_file);
+
+/* ---- controllers ---- */
+typedef struct xhw_pad {
+    int connected;
+    uint32_t buttons;            /* XHW_BTN_* */
+    int16_t lx, ly, rx, ry;      /* -32768..32767, y up */
+    uint8_t lt, rt;              /* 0..255 */
+} xhw_pad;
+enum {
+    XHW_BTN_A = 1u << 0, XHW_BTN_B = 1u << 1, XHW_BTN_X = 1u << 2, XHW_BTN_Y = 1u << 3,
+    XHW_BTN_BLACK = 1u << 4, XHW_BTN_WHITE = 1u << 5, XHW_BTN_START = 1u << 6,
+    XHW_BTN_BACK = 1u << 7, XHW_BTN_LSTICK = 1u << 8, XHW_BTN_RSTICK = 1u << 9,
+    XHW_BTN_UP = 1u << 10, XHW_BTN_DOWN = 1u << 11, XHW_BTN_LEFT = 1u << 12,
+    XHW_BTN_RIGHT = 1u << 13,
+};
+void xhw_pad_poll(void);                       /* once per PADRead */
+int xhw_pad_get(int port, xhw_pad* out);       /* port 0..3; returns connected */
+void xhw_pad_rumble(int port, uint16_t low, uint16_t high);
+
+/* ---- audio: 32 kHz stereo s16 pushed by the AX mixer ---- */
+int xhw_audio_init(uint32_t rate);
+/* Frames the output can take right now without blocking. */
+uint32_t xhw_audio_space(void);
+void xhw_audio_write(const int16_t* stereo, uint32_t frames);
+void xhw_audio_stop(void);
+
+/* ---- video ---- */
+typedef struct xhw_video_mode {
+    int width, height;           /* framebuffer: 640x480 or 1280x720 */
+    int bpp;                     /* 32, or 16 at 720p */
+    int widescreen;              /* 1: the picture is 16:9 */
+    int progressive;             /* 480p/720p */
+} xhw_video_mode;
+const xhw_video_mode* xhw_video(void);
+/* Dashboard settings: which modes the AV pack and the user allow. */
+int xhw_video_720p_allowed(void);
+int xhw_video_480p_allowed(void);
+int xhw_video_widescreen_set(void);
+/* Before boot (settings.ini): 0 keeps 480 even where 720p is allowed. */
+void xhw_video_set_pref_720p(int on);
+void xhw_wait_vblank(void);
+
+/* ---- system ---- */
+void xhw_quit_to_dashboard(void) __attribute__((noreturn));
+void xhw_reboot_self(void) __attribute__((noreturn));
+
+#ifdef __cplusplus
+}
+#endif
+#endif
