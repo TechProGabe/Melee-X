@@ -1,0 +1,126 @@
+#ifndef MELEE_FT_CHARA_FTSAMUS_TYPES_H
+#define MELEE_FT_CHARA_FTSAMUS_TYPES_H
+
+#include <Runtime/platform.h>
+
+#include <melee/it/forward.h>
+#include <sysdolphin/baselib/forward.h>
+
+#include <placeholder.h>
+
+#include <dolphin/mtx.h>
+#include <melee/ft/kinds/ftCommon/types.h>
+
+struct ftSamus_FighterVars {
+    /* 0x222C */ Item_GObj* x222C;
+    /* 0x2230 */ s32 x2230;
+    /* 0x2234 */ u32 x2234;
+    /* 0x2238 */ u32 x2238;
+    /* 0x223C */ Item_GObj* x223C;
+
+    /* 0x2240 */ u8 x2240;
+    /* 0x2241 */ u8 x2241;
+    /* 0x2242 */ u8 x2242;
+    /* 0x2243 */ u8 x2243;
+
+    /* 0x2244 */ u32 x2244;
+    /* 0x2248 */ u32 x2248;
+};
+
+typedef struct DISC_STRUCT _ftSamusAttributes {
+    /*  +0 */ float x0;
+    /*  +4 */ float x4;
+    /*  +8 */ float x8;
+    /*  +C */ float xC;
+    /* +10 */ float x10;
+    /* +14 */ float x14;
+    /* +18 */ float x18;
+    /* +1C */ float x1C;
+    /* +20 */ int x20;
+    /* +24 */ float x24;
+    /* +28 */ float x28;
+    /* +2C */ float x2C;
+    /* +30 */ float x30;
+    /* +34 */ float x34;
+    /* +38 */ float x38;
+    /* +3C */ float x3C;
+    /* +40 */ float x40;
+    /* +44 */ float x44;
+    /* +48 */ float x48;
+    /* +4C */ float x4C;
+    /* +50 */ float x50;
+    /* +54 */ float x54;
+    /* +58 */ float x58;
+    /* +5C */ float x5C;
+    /* +60 */ float x60;
+    /* +64 */ float x64;
+    /* +68 */ float x68;
+    /* +6C */ float x6C;
+    /* +70 */ float x70;
+    /* +74 */ DiscVec3 x74_vec;
+    /* +80 */ float x80;
+    /* +84 */ ftCollisionBoxDisc height_attributes;
+    /* +9C */ s32 x9C;
+    /* +A0 */ s32 xA0;
+    /* +A4 */ s32 xA4;
+    /* +A8 */ s32 xA8;
+    /* +AC */ s32 xAC;
+    /* +B0 */ s32 xB0;
+    /* +B4 */ s32 xB4;
+    /* +B8 */ s32 xB8;
+    /* +BC */ int xBC;
+    /* +C0 */ int xC0;
+    /* +C4 */ int xC4;
+    /* +C8 */ int xC8;
+    /* +CC */ f32 xCC;
+    /* +D0 */ DISC_PTR(void) xD0;
+} ftSs_DatAttrs;
+DISC_ASSERT_SIZE(ftSs_DatAttrs, 0xD4);
+
+/// Samus's grapple beam accessory, reached through the fighter's item list
+/// in PlSs.dat: on-disc, so 32-bit pointer slots.
+struct DISC_STRUCT UNK_SAMUS_S1 {
+    /* +0 */ DISC_PTR(HSD_Joint) x0_joint;
+    /* +4 */ DISC_PTR(DiscU32) x4_anim_joints; /* HSD_AnimJoint*[] */
+    /* +8 */ DISC_PTR(HSD_AnimJoint) x8_anim_joint;
+    /* +C */ DISC_PTR(HSD_MatAnimJoint) xC_matanim_joint;
+};
+DISC_ASSERT_SIZE(struct UNK_SAMUS_S1, 0x10);
+
+union ftSamus_MotionVars {
+    /// @todo Proper state name.
+    struct ftSamus_State2Vars {
+        s32 x0;
+    } unk2;
+
+    /// SpecialN charge shot state - x4 is frame counter (integer)
+    struct ftSamus_State3Vars {
+        s32 x0;
+        s32 x4;
+        float x8;
+    } unk3;
+
+    /// Grapple beam state - x4 is duration (float)
+    struct ftSamus_GrappleVars {
+        s32 x0;
+        float x4;
+        float x8;
+    } grapple;
+
+    /// @todo Proper state name.
+    struct ftSamus_State5Vars {
+        s32 x0;
+    } unk5;
+
+    /// @todo Proper state name.
+    struct ftSamus_State6Vars {
+        s32 x0;
+    } unk6;
+
+    /// @todo Proper state name.
+    struct ftSamus_State7Vars {
+        f32 x0;
+    } unk7;
+};
+
+#endif

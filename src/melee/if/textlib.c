@@ -1,0 +1,256 @@
+#include "textlib.h"
+
+#include <Runtime/platform.h>
+
+#include <printf.h> // IWYU pragma: keep
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "textdraw.h"
+#include "types.h"
+#include <melee/lb/lb_00B0.h>
+#include <sysdolphin/baselib/debug.h>
+
+static inline DevText* find_by_id(char id)
+{
+    DevText* text;
+    for (text = devtext_drawlist; text != NULL; text = text->next) {
+        if (text->id == id) {
+            return text;
+        }
+    }
+    return NULL;
+}
+
+static inline DevText* alloc_text(void)
+{
+    DevText* text = devtext_poolhead;
+    if (text != NULL) {
+        devtext_poolhead = text->next;
+        return text;
+    }
+    return NULL;
+}
+
+static inline void set_color(GXColor* dst, GXColor color)
+{
+    *dst = color;
+}
+
+DevText* DevText_Create(char id, int x, int y, int w, int h, void* buf)
+{
+    static GXColor const cyan = { 0x60, 0xD0, 0xB0, 0x70 };
+    DevText* text;
+    GXColor bg = cyan;
+
+    if (find_by_id(id) != NULL) {
+        return NULL;
+    }
+    text = alloc_text();
+    if (text == NULL) {
+        HSD_ASSERTREPORT(309, 0, "TW : Screen alloc Fail\n");
+    }
+    if (text != NULL) {
+        static GXColor const white = { 0xFF, 0xFF, 0xFF, 0xFF };
+        static GXColor const red = { 0xFF, 0x80, 0x80, 0xFF };
+        static GXColor const green = { 0x80, 0xFF, 0x80, 0xFF };
+        static GXColor const blue = { 0x80, 0x80, 0xFF, 0xFF };
+        text->x = x;
+        text->y = y;
+        text->w = w;
+        text->h = h;
+        text->cursor_x = 0;
+        text->cursor_y = 0;
+        text->scale_x = 10.0f;
+        text->scale_y = 16.0f;
+        set_color(&text->bg_color, bg);
+        set_color(&text->text_colors[0], white);
+        set_color(&text->text_colors[1], red);
+        set_color(&text->text_colors[2], green);
+        set_color(&text->text_colors[3], blue);
+        text->id = (int) id;
+        text->line_width = 10;
+        text->flags = DEVTEXT_FLAG_SHOWCURSOR;
+        text->unk = 0;
+        text->current_color = 0;
+        text->prev = NULL;
+        text->next = NULL;
+        text->buf = buf;
+        memzero(buf, h * (w * 2));
+    }
+    return text;
+}
+
+void DevText_EraseFirstLine(DevText* text)
+{
+    DevTextGlyph* start_of_line = text->buf;
+    int line_length = text->w;
+    size_t line_size = line_length * sizeof(DevTextGlyph);
+    int line_number;
+
+    for (line_number = 0; line_number < text->h - 1; line_number++) {
+        memcpy(start_of_line, start_of_line + line_length, line_size);
+        start_of_line += line_length;
+    }
+    memzero(start_of_line, line_size);
+}
+
+static inline int DevText_Clamp(int val, int max)
+{
+    if (max <= val) {
+        return max - 1;
+    } else if (val < 0) {
+        return 0;
+    } else {
+        return val;
+    }
+}
+
+void DevText_SetCursorXY(DevText* text, int x, int y)
+{
+    text->cursor_x = DevText_Clamp(x, text->w);
+    text->cursor_y = DevText_Clamp(y, text->h);
+}
+
+void DevText_SetCursorX(DevText* text, int x)
+{
+    text->cursor_x = DevText_Clamp(x, text->w);
+}
+
+void DevText_HideCursor(DevText* text)
+{
+    text->flags &= ~DEVTEXT_FLAG_SHOWCURSOR;
+}
+
+void DevText_80302AC0(DevText* text)
+{
+    text->flags |= DEVTEXT_FLAG_NOWRAP;
+}
+
+void DevText_ShowBackground(DevText* text)
+{
+    text->flags &= ~DEVTEXT_FLAG_HIDEBACKGROUND;
+}
+
+void DevText_HideBackground(DevText* text)
+{
+    text->flags |= DEVTEXT_FLAG_HIDEBACKGROUND;
+}
+
+void DevText_ShowText(DevText* text)
+{
+    text->flags &= ~DEVTEXT_FLAG_HIDETEXT;
+}
+
+void DevText_HideText(DevText* text)
+{
+    text->flags |= DEVTEXT_FLAG_HIDETEXT;
+}
+
+void DevText_SetScale(DevText* text, f32 x, f32 y)
+{
+    text->scale_x = x;
+    text->scale_y = y;
+}
+
+void DevText_SetXY(DevText* text, int x, int y)
+{
+    if (x < 8) {
+        x = 8;
+    }
+    if (y < 8) {
+        y = 8;
+    }
+    text->x = x;
+    text->y = y;
+}
+
+u8 DevText_StoreColorIndex(DevText* text, u8 index)
+{
+    u8 old = text->current_color;
+    text->current_color = index;
+    return old;
+}
+
+GXColor DevText_SetTextColor(DevText* text, GXColor color)
+{
+    int index = text->current_color;
+    GXColor old = text->text_colors[index];
+    text->text_colors[index] = color;
+    return old;
+}
+
+GXColor DevText_SetBGColor(DevText* text, GXColor color)
+{
+    GXColor old = text->bg_color;
+    text->bg_color = color;
+    return old;
+}
+
+void DevText_Erase(DevText* text)
+{
+    memzero(text->buf, sizeof(DevTextGlyph) * text->w * text->h);
+}
+
+static inline void DevText_AdvanceLine(DevText* text)
+{
+    text->cursor_x = 0;
+    if (text->cursor_y < text->h - 1) {
+        text->cursor_y++;
+    } else {
+        DevText_EraseFirstLine(text);
+    }
+}
+
+void DevText_Print(DevText* text, char* str)
+{
+    char* cur;
+    if (str != NULL) {
+        cur = str;
+        while (*cur) {
+            if (*cur != '\n') {
+                int index = text->cursor_x + text->cursor_y * text->w;
+                text->buf[index].chr = *cur;
+                text->buf[index].color = text->current_color;
+                if (text->cursor_x < text->w - 1) {
+                    text->cursor_x++;
+                } else if ((text->flags & DEVTEXT_FLAG_NOWRAP) == 0) {
+                    DevText_AdvanceLine(text);
+                }
+            } else {
+                DevText_AdvanceLine(text);
+            }
+            cur++;
+        }
+    }
+}
+
+void DevText_PrintInt(DevText* text, int num)
+{
+    char str[16];
+    DevText_NumToStr(num, str);
+    DevText_Print(text, str);
+}
+
+void DevText_Printf(DevText* text, char* format, ...)
+{
+    char str[64];
+    va_list args;
+    va_start(args, format);
+    /* `-1` converts to SIZE_MAX, i.e. unbounded: any format longer than 64
+     * bytes overran the frame. */
+    vsnprintf(str, sizeof(str), format, args);
+    va_end(args);
+    DevText_Print(text, str);
+}
+
+struct un_80304138_objalloc_t* un_80302DF0(void)
+{
+    return un_804D6E44;
+}
+
+void un_80302DF8(struct un_80304138_objalloc_t* arg0, soundtest_callback arg1)
+{
+    arg0->xC = arg1;
+}

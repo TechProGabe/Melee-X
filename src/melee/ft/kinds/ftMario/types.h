@@ -1,0 +1,95 @@
+#ifndef MELEE_FT_CHARA_FTMARIO_TYPES_H
+#define MELEE_FT_CHARA_FTMARIO_TYPES_H
+
+#include <Runtime/platform.h>
+
+#include <melee/ft/forward.h>
+#include <melee/ft/kinds/ftMario/forward.h> // IWYU pragma: export
+#include <melee/it/forward.h>
+#include <sysdolphin/baselib/forward.h>
+
+#include <dolphin/mtx.h>
+#include <melee/lb/types.h>
+
+struct ftMario_FighterVars {
+    /// Current Megavitamin color combo
+    /* 0x222C */ int x222C_vitaminCurr;
+    /// Previous Megavitamin color combo
+    /* 0x2230 */ int x2230_vitaminPrev;
+    /* 0x2234 */ bool x2234_tornadoCharge;
+    /* 0x2238 */ bool x2238_isCapeBoost;
+    /* 0x223C */ HSD_GObj* x223C_capeGObj;
+    /* 0x2240 */ HSD_GObj* x2240;
+    u8 _[FIGHTERVARS_SIZE - 0x18];
+};
+
+typedef struct DISC_STRUCT ftMario_DatAttrs {
+    struct DISC_STRUCT ftMario_SpecialS_DatAttrs {
+        float vel_x_decay;
+        DiscVec2 vel;
+        float grav;
+        float terminal_vel;
+        ItemKind cape_kind;
+    } specials;
+
+    struct DISC_STRUCT ftMario_SpecialHi_DatAttrs {
+        float freefall_mobility;
+        float landing_lag;
+        float reverse_stick_range;
+        float momentum_stick_range;
+        float angle_diff;
+        float vel_x;
+        float grav;
+        float vel_mul;
+    } specialhi;
+
+    struct DISC_STRUCT ftMario_SpecialLw_DatAttrs {
+        float vel_y; ///< Vertical momentum from initial grounded B-tap
+        float momentum_x;
+        float air_momentum_x;
+        float momentum_x_mul;
+        float air_momentum_x_mul;
+        float friction_end;
+        s32 unk0;
+        float tap_y_vel_max;
+        float tap_grav;
+        s32 landing_lag;
+    } speciallw;
+
+    ReflectDesc cape_reflection;
+} ftMario_DatAttrs;
+DISC_ASSERT_SIZE(ftMario_DatAttrs, 0x84);
+
+typedef struct DISC_STRUCT ftMario_SpecialLw_ECB {
+    u8 x0_str_arr[3];
+    u8 x3_balign;
+    u32 x4;
+    u32 x8;
+    u32 xC;
+    u32 x10;
+    u32 x14;
+} ftMario_SpecialLw_ECB;
+DISC_ASSERT_SIZE(ftMario_SpecialLw_ECB, 0x18);
+
+typedef struct ftMarioSpecialS {
+    /// 0x2340 - bool to check if reflect bubble should be enabled
+    bool reflecting;
+} ftMarioSpecialS;
+
+typedef struct ftMarioSpecialLw {
+    /// 0x2340 - Grounded momentum of Mario / Dr. Tornado
+    float groundVelX;
+    /// 0x2344 - Set but never used?
+    s32 unk;
+    /// 0x2348 - Skipped entirely
+    s32 _;
+    /// 0x234C - Checked in collision, related to some angle calculation
+    bool isUnkColl;
+} ftMarioSpecialLw;
+
+typedef union ftMario_MotionVars {
+    ftMarioSpecialS SpecialS;
+    ftMarioSpecialLw SpecialLw;
+} ftMario_MotionVars;
+
+#endif

@@ -1,0 +1,180 @@
+#include <Runtime/platform.h>
+
+#include <melee/lb/forward.h>
+
+#include "ground.h"
+#include "grzakogenerator.h"
+#include "inlines.h"
+#include "types.h"
+#include <dolphin/mtx.h>
+#include <sysdolphin/baselib/gobj.h>
+#include <sysdolphin/baselib/gobjproc.h>
+
+/* 2225D0 */ static void grTNess_802225D0(s32);
+/* 2225D4 */ static void grTNess_OnInit(void);
+/* 222644 */ static void grTness_UnkStage0_OnLoad(void);
+/* 222648 */ static void grTness_UnkStage0_OnStart(void);
+/* 22266C */ static bool grTNess_8022266C(void);
+/* 222674 */ static HSD_GObj* grTNess_80222674(int param_1);
+/* 22275C */ static void stageGObj0_OnInit(Ground_GObj* gobj);
+/* 222788 */ static bool grTNess_80222788(Ground_GObj*);
+/* 222790 */ static void grTNess_80222790(Ground_GObj*);
+/* 222794 */ static void grTNess_80222794(Ground_GObj*);
+/* 222798 */ static void stageGObj2_OnInit(Ground_GObj* gobj);
+/* 2227E8 */ static bool grTNess_802227E8(Ground_GObj*);
+/* 2227F0 */ static void stageGObj2_GObjProc(Ground_GObj* gobj);
+/* 222824 */ static void grTNess_80222824(Ground_GObj*);
+/* 222828 */ static void stageGObj1_OnInit(Ground_GObj* gobj);
+/* 222878 */ static bool grTNess_80222878(Ground_GObj*);
+/* 222880 */ static void stageGObj1_GObjProc(Ground_GObj* gobj);
+/* 2228A0 */ static void grTNess_802228A0(Ground_GObj*);
+/* 2228A4 */ static DynamicsDesc* grTNess_802228A4(enum_t);
+/* 2228AC */ static bool grTNess_802228AC(Vec3*, int, HSD_JObj*);
+
+static StageCallbacks grTNs_StageCallbacks[] = {
+    {
+        stageGObj0_OnInit,
+        grTNess_80222788,
+        grTNess_80222790,
+        grTNess_80222794,
+    },
+    {
+        stageGObj1_OnInit,
+        grTNess_80222878,
+        stageGObj1_GObjProc,
+        grTNess_802228A0,
+    },
+    {
+        stageGObj2_OnInit,
+        grTNess_802227E8,
+        stageGObj2_GObjProc,
+        grTNess_80222824,
+        (1 << 30) | (1 << 31),
+    },
+    { 0 },
+};
+
+StageData grTNs_StageData = {
+    Gr_Kind_TNess,
+    grTNs_StageCallbacks,
+    "/GrTNs.dat",
+    grTNess_OnInit,
+    grTNess_802225D0,
+    grTness_UnkStage0_OnLoad,
+    grTness_UnkStage0_OnStart,
+    grTNess_8022266C,
+    grTNess_802228A4,
+    grTNess_802228AC,
+    0x00000001,
+};
+
+static void grTNess_802225D0(s32 arg0)
+{
+    return;
+}
+
+static void grTNess_OnInit(void)
+{
+    Ground_InitTargetStage(grTNess_80222674);
+}
+
+static void grTness_UnkStage0_OnLoad(void)
+{
+    return;
+}
+
+static void grTness_UnkStage0_OnStart(void)
+{
+    grZakoGenerator_801CAE04(NULL);
+}
+
+static bool grTNess_8022266C(void)
+{
+    return false;
+}
+
+static HSD_GObj* grTNess_80222674(int id)
+{
+    HSD_GObj* gobj;
+    StageCallbacks* callbacks = &grTNs_StageCallbacks[id];
+
+    gobj = Ground_GetStageGObj(id);
+
+    if (gobj != NULL) {
+        Ground_SetupStageCallbacks(gobj, callbacks);
+    } else {
+        OSReport("%s:%d: couldn t get gobj(id=%d)\n", __FILE__, 0xC3, id);
+    }
+
+    return gobj;
+}
+
+static void stageGObj0_OnInit(Ground_GObj* gobj)
+{
+    Ground_StartMapAnim(gobj);
+}
+
+static bool grTNess_80222788(Ground_GObj* gobj)
+{
+    return false;
+}
+
+static void grTNess_80222790(Ground_GObj* gobj)
+{
+    return;
+}
+
+static void grTNess_80222794(Ground_GObj* gobj)
+{
+    return;
+}
+
+static void stageGObj2_OnInit(Ground_GObj* gobj)
+{
+    Ground_InitMapCollAndAnim(gobj);
+}
+
+static bool grTNess_802227E8(Ground_GObj* gobj)
+{
+    return false;
+}
+
+static void stageGObj2_GObjProc(Ground_GObj* gobj)
+{
+    Ground_UpdateWindAndMapColl(gobj);
+}
+
+static void grTNess_80222824(Ground_GObj* gobj)
+{
+    return;
+}
+
+static void stageGObj1_OnInit(Ground_GObj* gobj)
+{
+    Ground_InitMapCollAndAnim(gobj);
+}
+
+static bool grTNess_80222878(Ground_GObj* gobj)
+{
+    return false;
+}
+
+static void stageGObj1_GObjProc(Ground_GObj* gobj)
+{
+    Ground_UpdateMapColl(gobj);
+}
+
+static void grTNess_802228A0(Ground_GObj* gobj)
+{
+    return;
+}
+
+static DynamicsDesc* grTNess_802228A4(enum_t arg0)
+{
+    return NULL;
+}
+
+static bool grTNess_802228AC(Vec3* arg0, int arg1, HSD_JObj* arg2)
+{
+    return true;
+}

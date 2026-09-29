@@ -1,0 +1,92 @@
+#ifndef _DOLPHIN_AR_H_
+#define _DOLPHIN_AR_H_
+
+#include <dolphin/types.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+struct ARQRequest;
+typedef void (*ARQCallback)(struct ARQRequest* request);
+
+struct ARQRequest {
+    /* 0x00 */ struct ARQRequest *next;
+    /* 0x04 */ uintptr_t owner;
+    /* 0x08 */ u32 type;
+    /* 0x0C */ u32 priority;
+    /* 0x10 */ uintptr_t source;
+    /* 0x14 */ uintptr_t dest;
+    /* 0x18 */ u32 length;
+    /* 0x1C */ ARQCallback callback;
+};
+
+#define ARQ_DMA_ALIGNMENT 32
+#define AR_STACK_INDEX_ENTRY_SIZE sizeof(u32)
+
+#define ARAM_DIR_MRAM_TO_ARAM 0x00
+#define ARAM_DIR_ARAM_TO_MRAM 0x01
+
+typedef struct ARQRequest ARQRequest;
+
+#define ARQ_TYPE_MRAM_TO_ARAM ARAM_DIR_MRAM_TO_ARAM
+#define ARQ_TYPE_ARAM_TO_MRAM ARAM_DIR_ARAM_TO_MRAM
+
+#define ARQ_PRIORITY_LOW  0
+#define ARQ_PRIORITY_HIGH 1
+
+#define AR_CLEAR_INTERNAL_ALL 0x00
+#define AR_CLEAR_INTERNAL_USER 0x01
+#define AR_CLEAR_EXPANSION 0x02
+
+typedef void (*ARCallback)(void);
+
+ARCallback ARRegisterDMACallback(ARCallback callback);
+u32 ARGetDMAStatus(void);
+void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length);
+u32 ARAlloc(u32 length);
+u32 ARFree(u32* length);
+BOOL ARCheckInit(void);
+u32 ARInit(u32* stack_index_addr, u32 num_entries);
+void ARReset(void);
+void ARSetSize(void);
+u32 ARGetBaseAddress(void);
+u32 ARGetSize(void);
+u32 ARGetInternalSize(void);
+void ARClear(u32 flag);
+
+/**
+ * Aurora extension: gets the memory address where ARAM is stored, for direct access.
+ */
+void* ARGetStorageAddress();
+
+// ARQ
+void ARQInit(void);
+void ARQReset(void);
+void ARQPostRequest(ARQRequest* request, uintptr_t owner, u32 type, u32 priority, uintptr_t source, uintptr_t dest, u32 length, ARQCallback callback);
+void ARQRemoveRequest(ARQRequest* request);
+void ARQRemoveOwnerRequest(uintptr_t owner);
+void ARQFlushQueue(void);
+void ARQSetChunkSize(u32 size);
+u32 ARQGetChunkSize(void);
+
+/* melee-pc: host pointer to the emulated ARAM (valid after ARInit). */
+u8* aurora_aram_base(void);
+BOOL ARQCheckInit(void);
+
+// melee-pc: ARAM transfers posted and not yet retired. The netplay tick
+// drains on this together with aurora_dvd_inflight(), so a load costs both
+// peers the same number of ticks (src/pc/net.c).
+int aurora_arq_inflight(void);
+
+u16 __ARGetInterruptStatus(void);
+void __ARClearInterrupt(void);
+
+#define ARStartDMARead(mmem, aram, len) ARStartDMA(ARAM_DIR_ARAM_TO_MRAM, mmem, aram, len)
+#define ARStartDMAWrite(mmem, aram, len) ARStartDMA(ARAM_DIR_MRAM_TO_ARAM, mmem, aram, len)
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

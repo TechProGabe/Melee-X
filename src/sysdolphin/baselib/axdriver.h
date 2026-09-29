@@ -1,0 +1,87 @@
+#ifndef _AXDRIVER_H_
+#define _AXDRIVER_H_
+
+#include <Runtime/platform.h>
+
+#include <sysdolphin/baselib/forward.h>
+
+#define SMSTATE_MASK 0xC0000000
+#define SMSTATE_ACTIVE 0x40000000
+#define SMSTATE_SLEEP 0x80000000
+
+typedef enum {
+    AXDRIVER_AUX_OFF = 0,
+    AXDRIVER_AUX_REVERB_HI = 1,
+    AXDRIVER_AUX_REVERB_STD = 2,
+    AXDRIVER_AUX_CHORUS = 3,
+    AXDRIVER_AUX_DELAY = 4
+} AXDriverAuxType;
+
+struct HSD_SM {
+    /* 00 */ HSD_SM* prev;
+    /* 04 */ HSD_SM* next;
+    /* 08 */ u32 flags;
+    /* 0C */ int unk;
+    /* 10 */ int vID;
+    /* 14 */ u16 fid;
+    /* 16 */ u16 x16;
+    /* 18 */ u8 track;
+    /* 19 */ u8 pri;
+    /* 1A */ u8 x1A;
+    /* 1B */ u8 volume;
+    /* 1C */ u8 x1C;
+    /* 1D */ u8 pan;
+    /* 1E */ u8 x1E;
+    /* 20 */ s16 x20;
+    /* 22 */ s16 fadetime;
+    /* 24 */ u8 x24[2];
+    /* 26 */ u8 x26;
+    /* 27 */ u8 x27;
+    /* 28 */ u8 dp12flag;
+    /* 29 */ u8 itdflag;
+    /* 2A */ u16 x2A;
+    /* 2C */ DiscU32* cmd_stream; ///< into the big-endian .sem image
+    /* 30 */ int x30;
+};
+
+/* 38BB34 */ void* AXDriverAlloc(size_t size);
+/* 38BB98 */ void AXDriverFree(void* ptr);
+/* 38BB9C */ void AXDriverUnlink(HSD_SM* v, HSD_SM** head);
+/* 38BC20 */ bool HSD_AudioSFXKeyOff(int vid);
+/* 38BD6C */ void HSD_AudioSFXKeyOffAll(void);
+/* 38BE64 */ void HSD_AudioSFXKeyOffTrack(int track);
+/* 38BF6C */ void AXDriverExec(HSD_SM* v);
+/* 38C678 */ u32 parseWait(u32 param_type, u32 param_value);
+/* 38C6C0 */ void AXDriverInterp(HSD_SM* v);
+/* 38CFF4 */ int HSD_AudioSFXStartParam(int sound_id, u8 volume, u8 pan,
+                                        int track, int channel);
+/* 38D2B4 */ bool HSD_AudioSFXSetPan(int vid, u8 pan);
+/* 38D3B8 */ bool HSD_AudioSFXSetVolumeEx(s32 vid, u8 volume);
+/* 38D4E4 */ bool HSD_AudioSFXSetPitchFid(s32 vid, s16 pitch);
+/* 38D5B4 */ bool HSD_AudioSFXSetMix(s32 vid, s32 aux_bus, u8 send_level);
+/* 38D914 */ bool HSD_AudioSFXSetMixGroup(s32 channel, s32 aux_bus,
+                                          s8 send_level);
+/* 38D9D8 */ bool HSD_AudioSFXCheck(int vid);
+/* 38DA70 */ void AXDriver_8038DA70(const char* path, void (*callback)(void));
+/* 38DCFC */ void AXDriver_8038DCFC(void);
+/* 38DD30 */ int AXDriverSetupAux(int channel, AXDriverAuxType type,
+                                  void* param);
+/* 38E034 */ s32 HSD_AudioGetAuxHeapSize(AXDriverAuxType type, void* param);
+/* 38E30C */ bool HSD_AudioSFXSetupAux(s32 channel, s32 type, void* param,
+                                       u8* heap, size_t heap_size);
+/* 38E37C */ bool HSD_AudioSFXGetDefaultAuxParam(AXDriverAuxType type,
+                                                 void* param);
+/* 38E498 */ void HSD_AudioInitMultiPStream(int voices, int priority,
+                                            int sample_rate, int aram_size);
+/* 38E5D4 */ int AXDriver_8038E5D4(void);
+/* 38E5DC */ int AXDriver_8038E5DC(void);
+/* 38E6C0 */ bool HSD_AudioPStreamPauseCh(int channel);
+/* 38E844 */ bool HSD_AudioPStreamResumeCh(int channel);
+/* 38E8EC */ bool HSD_AudioPStreamStartChParam(const char* path, u8 volume,
+                                               int track);
+/* 38E968 */ bool AXDriverStop(void);
+/* 38E9A8 */ bool AXDriverPause(void);
+/* 38E9E0 */ bool AXDriverResume(void);
+/* 38EA18 */ bool AXDriverCheck(void);
+
+#endif

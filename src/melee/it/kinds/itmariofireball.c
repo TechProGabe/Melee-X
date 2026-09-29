@@ -1,0 +1,125 @@
+#include "itmariofireball.h"
+
+#include <math.h>
+
+#include "inlines.h"
+#include <dolphin/mtx.h>
+#include <melee/db/db.h>
+#include <melee/ef/efasync.h>
+#include <melee/it/inlines.h>
+#include <melee/it/it_26B1.h>
+#include <melee/it/it_2725.h>
+#include <melee/it/itCommonItems.h>
+#include <melee/it/item.h>
+#include <melee/it/itgroundcoll.h>
+#include <melee/it/itmaplib.h>
+#include <sysdolphin/baselib/gobj.h>
+#include <sysdolphin/baselib/mtx.h>
+
+ItemStateTable it_803F6788[] = {
+    { 0, itMariofireball_UnkMotion0_Anim, itMariofireball_UnkMotion0_Phys,
+      itMariofireball_UnkMotion0_Coll },
+};
+
+void it_8029B6F8(Item_GObj* gobj, Vec3* pos, ItemKind kind, f32 facing_dir)
+{
+    Item_GObj* spawned_gobj;
+
+    SpawnItem spawn_item;
+    spawn_item.kind = kind;
+    Item_InitSpawnPositionFromParent(&spawn_item, gobj, pos);
+    Item_InitSpawnCommonFields(&spawn_item, gobj, facing_dir, true);
+
+    spawned_gobj = Item_80268B18(&spawn_item);
+    it_8029B7C0(spawned_gobj);
+    db_80225DD8(spawned_gobj, gobj);
+    it_802750F8(spawned_gobj);
+}
+
+void it_8029B7C0(Item_GObj* gobj)
+{
+    Item* it = GET_ITEM(gobj);
+    itUnkAttributes* ap = DP(itUnkAttributes, it->xC4_article_data->x4_specialAttributes);
+    f32 x0 = ap->x0_float;
+    f32 x4 = ap->x4_float;
+
+    it->x40_vel.x = it->facing_dir * (x0 * cosf(x4));
+    it->x40_vel.y = x0 * sinf(x4);
+    it->x40_vel.z = 0.0f;
+
+    it_80275158(gobj, ap->x8);
+    Item_80268E5C(gobj, 0, ITEM_ANIM_UPDATE);
+}
+
+bool itMariofireball_UnkMotion0_Anim(Item_GObj* gobj)
+{
+    Item* item = GET_ITEM(gobj);
+    --item->xD44_lifeTimer;
+    return item->xD44_lifeTimer <= 0 ? true : false;
+}
+
+void itMariofireball_UnkMotion0_Phys(Item_GObj* gobj)
+{
+    Item_ApplyFallingPhysics(gobj);
+}
+
+static double calc_dist_2d_accurate(Vec3* v)
+{
+    return sqrtf_accurate(VEC2_SQ_LEN(*v));
+}
+
+bool itMariofireball_UnkMotion0_Coll(Item_GObj* gobj)
+{
+    it_8026D9A0(gobj);
+    if (it_8027781C(gobj)) {
+        Item* it = GET_ITEM(gobj);
+        HSD_JObj* jobj = GET_JOBJ(gobj);
+        itUnkAttributes* attrs = DP(itUnkAttributes, it->xC4_article_data->x4_specialAttributes);
+        if (calc_dist_2d_accurate(&it->x40_vel) < attrs->x10) {
+            return true;
+        }
+        if (it->kind == It_Kind_Mario_Fire) {
+            Item_8026AE84(it, ~0xFFFD40C6, 0x7f,
+                          0x40); // What the fuck is this ID?
+            efAsync_Spawn(gobj, &(GET_ITEM(gobj)->xBC0), 1, 1147, jobj);
+        } else {
+            efAsync_Spawn(gobj, &(GET_ITEM(gobj)->xBC0), 1, 1184, jobj);
+        }
+    }
+    return false;
+}
+
+bool itMarioFireball_Logic87_DmgDealt(Item_GObj* gobj)
+{
+    return true;
+}
+
+bool itMarioFireball_Logic87_Reflected(Item_GObj* gobj)
+{
+    return it_80273030(gobj);
+}
+
+bool itMarioFireball_Logic87_Clanked(Item_GObj* gobj)
+{
+    return true;
+}
+
+bool itMarioFireball_Logic87_HitShield(Item_GObj* gobj)
+{
+    return true;
+}
+
+bool itMarioFireball_Logic87_Absorbed(Item_GObj* gobj)
+{
+    return true;
+}
+
+bool itMarioFireball_Logic87_ShieldBounced(Item_GObj* gobj)
+{
+    return itColl_BounceOffShield(gobj);
+}
+
+void itMarioFireball_Logic87_EvtUnk(Item_GObj* gobj, HSD_GObj* referenced_gobj)
+{
+    it_8026B894(gobj, referenced_gobj);
+}

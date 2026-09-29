@@ -1,0 +1,15 @@
+# build output
+/build-xbox*/
+/build/
+__pycache__/
+*.pyc
+
+# never commit game data, console dumps or emulator firmware
+*.iso
+*.gcm
+*.ciso
+*.rvz
+*.dol
+*.xiso
+*.bin
+*.gci
