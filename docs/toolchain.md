@@ -61,3 +61,9 @@ lacks (`<sys/types.h>`, `M_PI`, `va_list` in aurora's `os.h`).
 structs with the game (the Dolphin SDK implementation) are compiled with the
 game triple; files that talk to the kernel, pbkit or USB use nxdk's own and
 expose only scalars and pointers to the rest.
+
+## CI
+
+`.github/workflows/build.yml` runs `tools/xbox/setup.sh` (LLVM and nxdk are
+cached, keyed on that script), builds `default.xbe` and runs the three host
+tests. The XBE and its link map are uploaded as the `default.xbe` artifact.

@@ -1,0 +1,60 @@
+# Builds default.xbe and runs the host tests. No game data is involved: the
+# XBE reads the user's own disc image at runtime.
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  xbe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      LLVM: /home/runner/toolchain/llvm21
+      NXDK_DIR: /home/runner/toolchain/nxdk
+      DISC_LOWER: /home/runner/toolchain/disc_lower
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq build-essential cmake ninja-build git bison flex \
+            libzstd-dev zlib1g-dev libxml2-dev python3-pip
+          pip install --user --break-system-packages nv2a-vsh
+
+      # LLVM and nxdk take most of the time; they only change with setup.sh
+      - name: Toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /home/runner/toolchain/llvm21
+            /home/runner/toolchain/nxdk
+          key: toolchain-${{ runner.os }}-${{ hashFiles('tools/xbox/setup.sh') }}
+
+      - name: Toolchain
+        run: tools/xbox/setup.sh
+
+      - name: Build default.xbe
+        run: xbox/build.sh
+
+      - name: Tests
+        run: |
+          python3 tools/lower/test_lower.py
+          python3 tools/xbox/test_vp_encoder.py
+          python3 tools/xbox/test_tex_convert.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: default.xbe
+          path: |
+            build-xbox/xbe/default.xbe
+            build-xbox/melee_x.map
+          if-no-files-found: error
+          retention-days: 14
