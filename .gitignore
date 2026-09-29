@@ -13,3 +13,5 @@ __pycache__/
 *.xiso
 *.bin
 *.gci
+*.qcow2
+*.img

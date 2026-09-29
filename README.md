@@ -12,7 +12,8 @@ draws with its NV2A GPU.
 > **Status: early bring-up.** `default.xbe` builds and links: all 1008 game
 > units, the Dolphin SDK on the Xbox, and a first GX → NV2A renderer. It has
 > not been run yet (no console or emulator here). See
-> [docs/roadmap.md](docs/roadmap.md).
+> [docs/roadmap.md](docs/roadmap.md), and [docs/testing.md](docs/testing.md)
+> for how to try it and what logs to send.
 
 ## How it is put together
 
@@ -27,8 +28,7 @@ The disc data stays big-endian in memory, as on the GameCube. melee-pc
 marks the on-disc structs `DISC_STRUCT`, which GCC byte-swaps on access.
 nxdk is clang, so the Xbox build lowers those accesses to explicit
 big-endian loads and stores first (`tools/lower`, melee-pc's browser path).
-Details in [docs/architecture.md](docs/architecture.md) and
-[docs/toolchain.md](docs/toolchain.md).
+All documentation is indexed in [docs/README.md](docs/README.md).
 
 ## Building
 
