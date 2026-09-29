@@ -28,6 +28,7 @@ static u32* s_ciso_index;   /* block -> file offset, 0xFFFFFFFF = zero block */
 static u32 s_ciso_blocks;
 
 static int img_read_raw(u32 off, void* dst, u32 len) {
+    xhw_commit(dst, len);   /* the kernel writes it: a lazy MEM1 chunk must exist first */
     if (fseek(s_img, (long)off, SEEK_SET) != 0) return 0;
     return fread(dst, 1, len, s_img) == len;
 }

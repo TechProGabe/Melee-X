@@ -231,6 +231,78 @@ void* xhw_alloc_at(uintptr_t va, uint32_t bytes) {
     return base;
 }
 
+/* ---- demand-committed regions (MEM1, ARAM) ---- */
+#define LAZY_CHUNK (64u * 1024)
+#define LAZY_MAX 4
+typedef struct {
+    uintptr_t base;
+    uint32_t size;
+    volatile LONG* bits;   /* one bit per chunk */
+} Lazy;
+static Lazy s_lazy[LAZY_MAX];
+static volatile LONG s_lazy_n, s_lazy_chunks;
+
+void* xhw_reserve_lazy(uintptr_t va, uint32_t bytes) {
+    PVOID base = (PVOID)va;
+    SIZE_T size = bytes;
+    NTSTATUS st;
+    Lazy* l;
+    uint32_t words = (bytes / LAZY_CHUNK + 31) / 32;
+    if (s_lazy_n >= LAZY_MAX || (va | bytes) & (LAZY_CHUNK - 1)) return NULL;
+    st = NtAllocateVirtualMemory(&base, 0, &size, MEM_RESERVE, PAGE_READWRITE);
+    if (!NT_SUCCESS(st) || (uintptr_t)base != va) {
+        xhw_logf("[MEM] reserve(%08x, %u KB) failed: %08x", (unsigned)va, bytes / 1024, (unsigned)st);
+        return NULL;
+    }
+    l = &s_lazy[s_lazy_n];
+    l->bits = (volatile LONG*)calloc(words, sizeof(LONG));
+    if (!l->bits) return NULL;
+    l->base = va;
+    l->size = bytes;
+    InterlockedIncrement(&s_lazy_n);
+    return base;
+}
+
+static int lazy_commit_chunk(Lazy* l, uint32_t chunk) {
+    volatile LONG* w = &l->bits[chunk / 32];
+    LONG bit = (LONG)(1u << (chunk % 32));
+    PVOID base;
+    SIZE_T size = LAZY_CHUNK;
+    NTSTATUS st;
+    if (*w & bit) return 1;
+    base = (PVOID)(l->base + chunk * LAZY_CHUNK);
+    /* committing a committed page again is harmless, so racing threads are fine */
+    st = NtAllocateVirtualMemory(&base, 0, &size, MEM_COMMIT, PAGE_READWRITE);
+    if (!NT_SUCCESS(st)) return 0;
+    if (!(__atomic_fetch_or(w, bit, __ATOMIC_SEQ_CST) & bit)) InterlockedIncrement(&s_lazy_chunks);
+    return 1;
+}
+
+static Lazy* lazy_find(uintptr_t a) {
+    LONG i, n = s_lazy_n;
+    for (i = 0; i < n; i++)
+        if (a - s_lazy[i].base < s_lazy[i].size) return &s_lazy[i];
+    return NULL;
+}
+
+void xhw_commit(const void* p, uint32_t bytes) {
+    uintptr_t a = (uintptr_t)p, end = a + bytes;
+    Lazy* l;
+    if (!bytes || !(l = lazy_find(a))) return;
+    if (end > l->base + l->size) end = l->base + l->size;
+    for (a = (a - l->base) / LAZY_CHUNK; a <= (end - 1 - l->base) / LAZY_CHUNK; a++)
+        if (!lazy_commit_chunk(l, (uint32_t)a))
+            xhw_fatal("Out of memory", "The Xbox ran out of memory for the game's main memory or ARAM.");
+}
+
+int xhw_lazy_fault(uintptr_t addr) {
+    Lazy* l = lazy_find(addr);
+    if (!l || KeGetCurrentIrql() >= DISPATCH_LEVEL) return 0;
+    return lazy_commit_chunk(l, (uint32_t)((addr - l->base) / LAZY_CHUNK));
+}
+
+uint32_t xhw_lazy_committed_kb(void) { return (uint32_t)s_lazy_chunks * (LAZY_CHUNK / 1024); }
+
 uint32_t xhw_mem_free_kb(void) {
     MM_STATISTICS st;
     memset(&st, 0, sizeof st);
@@ -243,10 +315,10 @@ void xhw_mem_log(const char* where) {
     memset(&st, 0, sizeof st);
     st.Length = sizeof st;
     if (MmQueryStatistics(&st) >= 0)
-        xhw_logf("[MEM] %-18s free %5u KB of %5u KB (image %u KB, virt %u KB, pool %u KB)", where,
+        xhw_logf("[MEM] %-18s free %5u KB of %5u KB (image %u KB, virt %u KB, pool %u KB, MEM1+ARAM %u KB)", where,
                  (unsigned)(st.AvailablePages * 4), (unsigned)(st.TotalPhysicalPages * 4),
                  (unsigned)(st.ImagePagesCommitted * 4), (unsigned)(st.VirtualMemoryBytesCommitted / 1024),
-                 (unsigned)(st.PoolPagesCommitted * 4));
+                 (unsigned)(st.PoolPagesCommitted * 4), xhw_lazy_committed_kb());
 }
 
 /* ======================================================================

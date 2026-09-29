@@ -172,9 +172,18 @@ void xgx_clear(const int32_t rect[4], const uint8_t rgba[4], uint32_t z24, int c
 /* End the frame and flip; black: output black (VISetBlack). */
 void xgx_present(int black);
 
-/* Textures: 32-bit A8R8G8B8 texels, rows top to bottom, level 0 then smaller
- * mip levels. Returns a handle or 0 when the pool is full. */
-uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, const uint32_t* argb);
+/* Texture data formats handed to the back end. All but DXT1 are rows top to
+ * bottom (the back end swizzles); DXT1 is 4x4 blocks in rows. Level 0 then
+ * the smaller mip levels, each level's data following the previous one. */
+enum {
+    XGX_TEX_ARGB8 = 0,   /* uint32 A8R8G8B8; any size (NPOT is resampled) */
+    XGX_TEX_RGB565,      /* uint16; power-of-two only */
+    XGX_TEX_AY8,         /* uint8 intensity = alpha = luminance (GX I4/I8) */
+    XGX_TEX_A8Y8,        /* uint8 pairs: luminance, alpha (GX IA4/IA8) */
+    XGX_TEX_DXT1,        /* DXT1 blocks (GX CMPR, reordered and byte-swapped) */
+};
+/* Returns a handle or 0 when the pool is full. */
+uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data);
 void xgx_tex_destroy(uint32_t tex);   /* deferred until the GPU is done */
 uint32_t xgx_tex_pool_free_kb(void);
 /* EFB -> texture: copies the logical rect into a new texture of dst_w x dst_h

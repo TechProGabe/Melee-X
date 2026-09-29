@@ -1,7 +1,8 @@
 /* ar.c - ARAM and the ARAM DMA queue.
  *
  * ARAM is a host buffer at a fixed VA; ARAM "addresses" are offsets into it,
- * which is what PC_IS_ARAM_ADDR (below 16 MB) relies on. ARQ transfers are
+ * which is what PC_IS_ARAM_ADDR (below 16 MB) relies on. It is committed on
+ * demand (xhw_reserve_lazy): only the parts the game fills cost Xbox RAM. ARQ transfers are
  * plain copies done at post time; their callbacks are queued and delivered
  * on the game thread with the alarms, where the ARAM interrupt ran. */
 #include <dolphin/ar.h>
@@ -25,7 +26,7 @@ static ARCallback s_dma_cb;
 
 static void aram_map(void) {
     if (s_aram) return;
-    s_aram = (u8*)xhw_alloc_at(XSDK_ARAM_VA, ARAM_SIZE);
+    s_aram = (u8*)xhw_reserve_lazy(XSDK_ARAM_VA, ARAM_SIZE);
     if (!s_aram) xhw_fatal("Out of memory", "Could not reserve ARAM.");
 }
 
@@ -84,6 +85,8 @@ static void copy(u32 type, uintptr_t mram, uintptr_t aram, u32 length) {
         xhw_logf("[AR] DMA out of range: %08x + %u", (unsigned)aram, length);
         return;
     }
+    xhw_commit(s_aram + aram, length);
+    xhw_commit((const void*)mram, length);
     if (type == 0) memcpy(s_aram + aram, (const void*)mram, length);
     else memcpy((void*)mram, s_aram + aram, length);
 }

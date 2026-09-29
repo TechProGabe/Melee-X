@@ -17,12 +17,13 @@
   - [x] generated vertex programs: a0-indexed skinning, GX lighting (spot, distance,
         specular), texgen; encoder checked bit for bit against nv2a-vsh
   - [x] TEV -> register combiners (from OpenCrossing's compiler, 8 stages, 4 units)
-  - [x] textures (all GC formats -> A8R8G8B8, NPOT resampled), TLUTs, EFB copies (CPU)
+  - [x] textures: CMPR -> DXT1, I/IA -> AY8/A8Y8, RGB565 native, the rest A8R8G8B8
+        (NPOT resampled), TLUTs, EFB copies (CPU)
   - [x] 720p 16:9 content rect for melee-pc's hor+ widescreen
 - [x] default.xbe links
 - [ ] boots to the title screen in xemu
-- [ ] memory fit on 64 MB: CMPR -> DXT1 and 16-bit texture formats, ARAM committed
-      on demand, arena sized to the GameCube's
+- [x] memory fit, first pass: native texture formats; MEM1 and ARAM committed on demand
+- [ ] memory fit measured on hardware (boot.log `[MEM]`); disc-backed ARAM if needed
 - [ ] fog, indirect texturing, TEV swap tables beyond alpha broadcast, GPU EFB copies
 - [ ] VS mode with 4 players on hardware at 60 fps
-- [ ] THP movies, memory fit on 64 MB, release packaging
+- [ ] THP movies, release packaging

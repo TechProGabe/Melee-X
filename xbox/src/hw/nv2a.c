@@ -93,10 +93,11 @@ static int map_y(float y) { return s_cy + (int)floorf(y * (float)s_ch / XGX_EFB_
 /* ======================================================================
  * Contiguous memory: texture pool and vertex ring
  * ====================================================================== */
-#define TEX_POOL_480 (8u * 1024 * 1024)
-#define TEX_POOL_720 (6u * 1024 * 1024)
-#define RING_BYTES (2u * 1024 * 1024)
-#define PB_BYTES (2u * 1024 * 1024)
+/* sized for 64 MB next to the game (docs/architecture.md "Memory") */
+#define TEX_POOL_480 (6u * 1024 * 1024)
+#define TEX_POOL_720 (5u * 1024 * 1024)
+#define RING_BYTES (1536u * 1024)
+#define PB_BYTES (1536u * 1024)
 #define POOL_ALIGN 128
 #define POOL_BIG (256 * 1024)
 
@@ -227,6 +228,7 @@ typedef struct {
     int used;
     uint16_t w, h;          /* after POT resampling */
     uint8_t levels;
+    uint8_t nvfmt;          /* NV097_SET_TEXTURE_FORMAT_COLOR_* */
     void* mem;
 } Tex;
 static Tex s_tex[MAX_TEX];
@@ -293,27 +295,72 @@ static uint32_t sample_bilinear(const uint32_t* src, int w, int h, float fx, flo
     return out;
 }
 
-static void write_level(uint32_t* dst, const uint32_t* src, int w, int h, int pw, int ph) {
+/* one level into swizzled (Morton) order; ARGB8 NPOT images are resampled */
+static void write_level(void* dstv, const void* srcv, int w, int h, int pw, int ph, int bpp) {
     int x, y;
     swz_tables(pw, ph);
-    if (w == pw && h == ph) {
+    if (bpp == 4 && (w != pw || h != ph)) {
+        const uint32_t* src = (const uint32_t*)srcv;
+        uint32_t* dst = (uint32_t*)dstv;
         for (y = 0; y < ph; y++) {
+            float fy = ((y + 0.5f) * h / ph) - 0.5f;
             uint32_t yo = swz_y[y];
-            const uint32_t* row = src + y * w;
-            for (x = 0; x < pw; x++) dst[yo | swz_x[x]] = row[x];
+            if (fy < 0) fy = 0;
+            for (x = 0; x < pw; x++) {
+                float fx = ((x + 0.5f) * w / pw) - 0.5f;
+                if (fx < 0) fx = 0;
+                dst[yo | swz_x[x]] = sample_bilinear(src, w, h, fx, fy);
+            }
         }
         return;
     }
     for (y = 0; y < ph; y++) {
-        float fy = ((y + 0.5f) * h / ph) - 0.5f;
         uint32_t yo = swz_y[y];
-        if (fy < 0) fy = 0;
-        for (x = 0; x < pw; x++) {
-            float fx = ((x + 0.5f) * w / pw) - 0.5f;
-            if (fx < 0) fx = 0;
-            dst[yo | swz_x[x]] = sample_bilinear(src, w, h, fx, fy);
+        switch (bpp) {
+            case 4: {
+                const uint32_t* row = (const uint32_t*)srcv + y * w;
+                uint32_t* dst = (uint32_t*)dstv;
+                for (x = 0; x < pw; x++) dst[yo | swz_x[x]] = row[x];
+                break;
+            }
+            case 2: {
+                const uint16_t* row = (const uint16_t*)srcv + y * w;
+                uint16_t* dst = (uint16_t*)dstv;
+                for (x = 0; x < pw; x++) dst[yo | swz_x[x]] = row[x];
+                break;
+            }
+            default: {
+                const uint8_t* row = (const uint8_t*)srcv + y * w;
+                uint8_t* dst = (uint8_t*)dstv;
+                for (x = 0; x < pw; x++) dst[yo | swz_x[x]] = row[x];
+                break;
+            }
         }
     }
+}
+
+static int fmt_bpp(uint32_t fmt) {
+    switch (fmt) {
+        case XGX_TEX_RGB565: case XGX_TEX_A8Y8: return 2;
+        case XGX_TEX_AY8: return 1;
+        case XGX_TEX_DXT1: return 0;
+        default: return 4;
+    }
+}
+
+static uint8_t nv_format(uint32_t fmt) {
+    switch (fmt) {
+        case XGX_TEX_RGB565: return NV097_SET_TEXTURE_FORMAT_COLOR_SZ_R5G6B5;
+        case XGX_TEX_AY8: return NV097_SET_TEXTURE_FORMAT_COLOR_SZ_AY8;
+        case XGX_TEX_A8Y8: return NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8Y8;
+        case XGX_TEX_DXT1: return NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT1_A1R5G5B5;
+        default: return NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8R8G8B8;
+    }
+}
+
+static uint32_t level_size(uint32_t fmt, int w, int h) {
+    if (fmt == XGX_TEX_DXT1) return (uint32_t)(((w + 3) / 4) * ((h + 3) / 4) * 8);
+    return (uint32_t)(w * h * fmt_bpp(fmt));
 }
 
 static int alloc_handle(void) {
@@ -329,48 +376,53 @@ static int alloc_handle(void) {
     return 0;
 }
 
-uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, const uint32_t* argb) {
-    int id, pw, ph, l, lw, lh;
+uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data) {
+    int id, pw, ph, l, lw, lh, sw, sh;
     uint32_t bytes = 0;
-    uint32_t* mem;
-    if (!w || !h || w > 1024 || h > 1024) return 0;
+    uint8_t* mem;
+    const uint8_t* src = (const uint8_t*)data;
+    uint8_t* dst;
+    if (!w || !h || w > 1024 || h > 1024 || !levels) return 0;
     pw = pot((int)w);
     ph = pot((int)h);
-    if ((pw != (int)w || ph != (int)h) && levels > 1) levels = 1;   /* resampled NPOT: one level */
+    if (pw != (int)w || ph != (int)h) {
+        if (fmt != XGX_TEX_ARGB8) return 0;   /* only 32-bit images are resampled */
+        levels = 1;
+    }
     for (l = 0, lw = pw, lh = ph; l < (int)levels; l++) {
-        bytes += (uint32_t)(lw * lh * 4);
+        bytes += level_size(fmt, lw, lh);
         lw = lw > 1 ? lw / 2 : 1;
         lh = lh > 1 ? lh / 2 : 1;
     }
     id = alloc_handle();
     if (!id) return 0;
-    mem = (uint32_t*)pool_alloc(bytes);
+    mem = (uint8_t*)pool_alloc(bytes);
     if (!mem) {
         wait_idle();
         release_deferred();
-        mem = (uint32_t*)pool_alloc(bytes);
+        mem = (uint8_t*)pool_alloc(bytes);
         if (!mem) return 0;
     }
-    {
-        const uint32_t* src = argb;
-        uint32_t* dst = mem;
-        int sw = (int)w, sh = (int)h;
-        lw = pw;
-        lh = ph;
-        for (l = 0; l < (int)levels; l++) {
-            write_level(dst, src, sw, sh, lw, lh);
-            src += sw * sh;
-            dst += lw * lh;
-            sw = sw > 1 ? sw / 2 : 1;
-            sh = sh > 1 ? sh / 2 : 1;
-            lw = lw > 1 ? lw / 2 : 1;
-            lh = lh > 1 ? lh / 2 : 1;
-        }
+    dst = mem;
+    sw = (int)w;
+    sh = (int)h;
+    lw = pw;
+    lh = ph;
+    for (l = 0; l < (int)levels; l++) {
+        if (fmt == XGX_TEX_DXT1) memcpy(dst, src, level_size(fmt, lw, lh));   /* block-linear, not swizzled */
+        else write_level(dst, src, sw, sh, lw, lh, fmt_bpp(fmt));
+        src += level_size(fmt, sw, sh);
+        dst += level_size(fmt, lw, lh);
+        sw = sw > 1 ? sw / 2 : 1;
+        sh = sh > 1 ? sh / 2 : 1;
+        lw = lw > 1 ? lw / 2 : 1;
+        lh = lh > 1 ? lh / 2 : 1;
     }
     s_tex[id].used = 1;
     s_tex[id].w = (uint16_t)pw;
     s_tex[id].h = (uint16_t)ph;
     s_tex[id].levels = (uint8_t)levels;
+    s_tex[id].nvfmt = nv_format(fmt);
     s_tex[id].mem = mem;
     return (uint32_t)id;
 }
@@ -805,7 +857,7 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
             uint32_t minf = m->min_filter + 1, magf = m->mag_filter == 0 ? 1 : 2;
             if (t->levels <= 1 && minf > 2) minf = minf == 3 || minf == 5 ? 1 : 2;   /* no mips: drop the mip part */
             v[0] = (uint32_t)t->mem & 0x03FFFFFF;
-            v[1] = 1 | (1u << 3) | (2u << 4) | (NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8R8G8B8 << 8) |
+            v[1] = 1 | (1u << 3) | (2u << 4) | ((uint32_t)t->nvfmt << 8) |
                    ((uint32_t)t->levels << 16) | ((uint32_t)log2i(t->w) << 20) | ((uint32_t)log2i(t->h) << 24);
             v[2] = wrap_mode(m->wrap_s) | (wrap_mode(m->wrap_t) << 8) | (3u << 16);
             v[3] = 0x4003FFC0u;
@@ -1165,7 +1217,7 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
             uint32_t yv = (r * 77 + g * 150 + b * 29) >> 8;
             buf[i] = (c & 0xFF000000u) | yv << 16 | yv << 8 | yv;
         }
-    tex = xgx_tex_create(dst_w, dst_h, 1, buf);
+    tex = xgx_tex_create(dst_w, dst_h, 1, XGX_TEX_ARGB8, buf);
     free(buf);
     return tex;
 }

@@ -1,7 +1,8 @@
 /* gx_tex.c - GX texture objects, TLUTs, and the decoded-texture cache.
  *
  * GameCube textures are tiled big-endian blocks in one of eleven formats.
- * They are decoded to A8R8G8B8 once and kept as back-end textures, keyed by
+ * They are converted once (to DXT1, AY8, A8Y8 or RGB565 when the NV2A can
+ * sample them as is, else decoded to A8R8G8B8) and kept as back-end textures, keyed by
  * (data pointer, size, format, palette, mip count) and revalidated by a
  * sampled hash at most once a frame: HSD reuses archive memory, so a pointer
  * alone can go stale. EFB copies (GXCopyTex) register their destination
@@ -49,7 +50,7 @@ static Entry s_cache[CACHE_MAX];
 static int s_count;
 static uint32_t s_frame = 1;
 static uint32_t* s_scratch;
-static uint32_t s_scratch_texels;
+static uint32_t s_scratch_texels;   /* in 32-bit words */
 
 void gx_tex_init(void) {}
 
@@ -243,36 +244,118 @@ static void evict_oldest(void) {
     if (pick >= 0) drop(&s_cache[pick]);
 }
 
+/* ---- native formats ----
+ * Power-of-two textures in formats the NV2A samples directly skip the 32-bit
+ * decode: CMPR stays DXT1 (a quarter of the memory), intensity formats go to
+ * AY8 / A8Y8 and RGB565 stays 16-bit. Everything else is A8R8G8B8. */
+static uint32_t native_fmt(const TexObj* o) {
+    if (o->w & (o->w - 1) || o->h & (o->h - 1)) return XGX_TEX_ARGB8;
+    switch (o->fmt) {
+        case GX_TF_CMPR: return o->w >= 4 && o->h >= 4 ? XGX_TEX_DXT1 : XGX_TEX_ARGB8;
+        case GX_TF_I4: case GX_TF_I8: return XGX_TEX_AY8;
+        case GX_TF_IA4: case GX_TF_IA8: return XGX_TEX_A8Y8;
+        case GX_TF_RGB565: return XGX_TEX_RGB565;
+        default: return XGX_TEX_ARGB8;
+    }
+}
+
+static uint32_t native_size(uint32_t fmt, uint32_t w, uint32_t h) {
+    switch (fmt) {
+        case XGX_TEX_DXT1: return ((w + 3) / 4) * ((h + 3) / 4) * 8;
+        case XGX_TEX_AY8: return w * h;
+        case XGX_TEX_A8Y8: case XGX_TEX_RGB565: return w * h * 2;
+        default: return w * h * 4;
+    }
+}
+
+/* GX index byte: pixel 0 in bits 7-6; DXT1: pixel 0 in bits 1-0 */
+static inline uint8_t rev2(uint8_t v) {
+    return (uint8_t)((v >> 6) | ((v >> 2) & 0x0C) | ((v << 2) & 0x30) | (v << 6));
+}
+
+/* one level of a native-format texture, rows top to bottom (DXT1: block rows) */
+static void convert_level(const uint8_t* src, uint32_t fmt, uint32_t xfmt, uint32_t w, uint32_t h, uint8_t* out) {
+    uint32_t bx, by, x, y;
+    if (xfmt == XGX_TEX_DXT1) {
+        /* GX: 8x8 tiles of four DXT1 blocks (TL TR BL BR), tiles padded to 8x8 */
+        uint32_t nbx = (w + 3) / 4, nby = (h + 3) / 4, tiles_x = (w + 7) / 8;
+        for (by = 0; by < nby; by++)
+            for (bx = 0; bx < nbx; bx++) {
+                const uint8_t* b = src + ((by / 2) * tiles_x + bx / 2) * 32 + ((by & 1) * 2 + (bx & 1)) * 8;
+                uint8_t* d = out + (by * nbx + bx) * 8;
+                d[0] = b[1]; d[1] = b[0]; d[2] = b[3]; d[3] = b[2];
+                d[4] = rev2(b[4]); d[5] = rev2(b[5]); d[6] = rev2(b[6]); d[7] = rev2(b[7]);
+            }
+        return;
+    }
+    {
+        int bw, bh, bpp;
+        block_dims(fmt, &bw, &bh, &bpp);
+        for (by = 0; by < h; by += (uint32_t)bh)
+            for (bx = 0; bx < w; bx += (uint32_t)bw) {
+                for (y = 0; y < (uint32_t)bh; y++)
+                    for (x = 0; x < (uint32_t)bw; x++) {
+                        uint32_t px = bx + x, py = by + y, i = py * w + px;
+                        if (px >= w || py >= h) continue;
+                        switch (fmt) {
+                            case GX_TF_I4: out[i] = (uint8_t)(((src[(y * 8 + x) / 2] >> ((x & 1) ? 0 : 4)) & 15) * 17); break;
+                            case GX_TF_I8: out[i] = src[y * 8 + x]; break;
+                            case GX_TF_IA4: {
+                                uint8_t v = src[y * 8 + x];
+                                out[i * 2] = (uint8_t)((v & 15) * 17);
+                                out[i * 2 + 1] = (uint8_t)((v >> 4) * 17);
+                                break;
+                            }
+                            case GX_TF_IA8: {
+                                const uint8_t* t = src + (y * 4 + x) * 2;   /* A then I */
+                                out[i * 2] = t[1];
+                                out[i * 2 + 1] = t[0];
+                                break;
+                            }
+                            default: {   /* RGB565 */
+                                uint16_t v = gx_be16(src + (y * 4 + x) * 2);
+                                memcpy(out + i * 2, &v, 2);
+                                break;
+                            }
+                        }
+                    }
+                src += (uint32_t)(bw * bh * bpp / 8);
+            }
+    }
+}
+
 static uint32_t upload(const TexObj* o, const TlutObj* tl, uint32_t levels, uint32_t bytes) {
-    uint32_t texels = 0, w = o->w, h = o->h, l, tex;
+    uint32_t need = 0, w = o->w, h = o->h, l, tex, xfmt = native_fmt(o);
     const uint8_t* src = o->data;
-    uint32_t* dst;
+    uint8_t* dst;
     for (l = 0; l < levels; l++) {
-        texels += w * h;
+        need += native_size(xfmt, w, h);
         w = w > 1 ? w / 2 : 1;
         h = h > 1 ? h / 2 : 1;
     }
-    if (texels > s_scratch_texels) {
+    need = (need + 3) / 4;
+    if (need > s_scratch_texels) {
         free(s_scratch);
-        s_scratch = (uint32_t*)malloc(texels * 4);
-        s_scratch_texels = s_scratch ? texels : 0;
+        s_scratch = (uint32_t*)malloc(need * 4);
+        s_scratch_texels = s_scratch ? need : 0;
         if (!s_scratch) return 0;
     }
     (void)bytes;
-    dst = s_scratch;
+    dst = (uint8_t*)s_scratch;
     w = o->w;
     h = o->h;
     for (l = 0; l < levels; l++) {
-        decode_level(src, o->fmt, w, h, tl, dst);
+        if (xfmt == XGX_TEX_ARGB8) decode_level(src, o->fmt, w, h, tl, (uint32_t*)dst);
+        else convert_level(src, o->fmt, xfmt, w, h, dst);
         src += level_bytes(o->fmt, w, h);
-        dst += w * h;
+        dst += native_size(xfmt, w, h);
         w = w > 1 ? w / 2 : 1;
         h = h > 1 ? h / 2 : 1;
     }
-    tex = xgx_tex_create(o->w, o->h, levels, s_scratch);
+    tex = xgx_tex_create(o->w, o->h, levels, xfmt, s_scratch);
     while (!tex && s_count > 0) {
         evict_oldest();
-        tex = xgx_tex_create(o->w, o->h, levels, s_scratch);
+        tex = xgx_tex_create(o->w, o->h, levels, xfmt, s_scratch);
     }
     return tex;
 }

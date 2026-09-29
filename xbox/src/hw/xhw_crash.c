@@ -6,7 +6,8 @@
  * stack (fs:[0], what nxdk's own __try uses), so the kernel's dispatcher calls
  * on_exception() first. It writes the fault, the registers and the stack words
  * that point into the XBE to crash.log and to the screen, then parks the
- * thread. Symbolize with tools/xbox/sym.py and build-xbox/melee_x.map.
+ * thread. It also commits demand-committed memory on first touch
+ * (xhw_reserve_lazy). Symbolize with tools/xbox/sym.py and build-xbox/melee_x.map.
  * Kill switch: -DXHW_CRASH_GUARD=0. */
 #include <hal/debug.h>
 #include <pbkit/pbkit.h>
@@ -30,7 +31,7 @@ typedef struct Reg {
     void* handler;
 } Reg;
 
-enum { DISP_CONTINUE_SEARCH = 1 };
+enum { DISP_CONTINUE_EXECUTION = 0, DISP_CONTINUE_SEARCH = 1 };
 
 static volatile LONG s_in_crash;
 static char s_rep[6144];
@@ -74,7 +75,7 @@ static void build_report(const EXCEPTION_RECORD* er, const CONTEXT* cx) {
     rep("[CRASH] eip %08lx esp %08lx ebp %08lx eflags %08lx\n", cx->Eip, cx->Esp, cx->Ebp, cx->EFlags);
     rep("[CRASH] eax %08lx ebx %08lx ecx %08lx edx %08lx esi %08lx edi %08lx\n", cx->Eax, cx->Ebx, cx->Ecx, cx->Edx,
         cx->Esi, cx->Edi);
-    rep("[CRASH] free %u KB\n", xhw_mem_free_kb());
+    rep("[CRASH] free %u KB, lazily committed %u KB\n", xhw_mem_free_kb(), xhw_lazy_committed_kb());
     rep("[CRASH] stack:");
     if (sp && top && sp < top && top - sp < 0x40000) {
         for (; sp < top && n < 48; sp++) {
@@ -129,6 +130,10 @@ __attribute__((cdecl)) static int on_exception(EXCEPTION_RECORD* er, void* frame
     (void)frame;
     (void)dc;
     if (er->ExceptionFlags & EXCEPTION_UNWIND) return DISP_CONTINUE_SEARCH;
+    /* first touch of a demand-committed chunk (MEM1, ARAM): commit and retry */
+    if ((ULONG)er->ExceptionCode == 0xC0000005 && er->NumberParameters >= 2 &&
+        xhw_lazy_fault((uintptr_t)er->ExceptionInformation[1]))
+        return DISP_CONTINUE_EXECUTION;
     if (InterlockedExchange((LONG*)&s_in_crash, 1)) {
         if (KeGetCurrentIrql() < DISPATCH_LEVEL)
             for (;;) Sleep(1000);

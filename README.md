@@ -39,6 +39,7 @@ tools/xbox/setup.sh               # once: LLVM 21, nxdk, disc_lower
 xbox/build.sh                     # -> build-xbox/xbe/default.xbe
 tools/lower/test_lower.py         # lowering oracle tests
 tools/xbox/test_vp_encoder.py     # vertex-program encoder vs nv2a-vsh
+tools/xbox/test_tex_convert.py    # native texture formats vs the GX decoder
 ```
 
 To play: copy `default.xbe` into a folder on the Xbox HDD (e.g.

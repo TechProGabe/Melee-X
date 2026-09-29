@@ -48,6 +48,16 @@ int xhw_thread_start(void (*fn)(void*), void* arg, int priority, uint32_t stack_
 /* ---- memory ---- */
 /* Reserve and commit `bytes` at exactly `va` (page aligned); NULL on failure. */
 void* xhw_alloc_at(uintptr_t va, uint32_t bytes);
+/* Reserve `bytes` at exactly `va` and commit it on demand, 64 KB at a time:
+ * the first touch of a chunk faults and the thread's crash guard commits it
+ * (zero-filled). Memory the kernel writes (file reads) and memory touched at
+ * raised IRQL must be committed first with xhw_commit. NULL on failure. */
+void* xhw_reserve_lazy(uintptr_t va, uint32_t bytes);
+/* Commit [p, p + bytes) if it lies in a lazy region; no-op otherwise. */
+void xhw_commit(const void* p, uint32_t bytes);
+/* Crash guard hook: commits the chunk at `addr`; 1 if it did. */
+int xhw_lazy_fault(uintptr_t addr);
+uint32_t xhw_lazy_committed_kb(void);
 uint32_t xhw_mem_free_kb(void);
 
 /* ---- files and paths ---- */

@@ -62,7 +62,7 @@ void OSInit(void) {
     s_intr_tls = xhw_tls_alloc();
     s_game_tls = xhw_tls_alloc();
     xhw_tls_set(s_game_tls, (void*)1);   /* melee_main calls OSInit first */
-    s_mem1 = (u8*)xhw_alloc_at(XSDK_MEM1_VA, XSDK_MEM1_SIZE);
+    s_mem1 = (u8*)xhw_reserve_lazy(XSDK_MEM1_VA, XSDK_MEM1_SIZE);   /* committed on demand */
     if (!s_mem1) xhw_fatal("Out of memory", "Could not reserve the game's main memory.");
     memset(s_mem1, 0, ARENA_START_OFFSET);
     OSBaseAddress = (uintptr_t)s_mem1;

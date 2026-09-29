@@ -53,11 +53,36 @@ here than on x86-64:
 | item | size |
 |---|---|
 | XBE image (game ~5.8 MB + platform) | ~7 MB |
-| MEM1 arena (game heaps) | 20 MB, measure and trim |
-| ARAM (preload cache, sound banks) | 16 MB on GameCube: disc-backed pages, as OpenCrossing does |
+| MEM1 (game heaps) | 24 MB reserved as on the GameCube, committed on demand |
+| ARAM (preload cache, sound banks) | 16 MB reserved, committed on demand |
 | NV2A: 720p R5G6B5 x3 + Z16 | 7.4 MB |
-| NV2A: texture pool | 5-8 MB |
-| pushbuffer + vertex ring | 2 MB |
+| NV2A: texture pool | 5 MB at 720p, 6 MB at 480 |
+| pushbuffer + vertex ring | 3 MB |
+
+MEM1 and ARAM are reserved at fixed VAs and committed 64 KB at a time
+(`xhw_reserve_lazy`). The first touch of a chunk faults, and the SEH
+record every game thread runs under (`xhw_crash_guard`) commits it and
+resumes. Memory the kernel writes into (disc image reads) is committed
+first with `xhw_commit`, since a fault inside the file system never
+reaches that handler. So only the parts of MEM1 and ARAM the game really
+uses cost Xbox RAM. `boot.log`'s `[MEM]` lines and `crash.log` report how
+much is committed. If Melee fills both completely, disc-backed ARAM pages
+(as OpenCrossing does) are the next step.
+
+Textures are stored in formats the NV2A samples as is, whenever the size
+is a power of two:
+
+| GX format | back-end format |
+|---|---|
+| CMPR | DXT1: GX's 8x8 tiles are reordered into 4x4 blocks, with the colours byte-swapped and the index bits reversed |
+| I4, I8 | AY8 |
+| IA4, IA8 | A8Y8 |
+| RGB565 | R5G6B5 |
+
+Everything else (RGB5A3, RGBA8, the palette formats) and all
+non-power-of-two images are decoded to A8R8G8B8.
+`tools/xbox/test_tex_convert.py` checks each native format against that
+decoder.
 
 ## Video
 
