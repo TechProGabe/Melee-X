@@ -120,7 +120,12 @@ static int map_y(float y) { return s_cy + (int)floorf(y * (float)s_ch / XGX_EFB_
 #define VB_POOL_480 (4096u * 1024)
 #define VB_POOL_720 (3072u * 1024)
 #define VB_POOL_MIN (2048u * 1024)
-#define PB_BYTES (1536u * 1024)
+/* pbkit ignores a size that isn't a power of two and keeps its 512 KB: the
+ * 1.5 MB asked for before left PB_GUARD past the real end, and Pokémon
+ * Stadium frames (750 draws, six EFB copies) ran off it into whatever memory
+ * follows; the GPU then fetched texture data as methods and stopped */
+#define PB_BYTES (1024u * 1024)
+_Static_assert((PB_BYTES & (PB_BYTES - 1)) == 0 && PB_BYTES >= 64 * 1024, "pb_size takes powers of two only");
 #define POOL_ALIGN 128
 #define POOL_BIG (256 * 1024)
 
@@ -264,7 +269,7 @@ static void pb_close(void) {
 }
 
 /* per-interval counters for the [NV2A] frame line */
-static uint32_t s_st_waits, s_st_efb, s_st_tex_kb, s_st_verts, s_st_tex_fail;
+static uint32_t s_st_waits, s_st_efb, s_st_tex_kb, s_st_verts, s_st_tex_fail, s_st_pb_peak, s_st_pb_resets;
 static uint32_t s_st_draws, s_st_dirty_none, s_st_dirty_mtx, s_st_dirty[13];
 static uint32_t s_st_prim[8];   /* by GX primitive, (prim >> 3) & 7 */
 
@@ -345,7 +350,9 @@ typedef struct {
     uint8_t levels;
     uint8_t nvfmt;          /* NV097_SET_TEXTURE_FORMAT_COLOR_* */
     uint32_t bytes;         /* in the pool */
-    void* mem;
+    void* mem;              /* level 0 */
+    void* base;             /* the allocation: the palette of a P8 texture, then its levels */
+    uint32_t pal;           /* P8: SET_TEXTURE_PALETTE value; 0: none */
 } Tex;
 static Tex s_tex[MAX_TEX];
 static int s_tex_next = 1;
@@ -480,7 +487,7 @@ static void write_level_direct(void* dstv, const void* srcv, int w, int h, int p
 static int fmt_bpp(uint32_t fmt) {
     switch (fmt) {
         case XGX_TEX_RGB565: case XGX_TEX_A8Y8: return 2;
-        case XGX_TEX_AY8: return 1;
+        case XGX_TEX_AY8: case XGX_TEX_P8: return 1;
         case XGX_TEX_DXT1: return 0;
         default: return 4;
     }
@@ -492,6 +499,7 @@ static uint8_t nv_format(uint32_t fmt) {
         case XGX_TEX_AY8: return NV097_SET_TEXTURE_FORMAT_COLOR_SZ_AY8;
         case XGX_TEX_A8Y8: return NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8Y8;
         case XGX_TEX_DXT1: return NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT1_A1R5G5B5;
+        case XGX_TEX_P8: return NV097_SET_TEXTURE_FORMAT_COLOR_SZ_I8_A8R8G8B8;
         default: return NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8R8G8B8;
     }
 }
@@ -516,13 +524,14 @@ static int alloc_handle(void) {
 
 uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data) {
     int id, pw, ph, l, lw, lh, sw, sh;
-    uint32_t bytes = 0;
-    uint8_t* mem;
+    uint32_t bytes = 0, pal_bytes = fmt == XGX_TEX_P8 ? XGX_TEX_PALETTE_BYTES : 0;
+    uint8_t *mem, *base;
     const uint8_t* src = (const uint8_t*)data;
     uint8_t* dst;
     if (!w || !h || w > 1024 || h > 1024 || !levels) return 0;
     pw = pot((int)w);
     ph = pot((int)h);
+    if (fmt == XGX_TEX_P8 && !data) return 0;
     if (pw != (int)w || ph != (int)h) {
         if (fmt != XGX_TEX_ARGB8) return 0;   /* only 32-bit images are resampled */
         levels = 1;
@@ -535,17 +544,19 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     }
     id = alloc_handle();
     if (!id) return 0;
+    bytes += pal_bytes;   /* the palette first: its offset wants 64-byte alignment, the pool gives 128 */
     s_st_tex_kb += bytes / 1024;
-    mem = (uint8_t*)pool_alloc(&s_tp, bytes);
-    if (!mem && s_ndeferred) {   /* nothing to gain from waiting when nothing is pending */
+    base = (uint8_t*)pool_alloc(&s_tp, bytes);
+    if (!base && s_ndeferred) {   /* nothing to gain from waiting when nothing is pending */
         wait_idle();
         release_deferred();
-        mem = (uint8_t*)pool_alloc(&s_tp, bytes);
+        base = (uint8_t*)pool_alloc(&s_tp, bytes);
     }
-    if (!mem) {
+    if (!base) {
         s_st_tex_fail++;
         return 0;
     }
+    mem = base + pal_bytes;
     dst = mem;
     sw = (int)w;
     sh = (int)h;
@@ -561,6 +572,7 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
         lw = lw > 1 ? lw / 2 : 1;
         lh = lh > 1 ? lh / 2 : 1;
     }
+    if (pal_bytes) memcpy(base, src, pal_bytes);   /* after the levels in `data` */
     s_tex[id].used = 1;
     s_tex[id].w = (uint16_t)pw;
     s_tex[id].h = (uint16_t)ph;
@@ -568,6 +580,8 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     s_tex[id].nvfmt = nv_format(fmt);
     s_tex[id].bytes = bytes;
     s_tex[id].mem = mem;
+    s_tex[id].base = base;
+    s_tex[id].pal = pal_bytes ? ((uint32_t)base & 0x03FFFFC0) | NV097_SET_TEXTURE_PALETTE_LENGTH_256 << 2 : 0;
     return (uint32_t)id;
 }
 
@@ -577,9 +591,9 @@ uint32_t xgx_tex_bytes(uint32_t tex) {
 
 void xgx_tex_destroy(uint32_t tex) {
     if (!tex || tex >= MAX_TEX || !s_tex[tex].used) return;
-    defer_free(s_tex[tex].mem);
+    defer_free(s_tex[tex].base);
     s_tex[tex].used = 0;
-    s_tex[tex].mem = NULL;
+    s_tex[tex].mem = s_tex[tex].base = NULL;
 }
 
 /* ======================================================================
@@ -644,7 +658,10 @@ static void frame_open(void) {
 /* restart at the pushbuffer head when a frame gets close to its end:
  * pbkit's pushbuffer has no overflow check (OpenCrossing traps.md) */
 static void pb_budget(void) {
-    if (pb_used() < PB_GUARD) return;
+    uint32_t used = pb_used();
+    if (used > s_st_pb_peak) s_st_pb_peak = used;
+    if (used < PB_GUARD) return;
+    s_st_pb_resets++;
     wait_idle();
     pb_reset();
     s_pb_base = pb_begin();
@@ -662,6 +679,7 @@ void xgx_fbdump_next(void) { s_fbdump_once = 1; }
 void xgx_present(int black) {
     frame_open();
     if (black) clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 0, 0);
+    pb_budget();   /* the frame's pushbuffer peak */
     wait_idle();
     if (s_fbdump_once || (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0)) {
         s_fbdump_once = 0;
@@ -706,9 +724,11 @@ void xgx_present(int black) {
     if (s_frame % XGX_STATS_EVERY == 0) {
         /* draws/approximated: the last frame; the rest summed over the interval */
         xhw_logf("[NV2A] frame %u: %u draws (%u approximated), tex pool %u KB free (largest %u KB) | per %u: %u idle "
-                 "waits, %u EFB copies, %u KB textures, %u pool allocations failed, %u verts",
+                 "waits, %u EFB copies, %u KB textures, %u pool allocations failed, %u verts, pushbuffer peak %u of %u KB "
+                 "(%u restarts)",
                  s_frame, s_draws, s_approx, xgx_tex_pool_free_kb(), xgx_tex_pool_largest_kb(), XGX_STATS_EVERY,
-                 s_st_waits, s_st_efb, s_st_tex_kb, s_st_tex_fail, s_st_verts);
+                 s_st_waits, s_st_efb, s_st_tex_kb, s_st_tex_fail, s_st_verts, s_st_pb_peak / 1024, PB_BYTES / 1024,
+                 s_st_pb_resets);
         xhw_logf("[NV2A] per %u draws by primitive: quads %u, triangles %u, strips %u, fans %u, lines %u, line strips "
                  "%u, points %u", XGX_STATS_EVERY, s_st_prim[0], s_st_prim[2], s_st_prim[3], s_st_prim[4], s_st_prim[5],
                  s_st_prim[6], s_st_prim[7]);
@@ -720,7 +740,7 @@ void xgx_present(int black) {
                  s_st_dirty[10], s_st_dirty[11], s_st_dirty[12]);
         memset(s_st_dirty, 0, sizeof s_st_dirty);
         s_st_draws = s_st_dirty_none = s_st_dirty_mtx = 0;
-        s_st_waits = s_st_efb = s_st_tex_kb = s_st_verts = s_st_tex_fail = 0;
+        s_st_waits = s_st_efb = s_st_tex_kb = s_st_verts = s_st_tex_fail = s_st_pb_peak = s_st_pb_resets = 0;
     }
     s_draws = s_approx = 0;
     s_frame_open = 0;
@@ -1107,7 +1127,7 @@ static void emit_combiners(const XgxState* st, const RcProg* rp) {
 /* ======================================================================
  * Texture units
  * ====================================================================== */
-static uint32_t s_tex_shadow[4][6];
+static uint32_t s_tex_shadow[4][7];
 static uint32_t s_tex_prog = 0xFFFFFFFFu;   /* NV097_SET_SHADER_STAGE_PROGRAM sent last */
 
 static uint32_t wrap_mode(uint32_t gx) {
@@ -1122,7 +1142,7 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
     uint32_t prog = 0;
     int u;
     for (u = 0; u < 4; u++) {
-        uint32_t v[6] = { 0, 0, 0, 0, 0, 0 };
+        uint32_t v[7] = { 0, 0, 0, 0, 0, 0, 0 };
         const Tex* t = NULL;
         const XgxMap* m = NULL;
         if (u < nunits) {
@@ -1139,6 +1159,7 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
             v[3] = 0x4003FFC0u;
             v[4] = (minf << 16) | (magf << 24) | ((uint32_t)((int)(m->lod_bias * 256.0f)) & 0x1FFF) | 0x2000u;
             v[5] = 1;
+            v[6] = t->pal;   /* DMA A: bit 0 clear */
             prog |= 1u << (u * 5);   /* 2D_PROJECTIVE */
         }
         if (memcmp(v, s_tex_shadow[u], sizeof v) != 0) {
@@ -1151,6 +1172,7 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
                 put1(NV097_SET_TEXTURE_ADDRESS + b, v[2]);
                 put1(NV097_SET_TEXTURE_CONTROL0 + b, v[3]);
                 put1(NV097_SET_TEXTURE_FILTER + b, v[4]);
+                if (v[6]) put1(NV097_SET_TEXTURE_PALETTE + b, v[6]);
             }
             memcpy(s_tex_shadow[u], v, sizeof v);
         }
@@ -1712,6 +1734,8 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     uint32_t pw = t->w, ph = t->h, fb = (uint32_t)pb_back_buffer() & 0x03FFFFFF, i;
     float u0 = s_cx + src[0] * (float)s_cw / XGX_EFB_W + 0.5f, u1 = u0 + src[2] * (float)s_cw / XGX_EFB_W;
     float v0 = s_cy + src[1] * (float)s_ch / XGX_EFB_H + 0.5f, v1 = v0 + src[3] * (float)s_ch / XGX_EFB_H;
+    /* nearest, unless the copy is smaller than its source (copy_dim) */
+    uint32_t filt = (float)pw < u1 - u0 - 0.5f || (float)ph < v1 - v0 - 0.5f ? 2 : 1;
     float* v;
     int pf = xhw_perf_enter(XHW_PERF_EFB);
     s_st_efb++;
@@ -1757,14 +1781,14 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     put1(NV097_SET_COLOR_MASK, NV097_SET_COLOR_MASK_RED_WRITE_ENABLE | NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE |
                                    NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE | NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE);
 
-    /* source: the back buffer as a linear texture, texel coordinates, nearest */
+    /* source: the back buffer as a linear texture, texel coordinates, filt */
     put1(NV097_SET_TEXTURE_OFFSET, fb);
     put1(NV097_SET_TEXTURE_FORMAT, 1 | (1u << 3) | (2u << 4) |
                                        (uint32_t)NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8 << 8 | (1u << 16));
     put1(NV097_SET_TEXTURE_ADDRESS, 3 | (3u << 8) | (3u << 16));
     put1(NV097_SET_TEXTURE_CONTROL0, 0x4003FFC0u);
     put1(NV097_SET_TEXTURE_CONTROL1, pb_back_buffer_pitch() << 16);
-    put1(NV097_SET_TEXTURE_FILTER, (1u << 16) | (1u << 24) | 0x2000u);
+    put1(NV097_SET_TEXTURE_FILTER, (filt << 16) | (filt << 24) | 0x2000u);
     put1(NV097_SET_TEXTURE_IMAGE_RECT, (uint32_t)s_fbw << 16 | (uint32_t)s_fbh);
     for (i = 1; i < 4; i++) put1(NV097_SET_TEXTURE_CONTROL0 + i * 64, 0);
     put1(NV097_SET_SHADER_STAGE_PROGRAM, 1);   /* unit 0: 2D_PROJECTIVE */
@@ -1798,6 +1822,16 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
 }
 #endif
 
+/* An EFB copy's texture side: the nearest power of two, not the next one
+ * (the copy is resampled to it and sampled with normalized coordinates, so
+ * any size works). Pokémon Stadium's screen copies 640x406 every few frames:
+ * rounded up that was 1024x512 ARGB8, 2 MB of the texture pool, and the
+ * stage's working set no longer fit (uploads and evictions every frame). */
+static uint32_t copy_dim(uint32_t v) {
+    uint32_t p = (uint32_t)pot((int)v);
+    return p > 1 && p - v > v - p / 2 ? p / 2 : p;
+}
+
 uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int mode, uint32_t reuse) {
     static uint32_t* buf;
     static uint32_t buf_texels;
@@ -1807,8 +1841,8 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
 #ifdef XGX_DEBUG_NOEFB
     return 0;
 #endif
-    pw = (uint32_t)pot((int)dst_w);
-    ph = (uint32_t)pot((int)dst_h);
+    pw = copy_dim(dst_w);
+    ph = copy_dim(dst_h);
     reusable = reuse && reuse < MAX_TEX && s_tex[reuse].used && s_tex[reuse].w == pw && s_tex[reuse].h == ph &&
                s_tex[reuse].levels == 1 && s_tex[reuse].nvfmt == nv_format(XGX_TEX_ARGB8);
 #if XGX_EFB_GPU_COPY

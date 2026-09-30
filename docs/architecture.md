@@ -57,7 +57,7 @@ here than on x86-64:
 | ARAM (preload cache, sound banks) | 16 MB reserved, committed on demand |
 | NV2A: 720p R5G6B5 x3 + Z16 | 7.4 MB |
 | NV2A: texture pool | 6 MB at 720p, 8 MB at 480 |
-| pushbuffer + vertex ring | 3 MB |
+| pushbuffer (1 MB) + vertex ring (1.5 MB) | 2.5 MB |
 | NV2A: display-list vertex cache | 4 MB at 480, 3 MB at 720p (down to 2 MB if short) |
 
 MEM1 and ARAM are reserved at fixed VAs and committed 64 KB at a time
@@ -82,9 +82,10 @@ is a power of two:
 | I4, I8 | AY8 |
 | IA4, IA8 | A8Y8 |
 | RGB565 | R5G6B5 |
+| C4, C8 | I8 palette indices + a 256-entry A8R8G8B8 palette (`SZ_I8_A8R8G8B8`) |
 
-Everything else (RGB5A3, RGBA8, the palette formats) and all
-non-power-of-two images are decoded to A8R8G8B8.
+Everything else (RGB5A3, RGBA8, C14X2) and all non-power-of-two images
+are decoded to A8R8G8B8.
 `tools/xbox/test_tex_convert.py` checks each native format against that
 decoder.
 

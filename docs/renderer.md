@@ -103,6 +103,14 @@ immediate batch.
 `xgx.h` is compiled by both triples (game and nxdk), so its structs hold only
 32-bit scalars, floats and byte arrays: no bit-fields, no 64-bit members.
 
+The pushbuffer is 1 MB. pbkit's `pb_size` takes powers of two only and
+silently keeps its 512 KB default otherwise: the 1.5 MB asked for until
+v11 left `PB_GUARD` (restart at the head when a frame gets within 192 KB of
+the end) beyond the real end, a Pokémon Stadium frame ran past it into the
+memory after the pushbuffer, and the GPU fetched texture data as methods
+(DMA pusher error, `GPU fault kind 2`, frozen). `[NV2A] frame` lines report
+the interval's peak and mid-frame restarts.
+
 ## Frame and output geometry
 
 - The logical EFB is the GameCube's 640x480. The back end maps it onto a
@@ -207,8 +215,11 @@ Current limits:
   format, palette and mip count. A sampled hash revalidates them at most
   once a frame, because HSD reuses archive memory.
 - For power-of-two sizes the NV2A's own formats are used: CMPR -> DXT1,
-  I4/I8 -> AY8, IA4/IA8 -> A8Y8, RGB565 -> R5G6B5. Everything else becomes
-  A8R8G8B8; non-power-of-two images are resampled to the next power of two.
+  I4/I8 -> AY8, IA4/IA8 -> A8Y8, RGB565 -> R5G6B5, C4/C8 -> I8 indices with
+  a 256-entry A8R8G8B8 palette (the TLUT decoded; it sits at the start of
+  the texture's pool allocation, `SET_TEXTURE_PALETTE`). Everything else
+  becomes A8R8G8B8; non-power-of-two images are resampled to the next power
+  of two. On Pokémon Stadium, C8 as A8R8G8B8 took 2.1 MB of the pool.
   `docs/architecture.md` has the table and `tools/xbox/test_tex_convert.py`
   the checks.
 - CMPR -> DXT1 conversion:
@@ -251,7 +262,11 @@ Current limits:
   (`ocx_pb_retarget_back_buffer`, added by `tools/xbox/patch_pbkit.py`: it
   re-sends the surface state only, where `pb_target_back_buffer` rewrites
   DMA object 9 through four GPU-to-CPU interrupts) and every state group is
-  re-sent. The CPU readback (`-DXGX_EFB_GPU_COPY=0`, and 720p, whose 16-bit
+  re-sent. The copy's texture is the nearest power of two per side, not
+  the next one (`copy_dim`), filtered linearly when that is smaller than
+  the source: Pokémon Stadium's screen copies 640x406, which was 1024x512
+  ARGB8 (2 MB of the pool) and is now 512x512. The CPU readback
+  (`-DXGX_EFB_GPU_COPY=0`, and 720p, whose 16-bit
   depth buffer can't pair with a 32-bit texture target) cost ~8 ms per
   256x256 shadow map on the console: the framebuffer is write-combined, so
   each read is an uncached bus cycle. Reading it through 0x80000000 |

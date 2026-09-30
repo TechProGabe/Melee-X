@@ -186,7 +186,10 @@ enum {
     XGX_TEX_AY8,         /* uint8 intensity = alpha = luminance (GX I4/I8) */
     XGX_TEX_A8Y8,        /* uint8 pairs: luminance, alpha (GX IA4/IA8) */
     XGX_TEX_DXT1,        /* DXT1 blocks (GX CMPR, reordered and byte-swapped) */
+    XGX_TEX_P8,          /* uint8 palette indices (GX C4/C8), power-of-two only; after the
+                            levels, the palette: 256 uint32 A8R8G8B8 */
 };
+#define XGX_TEX_PALETTE_BYTES 1024
 /* Returns a handle or 0 when the pool is full (after waiting for the GPU
  * to finish with textures already destroyed, if any are pending). */
 uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data);

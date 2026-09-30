@@ -165,6 +165,12 @@ Lines worth reading first:
   KB)`: logged every 600 frames. A high `approximated` count means TEV
   setups the combiners only approximate; a tex pool near 0 means texture
   churn, and `pool allocations failed` that textures were dropped.
+  `pushbuffer peak P of 1024 KB (R restarts)`: the fullest a frame got,
+  and how often a frame had to wait for the GPU and restart at the head.
+- `[TEX] ... fmt n/KB/pool KB`: the textures drawn in the last frame by GX
+  format (hex): count, KB of GX data, KB they take in the pool. `[TEX] pool
+  holds ...`: every cached texture and EFB copy in the pool, and how many
+  copies went to a destination that had none.
 - `[TEX] ... N drops`: textures that could not be uploaded even after
   evicting (drawn untextured). The first one of each interval has its own
   `[TEX] drop:` line.

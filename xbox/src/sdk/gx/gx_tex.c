@@ -56,7 +56,7 @@ static int s_bucket_ready;
 static uint32_t s_frame = 1;
 static uint32_t* s_scratch;
 static uint32_t s_scratch_texels;   /* in 32-bit words */
-static uint32_t s_st_uploads, s_st_evicts, s_st_evicts_hot, s_st_drops, s_st_drop_kb, s_st_fast;
+static uint32_t s_st_uploads, s_st_evicts, s_st_evicts_hot, s_st_drops, s_st_drop_kb, s_st_fast, s_st_new_copies;
 static uint32_t s_drop_logged;
 
 /* The last object bound to each texture map this frame: binding it again
@@ -363,7 +363,9 @@ static void evict_one(void) {
 /* ---- native formats ----
  * Power-of-two textures in formats the NV2A samples directly skip the 32-bit
  * decode: CMPR stays DXT1 (a quarter of the memory), intensity formats go to
- * AY8 / A8Y8 and RGB565 stays 16-bit. Everything else is A8R8G8B8. */
+ * AY8 / A8Y8, RGB565 stays 16-bit, and C4/C8 become 8-bit palette indices
+ * with a 256-entry A8R8G8B8 palette (C8 as A8R8G8B8 was a quarter of a
+ * Pokémon Stadium match's texture memory). Everything else is A8R8G8B8. */
 static uint32_t native_fmt(const TexObj* o) {
     if (o->w & (o->w - 1) || o->h & (o->h - 1)) return XGX_TEX_ARGB8;
     switch (o->fmt) {
@@ -371,6 +373,7 @@ static uint32_t native_fmt(const TexObj* o) {
         case GX_TF_I4: case GX_TF_I8: return XGX_TEX_AY8;
         case GX_TF_IA4: case GX_TF_IA8: return XGX_TEX_A8Y8;
         case GX_TF_RGB565: return XGX_TEX_RGB565;
+        case GX_TF_C4: case GX_TF_C8: return XGX_TEX_P8;
         default: return XGX_TEX_ARGB8;
     }
 }
@@ -378,7 +381,7 @@ static uint32_t native_fmt(const TexObj* o) {
 static uint32_t native_size(uint32_t fmt, uint32_t w, uint32_t h) {
     switch (fmt) {
         case XGX_TEX_DXT1: return ((w + 3) / 4) * ((h + 3) / 4) * 8;
-        case XGX_TEX_AY8: return w * h;
+        case XGX_TEX_AY8: case XGX_TEX_P8: return w * h;
         case XGX_TEX_A8Y8: case XGX_TEX_RGB565: return w * h * 2;
         default: return w * h * 4;
     }
@@ -415,7 +418,8 @@ static void convert_level(const uint8_t* src, uint32_t fmt, uint32_t xfmt, uint3
                         if (px >= w || py >= h) continue;
                         switch (fmt) {
                             case GX_TF_I4: out[i] = (uint8_t)(((src[(y * 8 + x) / 2] >> ((x & 1) ? 0 : 4)) & 15) * 17); break;
-                            case GX_TF_I8: out[i] = src[y * 8 + x]; break;
+                            case GX_TF_I8: case GX_TF_C8: out[i] = src[y * 8 + x]; break;
+                            case GX_TF_C4: out[i] = (uint8_t)((src[(y * 8 + x) / 2] >> ((x & 1) ? 0 : 4)) & 15); break;
                             case GX_TF_IA4: {
                                 uint8_t v = src[y * 8 + x];
                                 out[i * 2] = (uint8_t)((v & 15) * 17);
@@ -449,6 +453,7 @@ static uint32_t upload_now(const TexObj* o, const TlutObj* tl, uint32_t levels, 
         w = w > 1 ? w / 2 : 1;
         h = h > 1 ? h / 2 : 1;
     }
+    if (xfmt == XGX_TEX_P8) need += XGX_TEX_PALETTE_BYTES;
     need = (need + 3) / 4;
     if (need > s_scratch_texels) {
         free(s_scratch);
@@ -467,6 +472,11 @@ static uint32_t upload_now(const TexObj* o, const TlutObj* tl, uint32_t levels, 
         dst += native_size(xfmt, w, h);
         w = w > 1 ? w / 2 : 1;
         h = h > 1 ? h / 2 : 1;
+    }
+    if (xfmt == XGX_TEX_P8) {   /* the palette after the levels, as the ARGB decode would look it up */
+        uint32_t i, pal[256];
+        for (i = 0; i < 256; i++) pal[i] = tlut_color(tl, i);
+        memcpy(dst, pal, sizeof pal);
     }
     s_st_uploads++;
     /* pool full: evict, wait for the GPU once, retry; each round frees
@@ -637,6 +647,7 @@ void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h
     }
     if (!tex) return;
     if (s_count == CACHE_MAX) evict_one();
+    s_st_new_copies++;
     {
         Entry* e = entry_add((const uint8_t*)dest);
         e->w = (uint16_t)w;
@@ -657,26 +668,33 @@ void gx_tex_frame_end(void) {
     int i;
     if (s_frame % XGX_STATS_EVERY == 0) {
         /* working set of the last frame, by GX format: count / KB as GX data */
-        uint32_t n[16] = { 0 }, kb[16] = { 0 }, live = 0;
-        char line[320];
+        uint32_t n[16] = { 0 }, kb[16] = { 0 }, pkb[16] = { 0 }, live = 0, pool_kb[2] = { 0, 0 }, pool_n[2] = { 0, 0 };
+        char line[448];
         int k, len;
+        for (i = 0; i < s_count; i++) {   /* what holds the pool: textures, EFB copies */
+            pool_kb[s_cache[i].efb ? 1 : 0] += xgx_tex_bytes(s_cache[i].tex) / 1024;
+            pool_n[s_cache[i].efb ? 1 : 0]++;
+        }
         for (i = 0; i < s_count; i++)
             if (s_cache[i].last_used == s_frame && !s_cache[i].efb) {
                 uint32_t f = s_cache[i].fmt & 15;
                 n[f]++;
                 kb[f] += GXGetTexBufferSize(s_cache[i].w, s_cache[i].h, s_cache[i].fmt, s_cache[i].levels > 1,
                                             s_cache[i].levels) / 1024;
+                pkb[f] += xgx_tex_bytes(s_cache[i].tex) / 1024;
                 live++;
             }
         len = snprintf(line, sizeof line,
                        "[TEX] %d cached, %u used last frame; per %u: %u uploads, %u evictions (%u of this frame's), "
-                       "%u drops (%u KB), %u rebinds skipped; fmt n/KB:",
+                       "%u drops (%u KB), %u rebinds skipped; fmt n/KB/pool KB:",
                        s_count, live, XGX_STATS_EVERY, s_st_uploads, s_st_evicts, s_st_evicts_hot, s_st_drops,
                        s_st_drop_kb, s_st_fast);
         for (k = 0; k < 16; k++)
-            if (n[k]) len += snprintf(line + len, sizeof line - (size_t)len, " %x:%u/%u", k, n[k], kb[k]);
+            if (n[k]) len += snprintf(line + len, sizeof line - (size_t)len, " %x:%u/%u/%u", k, n[k], kb[k], pkb[k]);
         xhw_log(line);
-        s_st_uploads = s_st_evicts = s_st_evicts_hot = s_st_drops = s_st_drop_kb = s_st_fast = 0;
+        xhw_logf("[TEX] pool holds %u textures (%u KB) and %u EFB copies (%u KB); per %u: %u copies to a new "
+                 "destination", pool_n[0], pool_kb[0], pool_n[1], pool_kb[1], XGX_STATS_EVERY, s_st_new_copies);
+        s_st_uploads = s_st_evicts = s_st_evicts_hot = s_st_drops = s_st_drop_kb = s_st_fast = s_st_new_copies = 0;
         s_drop_logged = 0;
     }
     s_frame++;

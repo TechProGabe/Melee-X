@@ -1,5 +1,5 @@
 /* test_tex_convert.c - host check of gx_tex.c's native-format conversion:
- * every native texture (DXT1, AY8, A8Y8, RGB565) is expanded back to ARGB
+ * every native texture (DXT1, AY8, A8Y8, RGB565, P8) is expanded back to ARGB
  * and compared with gx_tex.c's own A8R8G8B8 decoder. Built and run by
  * tools/xbox/test_tex_convert.py. */
 #include <stdio.h>
@@ -12,10 +12,11 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     uint32_t n = 0, l, lw = w, lh = h;
     for (l = 0; l < levels; l++) {
         n += fmt == XGX_TEX_DXT1 ? ((lw + 3) / 4) * ((lh + 3) / 4) * 8
-                                 : lw * lh * (fmt == XGX_TEX_AY8 ? 1 : fmt == XGX_TEX_ARGB8 ? 4 : 2);
+                                 : lw * lh * (fmt == XGX_TEX_AY8 || fmt == XGX_TEX_P8 ? 1 : fmt == XGX_TEX_ARGB8 ? 4 : 2);
         lw = lw > 1 ? lw / 2 : 1;
         lh = lh > 1 ? lh / 2 : 1;
     }
+    if (fmt == XGX_TEX_P8) n += XGX_TEX_PALETTE_BYTES;
     memcpy(s_data, data, n);
     s_fmt = fmt, s_w = w, s_h = h, s_levels = levels;
     return 1;
@@ -41,8 +42,10 @@ static uint32_t lerp(uint32_t a, uint32_t b, int wa, int wb, int d) {
     for (k = 0; k < 24; k += 8) r |= (uint32_t)((((a >> k) & 255) * wa + ((b >> k) & 255) * wb) / d) << k;
     return r | 0xFF000000u;
 }
+static const uint8_t* s_pal;   /* P8: the palette after the levels */
 static uint32_t expand(const uint8_t* d, uint32_t fmt, uint32_t w, uint32_t x, uint32_t y) {
     switch (fmt) {
+        case XGX_TEX_P8: { uint32_t c; memcpy(&c, s_pal + d[y * w + x] * 4, 4); return c; }
         case XGX_TEX_AY8: { uint32_t v = d[y * w + x]; return argb(v, v, v, v); }
         case XGX_TEX_A8Y8: { const uint8_t* p = d + (y * w + x) * 2; return argb(p[1], p[0], p[0], p[0]); }
         case XGX_TEX_RGB565: { uint16_t v; memcpy(&v, d + (y * w + x) * 2, 2); return c565(v); }
@@ -59,17 +62,27 @@ static uint32_t expand(const uint8_t* d, uint32_t fmt, uint32_t w, uint32_t x, u
 }
 
 static int check(uint32_t fmt, uint32_t w, uint32_t h, uint32_t levels) {
-    static uint8_t src[1 << 20];
+    static uint8_t src[1 << 20], tlut[512];
     static uint32_t ref[1 << 18];
     TexObj o;
-    uint32_t i, l, lw = w, lh = h, bad = 0, off = 0, doff = 0;
+    TlutObj tl = { tlut, GX_TL_RGB5A3, fmt == GX_TF_C4 ? 16 : 256 };
+    const TlutObj* t = fmt == GX_TF_C4 || fmt == GX_TF_C8 ? &tl : NULL;
+    uint32_t i, l, lw = w, lh = h, bad = 0, off = 0, doff = 0, pal = 0;
     for (i = 0; i < sizeof src; i++) src[i] = (uint8_t)rand();
+    for (i = 0; i < sizeof tlut; i++) tlut[i] = (uint8_t)rand();
     memset(&o, 0, sizeof o);
-    o.data = src, o.w = (uint16_t)w, o.h = (uint16_t)h, o.fmt = (uint8_t)fmt;
-    if (!upload(&o, NULL, levels, 0)) return printf("fmt %u %ux%u: upload failed\n", fmt, w, h), 1;
+    o.data = src, o.w = (uint16_t)w, o.h = (uint16_t)h, o.fmt = (uint8_t)fmt, o.is_ci = t != NULL;
+    if (!upload(&o, t, levels, 0)) return printf("fmt %u %ux%u: upload failed\n", fmt, w, h), 1;
+    for (l = 0, lw = w, lh = h; l < levels; l++) {
+        pal += native_size(s_fmt, lw, lh);
+        lw = lw > 1 ? lw / 2 : 1;
+        lh = lh > 1 ? lh / 2 : 1;
+    }
+    s_pal = s_data + pal;
+    lw = w, lh = h;
     for (l = 0; l < levels; l++) {
         uint32_t x, y;
-        decode_level(src + off, fmt, lw, lh, NULL, ref);
+        decode_level(src + off, fmt, lw, lh, t, ref);
         for (y = 0; y < lh; y++)
             for (x = 0; x < lw; x++) {
                 uint32_t got = expand(s_data + doff, s_fmt, lw, x, y), want = ref[y * lw + x];
@@ -86,7 +99,7 @@ static int check(uint32_t fmt, uint32_t w, uint32_t h, uint32_t levels) {
 }
 
 int main(void) {
-    static const uint32_t fmts[] = {GX_TF_CMPR, GX_TF_I4, GX_TF_I8, GX_TF_IA4, GX_TF_IA8, GX_TF_RGB565};
+    static const uint32_t fmts[] = {GX_TF_CMPR, GX_TF_I4, GX_TF_I8, GX_TF_IA4, GX_TF_IA8, GX_TF_RGB565, GX_TF_C4, GX_TF_C8};
     static const uint32_t sizes[][2] = {{8, 8}, {16, 8}, {64, 32}, {4, 4}, {128, 128}, {32, 256}, {24, 16}};
     int fail = 0;
     uint32_t f, s;
@@ -96,6 +109,7 @@ int main(void) {
             fail |= check(fmts[f], sizes[s][0], sizes[s][1], 4);
         }
     if (native_fmt(&(TexObj){.w = 64, .h = 64, .fmt = GX_TF_CMPR}) != XGX_TEX_DXT1) fail = 1, puts("CMPR not DXT1");
+    if (native_fmt(&(TexObj){.w = 64, .h = 64, .fmt = GX_TF_C8}) != XGX_TEX_P8) fail = 1, puts("C8 not P8");
     puts(fail ? "FAIL" : "ok: native texture formats match the ARGB decoder");
     return fail;
 }

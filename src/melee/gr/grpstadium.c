@@ -1934,13 +1934,15 @@ bool grStadium_801D42B8(void)
     HSD_ASSERT(0x978, map_gobj);
     gp = grStadium_801D4354(map_gobj);
     HSD_ASSERT(0x979, gp);
+    /* PORT: the imported function parsed the file here and again after the
+     * TARGET_PC block, and the second parse ran even while the load was
+     * still pending (xC4_b1): relocating a half-read or already relocated
+     * archive looped forever in HSD_ArchiveLocateExtern at the first
+     * transformation. One parse, once the load is done. */
     if (gp->u.stadium.xC4_b1) {
-        result = false;
-    } else {
-        gp->u.stadium.xD0 =
-            grDatFiles_801C6478(gp->u.stadium.xCC, gp->u.stadium.xC8);
-        result = true;
+        return false;
     }
+    result = true;
 #ifdef TARGET_PC
     /* The parse relocates the archive in place, and the buffer may be
      * preload-cache memory no rollback snapshot covers. A rollback to the
@@ -1960,7 +1962,7 @@ bool grStadium_801D42B8(void)
 #endif
     gp->u.stadium.xD0 =
         grDatFiles_801C6478(gp->u.stadium.xCC, gp->u.stadium.xC8);
-    return true;
+    return result;
 }
 
 Ground* grStadium_801D4354(Ground_GObj* gobj)
@@ -2142,10 +2144,13 @@ void grStadium_801D4548(Ground_GObj* gobj)
                     return;
                 }
                 int sp60[] = { 3, 4, 6, 9 };
-                int idx;
+                int r;
+                /* PORT: pick from sp60, as upstream doldecomp does; the
+                 * imported loop took the random index itself as the kind,
+                 * so 0-2 reached HSD_ASSERT(0xA44) at the first transformation */
                 do {
-                    kind = HSD_Randi(ARRAY_SIZE(sp60));
-                } while (gp->u.stadium.xE2 == kind);
+                    r = HSD_Randi(ARRAY_SIZE(sp60));
+                } while (gp->u.stadium.xE2 == (kind = sp60[r]));
             } else {
                 kind = 5;
             }

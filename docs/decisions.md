@@ -158,6 +158,16 @@ marked `PORT:`:
 - `src/melee/gm/gmscene.c` (`gm_801A4D34`): the render pass is bracketed
   with `xsdk_perf_render_begin/end` (`xbox/src/sdk/vi.c`), so `[PERF]`
   separates simulation ticks from rendering and counts ticks per render.
+- `src/melee/gr/grpstadium.c` (`grStadium_801D4548`): a transformation is
+  picked from `{3, 4, 6, 9}` as upstream doldecomp now does. The imported
+  loop used the random index (0-3) as the kind, so Pokémon Stadium's first
+  transformation hit `HSD_ASSERT(0xA44)` three times out of four.
+- `src/melee/gr/grpstadium.c` (`grStadium_801D42B8`): the transformation
+  file is parsed once, after its load has finished. The imported function
+  parsed it in the upstream if/else and again after melee-pc's rollback
+  block, unconditionally, so the first transformation relocated a
+  half-read or already relocated archive and hung in
+  `HSD_ArchiveLocateExtern`.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after
