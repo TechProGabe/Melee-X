@@ -57,7 +57,13 @@ cached RAM are kept (1 MB for all of them). Each call re-fetches only the
 attributes whose array moved or whose sampled hash changed (once one has
 changed it is fetched on every call), then copies the template into the
 vertex ring in one sequential write. Lists that don't fit the budget are
-decoded every call (volatile). `[DLC]` lines report both.
+decoded every call (volatile). `[DLC]` lines report both, and `[DLC]
+uncached:` names the first lists that could not be cached and why. A list
+may hold up to 512 draws: Fountain of Dreams' stage is one 104 KB list of
+more than 64, and at the old limit of 64 it was decoded on every call
+(~15 ms of a console frame). The content hashes (display lists and
+textures) run four FNV chains side by side over the same words, so the
+loads and multiplies overlap instead of waiting on one serial chain.
 
 Draws are merged where the state allows, because a draw costs about the
 same whatever its size. In xemu on macOS it costs most: xemu's GL renderer

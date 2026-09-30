@@ -116,6 +116,13 @@ In order, measured against the console's `[PERF]`/`[PROF]` lines
 
 ## Future features
 
+- **Front LED effects**: the SMC takes a custom four-step red/green pattern
+  over SMBus (`HalWriteSMBusValue(0x20, 0x08, 0, pattern)` then register
+  0x07 = 1; register 0x07 = 0 hands the LED back to the SMC). Ideas: a
+  flash when a player loses a stock (colour per port), the timer's last
+  seconds, a pulse on Game! Keep it an option in `settings.ini`, and send
+  only on events: each write is an SMBus transaction.
+
 - **Netplay** (LAN and online): melee-pc's netplay, LAN discovery and
   lobby are not built (`stubs.c` reports them off, and the lobby scene
   returns to the menu). Needs nxdk's network stack (lwIP) under

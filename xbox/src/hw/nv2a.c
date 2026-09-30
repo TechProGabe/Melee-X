@@ -271,6 +271,7 @@ static void pb_close(void) {
 
 /* per-interval counters for the [NV2A] frame line */
 static uint32_t s_st_waits, s_st_efb, s_st_tex_kb, s_st_verts, s_st_tex_fail, s_st_pb_peak, s_st_pb_resets;
+static uint32_t s_st_vp_loads, s_st_vp_insns;   /* vertex programs sent to program memory */
 static uint32_t s_st_draws, s_st_dirty_none, s_st_dirty_mtx, s_st_dirty[13];
 static uint32_t s_st_prim[8];   /* by GX primitive, (prim >> 3) & 7 */
 
@@ -764,10 +765,10 @@ void xgx_present(int black) {
         /* draws/approximated: the last frame; the rest summed over the interval */
         xhw_logf("[NV2A] frame %u: %u draws (%u approximated), tex pool %u KB free (largest %u KB) | per %u: %u idle "
                  "waits, %u EFB copies, %u KB textures, %u pool allocations failed, %u verts, pushbuffer peak %u of %u KB "
-                 "(%u restarts)",
+                 "(%u restarts), %u vertex programs loaded (%u instructions)",
                  s_frame, s_draws, s_approx, xgx_tex_pool_free_kb(), xgx_tex_pool_largest_kb(), XGX_STATS_EVERY,
                  s_st_waits, s_st_efb, s_st_tex_kb, s_st_tex_fail, s_st_verts, s_st_pb_peak / 1024, PB_BYTES / 1024,
-                 s_st_pb_resets);
+                 s_st_pb_resets, s_st_vp_loads, s_st_vp_insns);
         xhw_logf("[NV2A] per %u draws by primitive: quads %u, triangles %u, strips %u, fans %u, lines %u, line strips "
                  "%u, points %u", XGX_STATS_EVERY, s_st_prim[0], s_st_prim[2], s_st_prim[3], s_st_prim[4], s_st_prim[5],
                  s_st_prim[6], s_st_prim[7]);
@@ -780,6 +781,7 @@ void xgx_present(int black) {
         memset(s_st_dirty, 0, sizeof s_st_dirty);
         s_st_draws = s_st_dirty_none = s_st_dirty_mtx = 0;
         s_st_waits = s_st_efb = s_st_tex_kb = s_st_verts = s_st_tex_fail = s_st_pb_peak = s_st_pb_resets = 0;
+        s_st_vp_loads = s_st_vp_insns = 0;
     }
     s_draws = s_approx = 0;
     s_frame_open = 0;
@@ -823,6 +825,8 @@ static void vp_upload(VpEntry* e) {
     }
     e->slot = s_vp_mem_top;
     s_vp_mem_top += (int)e->prog.n;
+    s_st_vp_loads++;
+    s_st_vp_insns += e->prog.n;
     put1(NV097_SET_TRANSFORM_PROGRAM_LOAD, (uint32_t)e->slot);
     for (i = 0; i < e->prog.n; i += 8) {
         uint32_t n = e->prog.n - i < 8 ? e->prog.n - i : 8;
@@ -1662,7 +1666,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     if (s_vp_cur < 0) vp_select(&s_d_vk);
     s_approx += (uint32_t)s_d_unit_miss + (s_d_rp->approximated ? 1u : 0u);
 #ifdef XGX_DEBUG_TRACE
-    if (s_fbdump_once) trace_draw(prim, count, st, s_d_rp->approximated);
+    if (s_fbdump_once || s_shot_once) trace_draw(prim, count, st, s_d_rp->approximated);   /* autopad SHOT or BACK */
 #endif
     if ((d & DIRTY_TG) || (s_d_tg_posmtx && (d & XGX_DIRTY_POSMTX)))
         for (i = 0; i < s_d_nunits; i++)

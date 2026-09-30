@@ -251,20 +251,32 @@ static void decode_level(const uint8_t* src, uint32_t fmt, uint32_t w, uint32_t 
     }
 }
 
-/* sampled hash: whole small textures, 64 strided words of big ones */
+/* sampled hash: whole small textures, 64 strided words of big ones. Four
+ * FNV chains, one per word of every group of four: a single chain is a
+ * serial multiply per word (this ran once a frame for every texture drawn). */
 static uint32_t hash_bytes(const uint8_t* p, uint32_t n) {
-    uint32_t h = 2166136261u, i;
+    uint32_t h0 = 2166136261u, h1 = h0 ^ 1, h2 = h0 ^ 2, h3 = h0 ^ 3, i;
     if (!p) return 0;
     if (n <= 4096) {
-        for (i = 0; i + 4 <= n; i += 4) h = (h ^ *(const uint32_t*)(p + i)) * 16777619u;
-        return h;
-    }
-    {
+        const uint32_t* w = (const uint32_t*)p;
+        for (i = 0; i + 16 <= n; i += 16, w += 4) {
+            h0 = (h0 ^ w[0]) * 16777619u;
+            h1 = (h1 ^ w[1]) * 16777619u;
+            h2 = (h2 ^ w[2]) * 16777619u;
+            h3 = (h3 ^ w[3]) * 16777619u;
+        }
+        for (; i + 4 <= n; i += 4) h0 = (h0 ^ *(const uint32_t*)(p + i)) * 16777619u;
+    } else {
         uint32_t step = (n / 4 / 64) * 4;
-        for (i = 0; i < 64; i++) h = (h ^ *(const uint32_t*)(p + i * step)) * 16777619u;
-        h = (h ^ *(const uint32_t*)(p + n - 4)) * 16777619u;
+        for (i = 0; i < 64; i += 4) {
+            h0 = (h0 ^ *(const uint32_t*)(p + i * step)) * 16777619u;
+            h1 = (h1 ^ *(const uint32_t*)(p + (i + 1) * step)) * 16777619u;
+            h2 = (h2 ^ *(const uint32_t*)(p + (i + 2) * step)) * 16777619u;
+            h3 = (h3 ^ *(const uint32_t*)(p + (i + 3) * step)) * 16777619u;
+        }
+        h0 = (h0 ^ *(const uint32_t*)(p + n - 4)) * 16777619u;
     }
-    return h;
+    return ((h0 ^ h1) * 16777619u ^ h2) * 16777619u ^ h3;
 }
 
 static Entry* find(const uint8_t* data, uint16_t w, uint16_t h, uint8_t fmt, uint8_t levels, const uint8_t* tlut_data) {

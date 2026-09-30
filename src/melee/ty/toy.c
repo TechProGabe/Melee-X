@@ -1715,6 +1715,7 @@ s16 _Toy_803064B8(s16 arg0, s8 arg1)
 
 void _Toy_8030663C(void)
 {
+    s32 filled1 = 0, filled2 = 0; /* PORT: rows each sort column got, for the log below */
     s32 var_r31;
     u16* var_r29;
     TySortRow* var_r28;
@@ -1766,6 +1767,7 @@ void _Toy_8030663C(void)
             }
             var2_r30 += 1;
         } while (var2_r30 < TY_TROPHY_COUNT);
+        filled1 = var2_r29 - _Toy_sbss_804D6E64;
     }
     {
         TySortRow* var3_r27;
@@ -1805,7 +1807,16 @@ void _Toy_8030663C(void)
             }
             var3_r30 += 1;
         } while (var3_r30 < TY_TROPHY_COUNT);
+        filled2 = var3_r29 - _Toy_sbss_804D6E64;
     }
+    /* PORT: the trophy gallery panicked on the console ("Not Found Toy
+     * Model!(-15356)"): a sort row it read was never filled. Log what the
+     * sort got against the trophy count it will walk. */
+    OSReport("[TOY] sort: %d trophies owned, sort columns filled %d/%d, trophy count %d, "
+             "language setting %d saved %d\n",
+             (int) var_r31, (int) filled1, (int) filled2,
+             (int) *gmMainLib_GetTrophyCount(), (int) gmMainLib_804D3EE0->language,
+             (int) lbLang_GetSavedLanguage());
 }
 
 void Toy_803067BC(s32 arg0, s32 arg1)
@@ -2683,7 +2694,13 @@ ToyModelFile* Toy_8030813C(int trophy_id)
 
     if (found == 0) {
         OSReport("**** Not Found Toy Model!(%d)\n", id);
+#ifdef TARGET_XBOX
+        /* PORT: show the first trophy instead of panicking (the gallery hit
+         * this on the console with a 100% save; see the [TOY] sort line) */
+        ptr = _Toy_sbss_804D6EA8;
+#else
         HSD_ASSERT(2979, 0);
+#endif
     }
 
     return ptr;

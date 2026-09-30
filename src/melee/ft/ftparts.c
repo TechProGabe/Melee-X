@@ -1,5 +1,7 @@
 #include "ftparts.h"
 
+#include <stddef.h> /* PORT: offsetof, for ftParts_TableOk */
+
 #include <placeholder.h>
 
 #include "fighter.h"
@@ -653,6 +655,30 @@ void ftParts_80074CA0(FtPartsVis* vis, int idx, DObjList* dobj_list)
     }
 }
 
+#ifdef TARGET_XBOX
+/* PORT: a 4-player Fountain of Dreams match crashed on the console here
+ * (fighter drawn in the reflection pass): a group's index list pointed at
+ * 0x07080900, outside game memory. Until the cause is known, a table
+ * pointing outside MEM1/ARAM (0x10000000-0x13000000) is logged once per
+ * fighter kind and skipped. */
+static bool ftParts_TableOk(FtPartsVis* vis, const void* p, int idx)
+{
+    static u32 logged;
+    Fighter* fp;
+    if ((uintptr_t) p >= 0x10000000u && (uintptr_t) p < 0x13000000u) {
+        return true;
+    }
+    fp = (Fighter*) ((u8*) vis - offsetof(Fighter, x5AC));
+    if (fp->kind < 32 && !(logged & (1u << fp->kind))) {
+        logged |= 1u << fp->kind;
+        OSReport("[WARN] ftParts: kind %d costume %d: visibility table %d "
+                 "points at %p, skipped\n",
+                 fp->kind, fp->costume_id, idx, p);
+    }
+    return false;
+}
+#endif
+
 void ftParts_80074D7C(FtPartsVis* vis, int idx, DObjList* dobj_list)
 {
     FtPartsVisLookup* lookup = vis->xC[idx]; // r0
@@ -665,6 +691,13 @@ void ftParts_80074D7C(FtPartsVis* vis, int idx, DObjList* dobj_list)
                 int k;      // r22
                 u8* r29;    // r29
                 r26 = &DP(TempS, lookup[i].x4)[j];
+#ifdef TARGET_XBOX
+                if (!ftParts_TableOk(vis, r26, idx) ||
+                    !ftParts_TableOk(vis, DP(u8, r26->x4), idx))
+                {
+                    break;
+                }
+#endif
                 r29 = DP(u8, r26->x4);
                 for (k = 0; k < r26->x0; k++) {
                     HSD_DObjSetFlags(dobj_list->data[r29[k]], 1);

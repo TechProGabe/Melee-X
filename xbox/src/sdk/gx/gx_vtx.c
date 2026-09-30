@@ -698,7 +698,7 @@ static void call_display_list(const void* list, u32 nbytes) {
  * (volatile). */
 #define DLC_MAX 2048
 #define DLC_BUCKETS 4096
-#define DLC_MAX_BATCH 64
+#define DLC_MAX_BATCH 4096      /* Fountain of Dreams' stage: one 104 KB list of more than 512 */
 #define DLC_MAX_RANGE 12
 #define DLC_VOLATILE 4          /* rebuilds before a list goes dynamic */
 #define DLC_DYN_BUDGET (1024u * 1024)   /* template + index bytes for all dynamic lists */
@@ -733,13 +733,14 @@ typedef struct {
 typedef struct {
     DynBatch* batch;
     DlBatch* view;                 /* the batches as DlBatch, then the draws they merge into */
-    uint8_t gfirst[DLC_MAX_BATCH]; /* each draw's first batch */
+    uint16_t* gfirst;              /* each draw's first batch */
     uint8_t* tmpl;
     uint16_t* idx;
     uint32_t bytes;                /* charged to the budget */
     uint32_t sig, dl_hash;
     DynArray arr[DLC_MAX_RANGE];
-    uint8_t narr, nbatch, ndraw;
+    uint8_t narr;
+    uint16_t nbatch, ndraw;
 } DynList;
 
 typedef struct {
@@ -766,6 +767,7 @@ static uint32_t s_dyn_bytes;
 static uint32_t s_st_dl_hits, s_st_dl_builds, s_st_dl_direct, s_st_dyn_calls, s_st_dyn_fetch, s_st_dyn_builds;
 static uint32_t s_st_chg_sig, s_st_chg_data;   /* why cached lists were rebuilt: formats/arrays, or contents */
 static uint32_t s_st_dl_joined;               /* batches drawn as part of the one before */
+static const char* s_build_why;               /* why the last build failed, for log_uncached */
 
 /* FNV-1a, 32-bit words (the tail a byte at a time) */
 static uint32_t fnv(uint32_t h, const void* p, uint32_t n) {
@@ -779,17 +781,33 @@ static uint32_t fnv(uint32_t h, const void* p, uint32_t n) {
     return h;
 }
 
-/* 64 sampled words plus the tail, as the texture cache does */
+/* 64 sampled words plus the tail, as the texture cache does. Four FNV
+ * chains, one per word of every group of four: one chain is a serial
+ * multiply per word, and the loads (cache misses, mostly) wait behind it. */
 static uint32_t sample_hash(uint32_t h, const uint8_t* p, uint32_t n) {
-    uint32_t i, step;
-    if (n < 256) return fnv(h, p, n);
-    step = (n - 4) / 64;
-    for (i = 0; i < 64; i++) {
-        uint32_t w;
-        memcpy(&w, p + i * step, 4);
-        h = (h ^ w) * 16777619u;
+    uint32_t i, step, h1 = h ^ 1, h2 = h ^ 2, h3 = h ^ 3, w[4];
+    if (n < 256) {
+        for (; n >= 16; n -= 16, p += 16) {
+            memcpy(w, p, 16);
+            h = (h ^ w[0]) * 16777619u;
+            h1 = (h1 ^ w[1]) * 16777619u;
+            h2 = (h2 ^ w[2]) * 16777619u;
+            h3 = (h3 ^ w[3]) * 16777619u;
+        }
+        return fnv(((h ^ h1) * 16777619u ^ h2) * 16777619u ^ h3, p, n);
     }
-    return fnv(h, p + n - 4, 4);
+    step = (n - 4) / 64;
+    for (i = 0; i < 64; i += 4) {
+        memcpy(&w[0], p + i * step, 4);
+        memcpy(&w[1], p + (i + 1) * step, 4);
+        memcpy(&w[2], p + (i + 2) * step, 4);
+        memcpy(&w[3], p + (i + 3) * step, 4);
+        h = (h ^ w[0]) * 16777619u;
+        h1 = (h1 ^ w[1]) * 16777619u;
+        h2 = (h2 ^ w[2]) * 16777619u;
+        h3 = (h3 ^ w[3]) * 16777619u;
+    }
+    return fnv(((h ^ h1) * 16777619u ^ h2) * 16777619u ^ h3, p + n - 4, 4);
 }
 
 /* the vertex descriptor and the formats `fmts` use; with_arrays: the array
@@ -827,6 +845,7 @@ static void dyn_free(DlEntry* e) {
     if (!d) return;
     s_dyn_bytes -= d->bytes;
     free(d->view);
+    free(d->gfirst);
     free(d->batch);
     free(d->tmpl);
     free(d->idx);
@@ -905,7 +924,32 @@ static uint32_t dl_skip(const uint8_t* dl, uint32_t at, uint32_t nbytes) {
 }
 
 /* pass 1 over a list: its draws and their layouts; 0 when it can't be cached */
-static int dl_scan(const uint8_t* dl, uint32_t nbytes, DlBatch* batch, uint32_t* total, uint8_t* fmts) {
+/* scratch for a build, grown to the most draws a list has had (the stage
+ * lists run to hundreds; most lists have a few) */
+static DlBatch *s_sc_batch, *s_sc_merged;
+static uint16_t* s_sc_first;
+static uint32_t* s_sc_idx;
+static int s_sc_cap;
+
+static int scan_reserve(int n) {
+    int cap = s_sc_cap ? s_sc_cap : 64;
+    void* p;
+    if (n <= s_sc_cap) return 1;
+    while (cap < n) cap *= 2;
+    if (!(p = realloc(s_sc_batch, sizeof(DlBatch) * (size_t)cap))) return 0;
+    s_sc_batch = (DlBatch*)p;
+    if (!(p = realloc(s_sc_merged, sizeof(DlBatch) * (size_t)cap))) return 0;
+    s_sc_merged = (DlBatch*)p;
+    if (!(p = realloc(s_sc_first, sizeof(uint16_t) * (size_t)cap))) return 0;
+    s_sc_first = (uint16_t*)p;
+    if (!(p = realloc(s_sc_idx, sizeof(uint32_t) * (size_t)cap))) return 0;
+    s_sc_idx = (uint32_t*)p;
+    s_sc_cap = cap;
+    return 1;
+}
+
+static int dl_scan(const uint8_t* dl, uint32_t nbytes, uint32_t* total, uint8_t* fmts) {
+    DlBatch* batch = s_sc_batch;
     Plan plan;
     uint32_t at = 0, next;
     int nb = 0;
@@ -915,11 +959,18 @@ static int dl_scan(const uint8_t* dl, uint32_t nbytes, DlBatch* batch, uint32_t*
         uint8_t cmd = dl[at];
         if (cmd >= 0x80 && cmd < 0xC0 && at + 3 <= nbytes) {
             uint32_t n = gx_be16(dl + at + 1), fmt = cmd & 7, vbytes;
-            if (nb == DLC_MAX_BATCH) return 0;
+            if (nb == DLC_MAX_BATCH || (nb >= s_sc_cap && !scan_reserve(nb + 1))) {
+                s_build_why = nb == DLC_MAX_BATCH ? "too many draws" : "no memory";
+                return 0;
+            }
+            batch = s_sc_batch;
             make_plan(&plan, (int)fmt);
             vbytes = dl_vertex_bytes(&plan);
             at += 3;
-            if (at + n * vbytes > nbytes) return 0;
+            if (at + n * vbytes > nbytes) {
+                s_build_why = "draw runs past the end";
+                return 0;
+            }
             batch[nb].prim = cmd & 0xF8;
             batch[nb].count = n;
             batch[nb].offset = *total;
@@ -981,7 +1032,7 @@ static uint32_t join_extra(uint32_t prim, uint32_t have) { return prim == XGX_TR
 
 /* groups the batches into draws (quads and fans as triangles, see
  * out_prim); first[g]: the group's first batch */
-static int merge_plan(const DlBatch* in, int nb, DlBatch* out, uint8_t* first, uint32_t* total) {
+static int merge_plan(const DlBatch* in, int nb, DlBatch* out, uint16_t* first, uint32_t* total) {
     int i, ng = 0;
     for (i = 0; i < nb; i++) {
         uint32_t prim = out_prim(in[i].prim), n = out_count(in[i].prim, in[i].count);
@@ -994,7 +1045,7 @@ static int merge_plan(const DlBatch* in, int nb, DlBatch* out, uint8_t* first, u
         out[ng] = in[i];
         out[ng].prim = prim;
         out[ng].count = n;
-        first[ng++] = (uint8_t)i;
+        first[ng++] = (uint16_t)i;
     }
     *total = 0;
     for (i = 0; i < ng; i++) {
@@ -1024,7 +1075,7 @@ static void merge_copy_group(const DlBatch* in, int from, int end, const uint8_t
     }
 }
 
-static void merge_copy(const DlBatch* in, int nb, const uint8_t* src, const DlBatch* out, const uint8_t* first, int ng,
+static void merge_copy(const DlBatch* in, int nb, const uint8_t* src, const DlBatch* out, const uint16_t* first, int ng,
                        uint8_t* dst) {
     int g;
     for (g = 0; g < ng; g++) merge_copy_group(in, first[g], g + 1 < ng ? first[g + 1] : nb, src, dst + out[g].offset);
@@ -1033,17 +1084,24 @@ static void merge_copy(const DlBatch* in, int nb, const uint8_t* src, const DlBa
 /* decode the whole list into one buffer; 0 when it can't be cached */
 static int dlc_build(DlEntry* e, uint32_t frame) {
     static IdxRange r;
-    DlBatch batch[DLC_MAX_BATCH], merged[DLC_MAX_BATCH];
-    uint8_t first[DLC_MAX_BATCH];
+    DlBatch *batch, *merged;
+    uint16_t* first;
     uint32_t total, mtotal, a;
     uint8_t fmts;
     uint8_t* tmp;
-    int nb = dl_scan(e->dl, e->nbytes, batch, &total, &fmts), ng, i;
-    if (!nb) return 0;
+    int nb, ng, i;
+    s_build_why = "no draws";
+    if (!(nb = dl_scan(e->dl, e->nbytes, &total, &fmts))) return 0;
+    batch = s_sc_batch;
+    merged = s_sc_merged;
+    first = s_sc_first;
     /* decoded in cached memory, then copied on in order: the vertex pool is
      * write-combined */
     tmp = (uint8_t*)malloc(total);
-    if (!tmp) return 0;
+    if (!tmp) {
+        s_build_why = "no memory";
+        return 0;
+    }
     range_reset(&r);
     dl_decode_all(e->dl, e->nbytes, batch, nb, tmp, &r, NULL, NULL);
     ng = merge_plan(batch, nb, merged, first, &mtotal);
@@ -1052,6 +1110,7 @@ static int dlc_build(DlEntry* e, uint32_t frame) {
     while (mtotal && !e->mem && dlc_evict_one(frame, e)) e->mem = (uint8_t*)xgx_vbuf_alloc(mtotal);
     e->batch = e->mem ? (DlBatch*)malloc(sizeof(DlBatch) * (size_t)ng) : NULL;
     if (!e->batch) {
+        s_build_why = e->mem ? "no memory" : "vertex pool full";
         free(tmp);
         dlc_release(e);
         return 0;
@@ -1095,12 +1154,15 @@ static uint32_t dyn_array_hash(const DynArray* a, const uint8_t* base) {
  * not cacheable */
 static int dyn_build(DlEntry* e, uint32_t frame) {
     static IdxRange r;
-    DlBatch batch[DLC_MAX_BATCH];
-    uint32_t idx_first[DLC_MAX_BATCH], total, nidx = 0, a, bytes;
+    DlBatch* batch;
+    uint32_t* idx_first;
+    uint32_t total, nidx = 0, a, bytes;
     uint8_t fmts;
     DynList* d;
-    int nb = dl_scan(e->dl, e->nbytes, batch, &total, &fmts), i, k;
+    int nb = dl_scan(e->dl, e->nbytes, &total, &fmts), i, k;
     if (!nb) return 0;
+    batch = s_sc_batch;
+    idx_first = s_sc_idx;
     d = (DynList*)calloc(1, sizeof *d);
     if (!d) return 0;
     d->batch = (DynBatch*)calloc((size_t)nb, sizeof(DynBatch));
@@ -1140,7 +1202,7 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
             return 0;
         }
     }
-    bytes = total + nidx * 2 + (uint32_t)nb * (sizeof(DynBatch) + 2 * sizeof(DlBatch));
+    bytes = total + nidx * 2 + (uint32_t)nb * (sizeof(DynBatch) + 2 * sizeof(DlBatch) + sizeof(uint16_t));
     if (s_dyn_bytes + bytes > DLC_DYN_BUDGET) {
         free(d->batch);
         free(d);
@@ -1157,9 +1219,14 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
     }
     range_reset(&r);
     dl_decode_all(e->dl, e->nbytes, batch, nb, d->tmpl, &r, d->idx, idx_first);
-    d->nbatch = (uint8_t)nb;
+    d->nbatch = (uint16_t)nb;
     d->bytes = bytes;
     d->view = (DlBatch*)malloc(sizeof(DlBatch) * (size_t)nb * 2);
+    d->gfirst = (uint16_t*)malloc(sizeof(uint16_t) * (size_t)nb);
+    if (d->view && !d->gfirst) {
+        free(d->view);
+        d->view = NULL;
+    }
     if (d->view) {
         uint32_t mtotal;
         for (i = 0; i < nb; i++) {
@@ -1168,7 +1235,7 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
             d->view[i].offset = d->batch[i].offset;
             d->view[i].layout = d->batch[i].plan.layout;
         }
-        d->ndraw = (uint8_t)merge_plan(d->view, nb, d->view + nb, d->gfirst, &mtotal);
+        d->ndraw = (uint16_t)merge_plan(d->view, nb, d->view + nb, d->gfirst, &mtotal);
     }
     s_dyn_bytes += bytes;
     for (a = 0; a < GX_VA_MAX_ATTR; a++)
@@ -1266,6 +1333,18 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
     return 1;
 }
 
+/* the first lists drawn uncached, and why */
+static void log_uncached(const uint8_t* dl, uint32_t nbytes, const char* why) {
+    static const uint8_t* seen[24];
+    static int logged;
+    int i;
+    for (i = 0; i < logged; i++)
+        if (seen[i] == dl) return;
+    if (logged >= 24) return;
+    seen[logged++] = dl;
+    xhw_logf("[DLC] uncached: list %08x (%u bytes): %s", (unsigned)(uintptr_t)dl, nbytes, why);
+}
+
 /* 1: drawn from the cache */
 static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
     uint32_t frame = xgx_present_count();
@@ -1294,7 +1373,10 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
     }
     if (!e) {
         int idx;
-        if (!s_dlc_nfree && !dlc_evict_one(frame, NULL)) return 0;
+        if (!s_dlc_nfree && !dlc_evict_one(frame, NULL)) {
+            log_uncached(dl, nbytes, "no free entry");
+            return 0;
+        }
         idx = s_dlc_free[--s_dlc_nfree];
         e = &s_dlc[idx];
         memset(e, 0, sizeof *e);
@@ -1305,7 +1387,10 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
         s_dlc_bucket[dl_bucket(dl)] = idx;
         s_dlc_n++;
     }
-    if (!e->mem && !dlc_build(e, frame)) return 0;
+    if (!e->mem && !dlc_build(e, frame)) {
+        log_uncached(dl, nbytes, s_build_why);
+        return 0;
+    }
     e->last_used = frame;
     s_st_dl_hits++;
     for (i = 0; i < e->nbatch; i++) {

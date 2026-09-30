@@ -196,6 +196,17 @@ marked `PORT:`:
   `TARGET_XBOX` the online/LAN lobby goes straight back to the menu.
   Netplay isn't built, and the lobby formatted the stubs' NULL strings
   (console crash in `snprintf` when LAN play was picked).
+- `src/melee/ty/toy.c` (`Toy_8030813C`, `_Toy_8030663C`): under
+  `TARGET_XBOX` a trophy id missing from the model table shows the first
+  trophy instead of panicking. The gallery panicked on the console with a
+  100% save ("Not Found Toy Model!(-15356)": a sort row that was never
+  filled); `_Toy_8030663C` logs a `[TOY] sort:` line (trophies owned, rows
+  each sort column got, trophy count, language) to find why.
+- `src/melee/ft/ftparts.c` (`ftParts_80074D7C`): under `TARGET_XBOX` a
+  fighter-parts visibility group whose table or index list points outside
+  MEM1/ARAM is skipped and logged once per fighter kind (`[WARN] ftParts:`).
+  A 4-player Fountain of Dreams match (Pichu, Game & Watch, Ness, Kirby)
+  crashed there reading 0x07080900.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after
