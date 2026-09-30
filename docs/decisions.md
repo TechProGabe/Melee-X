@@ -132,6 +132,21 @@ depth range gets less fog mid-span than on the GameCube (up to ~23/255 on
 long edges), and the EXP curves are linear between vertices.
 `GXSetFogRangeAdj` is not applied.
 
+**Shorter vertex programs, and program memory by forecast** (`nv2a_vp.c`,
+`nv2a_vpmem.c`, `docs/renderer.md`). The console loaded ~80 programs (~60
+instructions each) per frame of a 4-CPU match, because the 136-instruction
+program memory was packed and flushed whole. Programs are now optimized
+(outputs written directly, dead lanes dropped, ILU ops paired with MAC ops),
+lighting skips the attenuation factors that are exactly 1 for infinite and
+point lights, keys are canonical, and a program is placed by Belady's rule
+with the previous frame as the forecast. Only rewrites that give the same
+bits were allowed: `test_vp_opt.py` compares every output with the old
+generator's through an interpreter, and keys the old generator had to
+approximate are approximated the same way (most would fit now: a possible
+accuracy change for later). The cost: generating a program takes ~40 µs on
+the host (~8x the old generator; once per new key, 64 cached), and the
+attenuation shortcut relies on rcp(1.0) being exactly 1 on the NV2A.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 

@@ -4,7 +4,9 @@
 The vertex programs are generated at runtime on the Xbox, where nothing can
 compare them to a reference. Here, nv2a_vp.c is built for the host with
 VP_HOST_TEST, which emits a fixed program covering every opcode, operand
-slot, relative addressing, negation, swizzles and output kinds; nv2a-vsh
+slot, relative addressing, negation, swizzles and output kinds, and the
+optimizer's instruction forms (a MAC op paired with an ILU op, whose temp
+write goes to r1; an ILU MOV; one op writing a temp and an output); nv2a-vsh
 (pip install nv2a-vsh) assembles the same program from source, and the
 machine words must match exactly.
 """
@@ -33,6 +35,12 @@ mov oT2.zw, c4.xxxy
 rcp oFog.x, r11.y
 expp r3.z, r3.y
 mad oFog.x, r3.z, c136.z, c136.y
+mul r2.xyz, r0, c4.x + rsq r1.y, r3.x
+dp4 oPos.w, r0, c3 + rcp r1.x, r2.w
+mov r5.x, r3 + rcp oFog.x, r2.w
+dp4 r2.w, r0, c3 + dp4 oPos.w, r0, c3
+mul r2.xyz, r0, c4.x + mov r1.y, c4.x
+dp3 r3.x, r1, r1 + mov oT0.zw, c4.xxxy
 """
 
 HARNESS = r"""
