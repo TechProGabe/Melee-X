@@ -2,9 +2,8 @@
 # XBE reads the user's own disc image at runtime.
 name: build
 
+# Manual runs only: builds happen locally (tools/xbox/docker/build.sh).
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 concurrency:

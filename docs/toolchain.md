@@ -80,6 +80,7 @@ expose only scalars and pointers to the rest.
 
 ## CI
 
-`.github/workflows/build.yml` runs `tools/xbox/setup.sh` (LLVM and nxdk are
+The workflow runs only when started by hand (`workflow_dispatch`); builds
+and tests run locally. `.github/workflows/build.yml` runs `tools/xbox/setup.sh` (LLVM and nxdk are
 cached, keyed on that script), builds `default.xbe` and runs the three host
 tests. The XBE and its link map are uploaded as the `default.xbe` artifact.

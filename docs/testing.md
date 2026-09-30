@@ -9,8 +9,9 @@ tools/xbox/test_tex_convert.py   # native texture formats vs the GX decoder
 tools/xbox/test_fog.py           # GX fog on the NV2A vs GX's fog factor (libogc registers, Dolphin's formula)
 ```
 
-CI (`.github/workflows/build.yml`) runs all four after building
-`default.xbe`, and uploads the XBE with its link map.
+CI (`.github/workflows/build.yml`, started by hand only: builds and tests
+run locally) runs all four after building `default.xbe`, and uploads the
+XBE with its link map.
 
 ## Running it
 
