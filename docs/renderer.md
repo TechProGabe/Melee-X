@@ -219,7 +219,10 @@ Current limits:
   a 256-entry A8R8G8B8 palette (the TLUT decoded; it sits at the start of
   the texture's pool allocation, `SET_TEXTURE_PALETTE`). Everything else
   becomes A8R8G8B8; non-power-of-two images are resampled to the next power
-  of two. On Pokémon Stadium, C8 as A8R8G8B8 took 2.1 MB of the pool.
+  of two. On Pokémon Stadium, C8 as A8R8G8B8 took 2.1 MB of the pool. A
+  texture unit is re-sent whenever a different texture binds, even one made
+  at a freed texture's address with the same format and size, so a P8
+  palette is always loaded again (xemu reads palettes at each draw).
   `docs/architecture.md` has the table and `tools/xbox/test_tex_convert.py`
   the checks.
 - CMPR -> DXT1 conversion:

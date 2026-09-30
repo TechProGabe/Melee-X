@@ -63,6 +63,13 @@ void xhw_pad_poll(void) {
     for (i = 0; i < n; i++) open_device(i);
 }
 
+/* BACK (unmapped by default): a screenshot of the next frame to E: */
+static void shot_button(int port, uint32_t buttons) {
+    static uint32_t s_prev[PORTS];
+    if ((buttons & ~s_prev[port]) & XHW_BTN_BACK) xgx_shot_next();
+    s_prev[port] = buttons;
+}
+
 int xhw_pad_get(int port, xhw_pad* out) {
     SDL_GameController* gc;
     static const struct { SDL_GameControllerButton b; uint32_t bit; } k_map[] = {
@@ -81,6 +88,7 @@ int xhw_pad_get(int port, xhw_pad* out) {
     if (port < 0 || port >= PORTS) return 0;
     if (!(gc = s_pad[port])) {
         xhw_autopad_apply(port, out);
+        shot_button(port, out->buttons);
         return out->connected;
     }
     out->connected = 1;
@@ -93,6 +101,7 @@ int xhw_pad_get(int port, xhw_pad* out) {
     out->lt = (uint8_t)(SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT) >> 7);
     out->rt = (uint8_t)(SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) >> 7);
     xhw_autopad_apply(port, out);
+    shot_button(port, out->buttons);
     return 1;
 }
 

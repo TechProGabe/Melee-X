@@ -353,6 +353,7 @@ typedef struct {
     void* mem;              /* level 0 */
     void* base;             /* the allocation: the palette of a P8 texture, then its levels */
     uint32_t pal;           /* P8: SET_TEXTURE_PALETTE value; 0: none */
+    uint32_t gen;           /* bumped per texture made: a new one at a freed one's address differs */
 } Tex;
 static Tex s_tex[MAX_TEX];
 static int s_tex_next = 1;
@@ -581,6 +582,10 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     s_tex[id].bytes = bytes;
     s_tex[id].mem = mem;
     s_tex[id].base = base;
+    {
+        static uint32_t s_gen;
+        s_tex[id].gen = ++s_gen;
+    }
     s_tex[id].pal = pal_bytes ? ((uint32_t)base & 0x03FFFFC0) | NV097_SET_TEXTURE_PALETTE_LENGTH_256 << 2 : 0;
     return (uint32_t)id;
 }
@@ -675,6 +680,8 @@ static void pb_budget(void) {
 #define XHW_FBDUMP_EVERY 0   /* [FBDUMP] screenshot every N presents (xhw_fbdump.c) */
 #endif
 void xgx_fbdump_next(void) { s_fbdump_once = 1; }
+static volatile int s_shot_once;
+void xgx_shot_next(void) { s_shot_once = 1; }
 
 void xgx_present(int black) {
     frame_open();
@@ -684,6 +691,10 @@ void xgx_present(int black) {
     if (s_fbdump_once || (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0)) {
         s_fbdump_once = 0;
         xhw_fbdump(pb_back_buffer(), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());
+    }
+    if (s_shot_once) {
+        s_shot_once = 0;
+        xhw_fbdump_file(pb_back_buffer(), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());
     }
     release_deferred();
     if (s_gf_count != s_gf_logged) {
@@ -1158,7 +1169,11 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
             v[2] = wrap_mode(m->wrap_s) | (wrap_mode(m->wrap_t) << 8) | (3u << 16);
             v[3] = 0x4003FFC0u;
             v[4] = (minf << 16) | (magf << 24) | ((uint32_t)((int)(m->lod_bias * 256.0f)) & 0x1FFF) | 0x2000u;
-            v[5] = 1;
+            /* not sent: a texture made at a freed one's address, format and
+             * size still re-sends the unit, so a P8 texture's palette is
+             * loaded again (xemu reads palettes at each draw; the console
+             * may keep the one it has) */
+            v[5] = t->gen;
             v[6] = t->pal;   /* DMA A: bit 0 clear */
             prog |= 1u << (u * 5);   /* 2D_PROJECTIVE */
         }

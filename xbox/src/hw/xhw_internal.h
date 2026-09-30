@@ -29,6 +29,9 @@ unsigned xhw_frame_count(void);
 
 /* xhw_fbdump.c: a framebuffer as [FBDUMP] log lines (tools/xbox/fbdump_to_png.py) */
 void xhw_fbdump(const void* fb, int w, int h, int bpp, int pitch);
+/* the same frame as E:\UDATA\4d580001\shotNN.bmp: screenshots on the console (BACK) */
+void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch);
+void xgx_shot_next(void);   /* nv2a.c: xhw_fbdump_file the next presented frame */
 
 /* xhw_autopad.c: scripted input from D:\autopad.txt (-DXHW_AUTOPAD=1 only) */
 struct xhw_pad;

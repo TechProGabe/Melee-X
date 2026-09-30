@@ -8,7 +8,12 @@
  * and tools/xbox/fbdump_to_png.py turns a serial log into PNGs. The NV2A's
  * colour buffer is plain system memory, so this reads it directly. The data
  * lines go to COM1 only (boot.log flushes every line).
- * Off unless built with -DXHW_FBDUMP_EVERY=N (every N presents). */
+ * Off unless built with -DXHW_FBDUMP_EVERY=N (every N presents).
+ *
+ * On the console there is no COM1: BACK on any controller writes the next
+ * frame to E:\UDATA\4d580001\shotNN.bmp instead (xhw_fbdump_file), fetched
+ * over FTP with the logs. */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #define Z_SOLO   /* how nxdk builds libzlib: no compress.c, caller-supplied allocator */
@@ -96,4 +101,56 @@ void xhw_fbdump(const void* fb, int w, int h, int bpp, int pitch) {
     xhw_log("[FBDUMP] END");
     deflateEnd(&zs);
     xhw_watchdog_busy(0);
+}
+
+/* 24-bit bottom-up BMP, rows converted one at a time (the framebuffer is
+ * write-combined: read each row once, in order) */
+void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {
+    static unsigned s_n;
+    static unsigned char row[1280 * 3 + 4];
+    char path[64];
+    unsigned char hdr[54];
+    unsigned stride = ((unsigned)w * 3 + 3) & ~3u, size = 54 + stride * (unsigned)h;
+    DWORD done;
+    HANDLE f;
+    int x, y;
+    if (w > 1280 || w <= 0 || h <= 0) return;
+    snprintf(path, sizeof path, XHW_UDATA_DIR "shot%02u.bmp", s_n % 100);
+    f = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (f == INVALID_HANDLE_VALUE) {
+        xhw_logf("[SHOT] could not create %s", path);
+        return;
+    }
+    xhw_watchdog_busy(1);
+    memset(hdr, 0, sizeof hdr);
+    hdr[0] = 'B'; hdr[1] = 'M';
+    memcpy(hdr + 2, &size, 4);
+    hdr[10] = 54; hdr[14] = 40;
+    memcpy(hdr + 18, &w, 4);
+    memcpy(hdr + 22, &h, 4);
+    hdr[26] = 1; hdr[28] = 24;
+    WriteFile(f, hdr, sizeof hdr, &done, NULL);
+    memset(row, 0, sizeof row);
+    for (y = h - 1; y >= 0; y--) {
+        const unsigned char* src = (const unsigned char*)fb + (size_t)y * (size_t)pitch;
+        for (x = 0; x < w; x++) {
+            unsigned char* d = row + x * 3;
+            if (bpp == 16) {
+                unsigned v = ((const unsigned short*)src)[x], r = v >> 11, g = (v >> 5) & 63, b = v & 31;
+                d[0] = (unsigned char)(b << 3 | b >> 2);
+                d[1] = (unsigned char)(g << 2 | g >> 4);
+                d[2] = (unsigned char)(r << 3 | r >> 2);
+            } else {
+                unsigned v = ((const unsigned*)src)[x];
+                d[0] = (unsigned char)v;
+                d[1] = (unsigned char)(v >> 8);
+                d[2] = (unsigned char)(v >> 16);
+            }
+        }
+        WriteFile(f, row, stride, &done, NULL);
+    }
+    CloseHandle(f);
+    xhw_watchdog_busy(0);
+    xhw_logf("[SHOT] wrote %s", path);
+    s_n++;
 }
