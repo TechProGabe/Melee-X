@@ -8,6 +8,7 @@
  * that binds wherever the game points a texture object at the destination. */
 #include <dolphin/gx/GXAurora.h>
 #include <dolphin/vi.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "gx_internal.h"
@@ -48,6 +49,7 @@ void GXCopyDisp(void* dest, GXBool clear) {
     gx_vtx_flush();
     xgx_present(xsdk_vi_black());
     gx_tex_frame_end();
+    gx_vtx_frame_end();
     if (clear) clear_rect(full, 1, 1);
 }
 
@@ -69,18 +71,43 @@ void GXSetTexCopyDst(u16 wd, u16 ht, GXTexFmt fmt, GXBool mipmap) {
     g_gx.tex_copy_mip = mipmap;
 }
 
-static int is_intensity(uint32_t fmt) {
+/* how the copy's pixels read back through the texture format it is sampled
+ * as (XGX_COPY_*): intensity formats return I in every channel (alpha too,
+ * unless the format has its own alpha), and the R/G/B/A copies are sampled
+ * as I4/I8 of that channel. Shadow maps are GX_CTF_R4. */
+static int copy_mode(uint32_t fmt) {
     switch (fmt) {
-        case GX_TF_I4: case GX_TF_I8: case GX_TF_IA4: case GX_TF_IA8: return 1;
-        default: return 0;
+        case GX_TF_I4: case GX_TF_I8: return XGX_COPY_LUMA;
+        case GX_TF_IA4: case GX_TF_IA8: return XGX_COPY_LUMA_ALPHA;
+        case GX_CTF_R4: case GX_CTF_R8: return XGX_COPY_RED;
+        case GX_CTF_RA4: case GX_CTF_RA8: return XGX_COPY_RED_ALPHA;
+        case GX_CTF_G8: return XGX_COPY_GREEN;
+        case GX_CTF_B8: return XGX_COPY_BLUE;
+        case GX_CTF_A8: return XGX_COPY_ALPHA;
+        default: return XGX_COPY_COLOR;
     }
 }
 
 void GXCopyTex(void* dest, GXBool clear) {
-    uint32_t tex;
+    uint32_t tex, w = g_gx.tex_copy_w, h = g_gx.tex_copy_h, room;
+    int mode = copy_mode(g_gx.tex_copy_fmt);
     gx_vtx_flush();
-    tex = xgx_tex_from_efb(g_gx.tex_copy_src, g_gx.tex_copy_w, g_gx.tex_copy_h, is_intensity(g_gx.tex_copy_fmt),
-                           gx_tex_efb_texture(dest));
+#ifdef XGX_DEBUG_EFBLOG
+    {
+        static int s_n;
+        char line[128];
+        if (s_n++ < 200) {
+            snprintf(line, sizeof line, "[EFB] copy %d: src %d,%d %dx%d -> %ux%u fmt %x clear %d dest %p", s_n,
+                     (int)g_gx.tex_copy_src[0], (int)g_gx.tex_copy_src[1], (int)g_gx.tex_copy_src[2],
+                     (int)g_gx.tex_copy_src[3], w, h, (unsigned)g_gx.tex_copy_fmt, clear, dest);
+            xhw_log(line);
+        }
+    }
+#endif
+    tex = xgx_tex_from_efb(g_gx.tex_copy_src, w, h, mode, gx_tex_efb_texture(dest));
+    /* pool full: evict and copy again (eviction may have taken the old copy) */
+    for (room = w * h * 4; !tex && w && h && w <= 1024 && h <= 1024 && gx_tex_make_room(room); room *= 2)
+        tex = xgx_tex_from_efb(g_gx.tex_copy_src, w, h, mode, gx_tex_efb_texture(dest));
     gx_tex_note_efb_copy(dest, tex, g_gx.tex_copy_w, g_gx.tex_copy_h, g_gx.tex_copy_fmt);
     if (clear) clear_rect(g_gx.tex_copy_src, 1, 1);
 }

@@ -76,11 +76,13 @@ void xsdk_frame_boundary(void) {
     if (next_ns == 0 || now > next_ns + period * 2) {
         next_ns = now;   /* a hitch (loading): don't try to catch up */
     } else {
+        int pf = xhw_perf_enter(XHW_PERF_VSYNC);
         while (now + 1500000ull < next_ns) {
             xhw_sleep_ms(1);
             now = xhw_time_ns();
         }
         while (now < next_ns) now = xhw_time_ns();
+        xhw_perf_leave(pf);
     }
     next_ns += period;
 

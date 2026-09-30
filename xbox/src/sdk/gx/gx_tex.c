@@ -234,19 +234,65 @@ static Entry* find(const uint8_t* data, uint16_t w, uint16_t h, uint8_t fmt, uin
     return NULL;
 }
 
+static int is_bound(uint32_t tex) {
+    int m;
+    for (m = 0; m < XGX_MAX_MAPS; m++)
+        if (g_xgx.map[m].tex == tex) return 1;
+    return 0;
+}
+
 static void drop(Entry* e) {
-    if (e->tex) xgx_tex_destroy(e->tex);
+    int m;
+    if (e->tex) {
+        for (m = 0; m < XGX_MAX_MAPS; m++)
+            if (g_xgx.map[m].tex == e->tex) {
+                g_xgx.map[m].tex = 0;
+                g_xgx.dirty |= XGX_DIRTY_MAPS;
+            }
+        xgx_tex_destroy(e->tex);
+    }
     *e = s_cache[--s_count];
 }
 
-static void evict_oldest(void) {
+/* Eviction victim: the least recently used entry no texture map holds.
+ * An EFB copy can't be made again from memory, so it counts as EFB_GRACE
+ * frames younger than it is: textures are re-uploaded first, but a stale
+ * copy still goes. -1: nothing to evict. */
+#define EFB_GRACE 60
+static int lru_victim(void) {
     int i, pick = -1;
-    for (i = 0; i < s_count; i++)
-        if (!s_cache[i].efb && (pick < 0 || s_cache[i].last_used < s_cache[pick].last_used)) pick = i;
-    if (pick >= 0) {
-        s_st_evicts++;
-        drop(&s_cache[pick]);
+    uint32_t best = 0;
+    for (i = 0; i < s_count; i++) {
+        uint32_t rank = s_cache[i].last_used + (s_cache[i].efb ? EFB_GRACE : 0);
+        if ((pick < 0 || rank < best) && !is_bound(s_cache[i].tex)) {
+            pick = i;
+            best = rank;
+        }
     }
+    return pick;
+}
+
+/* Evicts until about `bytes` of the pool is released. Returns how many
+ * entries went, 0 when there was nothing to evict or the request can never
+ * fit (then evicting would only empty the cache). */
+int gx_tex_make_room(uint32_t bytes) {
+    uint32_t freed = 0;
+    int n = 0, i;
+    if (bytes / 1024 > xgx_tex_pool_kb()) return 0;
+    while (freed < bytes && (i = lru_victim()) >= 0) {
+        freed += xgx_tex_bytes(s_cache[i].tex);
+        s_st_evicts++;
+        drop(&s_cache[i]);
+        n++;
+    }
+    return n;
+}
+
+static void evict_one(void) {
+    int i = lru_victim();
+    if (i < 0) i = 0;   /* every entry bound: 2048 entries, 8 maps, can't happen */
+    s_st_evicts++;
+    drop(&s_cache[i]);
 }
 
 /* ---- native formats ----
@@ -329,8 +375,8 @@ static void convert_level(const uint8_t* src, uint32_t fmt, uint32_t xfmt, uint3
     }
 }
 
-static uint32_t upload(const TexObj* o, const TlutObj* tl, uint32_t levels, uint32_t bytes) {
-    uint32_t need = 0, w = o->w, h = o->h, l, tex, xfmt = native_fmt(o);
+static uint32_t upload_now(const TexObj* o, const TlutObj* tl, uint32_t levels, uint32_t bytes) {
+    uint32_t need = 0, w = o->w, h = o->h, l, tex, room, xfmt = native_fmt(o);
     const uint8_t* src = o->data;
     uint8_t* dst;
     for (l = 0; l < levels; l++) {
@@ -358,11 +404,18 @@ static uint32_t upload(const TexObj* o, const TlutObj* tl, uint32_t levels, uint
         h = h > 1 ? h / 2 : 1;
     }
     s_st_uploads++;
+    /* pool full: evict, wait for the GPU once, retry; each round frees
+     * twice as much, since the pool fragments */
     tex = xgx_tex_create(o->w, o->h, levels, xfmt, s_scratch);
-    while (!tex && s_count > 0) {
-        evict_oldest();
+    for (room = need * 4; !tex && gx_tex_make_room(room); room *= 2)
         tex = xgx_tex_create(o->w, o->h, levels, xfmt, s_scratch);
-    }
+    return tex;
+}
+
+static uint32_t upload(const TexObj* o, const TlutObj* tl, uint32_t levels, uint32_t bytes) {
+    int pf = xhw_perf_enter(XHW_PERF_TEX);
+    uint32_t tex = upload_now(o, tl, levels, bytes);
+    xhw_perf_leave(pf);
     return tex;
 }
 
@@ -387,6 +440,9 @@ void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
             levels++;
         }
     }
+#ifdef XGX_DEBUG_NOMIP
+    levels = 1;
+#endif
     if (o->is_ci && o->tlut < TLUT_SLOTS) tl = &s_tlut[o->tlut];
     bytes = GXGetTexBufferSize(o->w, o->h, o->fmt, o->mipmap, (u8)levels);
     e = find(o->data, o->w, o->h, o->fmt, (uint8_t)levels, tl ? tl->data : NULL);
@@ -401,7 +457,7 @@ void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
     }
     if (!e) {
         uint32_t tex;
-        if (s_count == CACHE_MAX) evict_oldest();
+        if (s_count == CACHE_MAX) evict_one();
         tex = upload(o, tl, levels, bytes);
         if (!tex) {
             m->tex = 0;
@@ -457,7 +513,7 @@ void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h
             i--;
         }
     if (!tex) return;
-    if (s_count == CACHE_MAX) evict_oldest();
+    if (s_count == CACHE_MAX) evict_one();
     {
         Entry* e = &s_cache[s_count++];
         memset(e, 0, sizeof *e);

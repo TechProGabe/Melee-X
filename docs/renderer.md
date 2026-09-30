@@ -19,6 +19,22 @@ game -> GX calls -> gx_state.c   (XgxState, dirty bits)
                     nv2a_rc.c    (TEV -> register combiners)
 ```
 
+Per draw, the back end rebuilds only what the front end's dirty groups
+say changed: the combiner setup and texture units (TEV, MAPS), the
+vertex-program key (CHANS, TEXGEN, LIGHTS, and whether the layout has
+normals and colours), texgen constants (TEXGEN, TEXMTX, or POSMTX when a
+texgen reads a position matrix), fixed pixel state (PIXEL, SCISSOR, FOG) and
+combiner constants (TEVREG). `s_draw_force` rebuilds everything after a GPU
+state reset or a content-rect change. So every GX setter must mark its
+group; `gx_state.c`'s all do.
+
+Display lists are cached (`gx_vtx.c`): the first call decodes the list into
+a vertex buffer from its own pool (2 MB at 480, 1.5 MB at 720p) and later
+calls replay the draws. An entry is checked against the vertex descriptor,
+formats and arrays on every call, and against a sampled hash of the list and
+of the array ranges it indexed once a frame. Lists that keep changing (shape
+animation) go volatile and are decoded every call. `[DLC]` lines report it.
+
 `xgx.h` is compiled by both triples (game and nxdk), so its structs hold only
 32-bit scalars, floats and byte arrays: no bit-fields, no 64-bit members.
 
@@ -138,14 +154,39 @@ Current limits:
   - each index byte has its 2-bit fields reversed (GX puts pixel 0 in bits
     7-6, DXT1 in bits 1-0).
 - The texture pool is contiguous memory: 6 MB at 480, 5 MB at 720p. When it
-  is full, the least recently used cache entries are evicted and the GPU is
-  waited on.
-- EFB copies (`GXCopyTex`) read the framebuffer back on the CPU and make a
-  texture, which the cache registers under the copy's destination pointer.
-  This is slow; GPU-side copies are on the roadmap.
+  is full, `gx_tex_make_room` evicts least recently used cache entries until
+  about the needed size is released, then the GPU is waited on once and the
+  allocation retried; each round frees twice as much, since the pool
+  fragments. Textures bound to a texture map are never evicted. EFB copies
+  are evicted too (a stale one would otherwise pin the pool: the attract demo
+  copies to a new address every frame), but they count as 60 frames younger,
+  since they can't be rebuilt from memory. When nothing is left to evict the
+  texture is dropped for that draw instead of waiting forever.
+- EFB copies (`GXCopyTex`) are drawn by the GPU (`efb_copy_gpu`): the back
+  buffer, bound as a linear texture, is drawn with one quad into the
+  destination texture as a swizzled render target (pbkit's DMA object 3,
+  which spans all of RAM, as the colour context). The cache registers the
+  texture under the copy's destination pointer. The combiners keep the
+  channels the copy format stores: the shadow maps are `GX_CTF_R4`, sampled
+  as I4, so red goes to every channel. `WAIT_FOR_IDLE` on both sides orders
+  the copy against the draws before and after it; the CPU never waits.
+  Afterwards the back buffer is the target again and every state group is
+  re-sent. The CPU readback (`-DXGX_EFB_GPU_COPY=0`, and 720p, whose 16-bit
+  depth buffer can't pair with a 32-bit texture target) cost ~8 ms per
+  256x256 shadow map on the console: the framebuffer is write-combined, so
+  each read is an uncached bus cycle. Reading it through 0x80000000 |
+  physical does not help: contiguous memory already lives there, and the
+  write-combine attribute is on those same page-table entries.
+- Levels are swizzled into a cached buffer and then copied in order:
+  swizzled stores straight into write-combined texture memory defeat write
+  combining.
 - Movie frames (`xbox/src/sdk/thp.c`) are baseline JPEGs without byte
   stuffing. They are decoded MCU by MCU, with stb_image's IDCT, straight
   into the game's I8-tiled Y/Cb/Cr planes. The TEV then converts them to
   RGB.
-- Known wrong in xemu: Mute City's road renders as bright static, and a
-  black wedge covers part of that stage (not yet diagnosed).
+- Immediate mode takes position components as a stream when the format is
+  XYZ: HSD's shadow code writes its background quad as 12 floats in six
+  `GXPosition2f32` calls. Taking each call as a vertex left the shadow maps
+  black, and the stages that multiply them in (Mute City's road) went black.
+- Known wrong in xemu: Mute City's distant skyline band renders as white
+  speckle.

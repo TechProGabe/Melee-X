@@ -57,6 +57,7 @@ enum { GX_COLOR0A0 = 4, GX_COLOR1A1 = 5 };
  * ====================================================================== */
 static int s_fbw = 640, s_fbh = 480, s_bpp = 32;
 static float s_zmax = 16777215.0f;
+static uint32_t s_draw_force = XGX_DIRTY_ALL;   /* groups xgx_draw must rebuild regardless of dirty bits */
 static float s_display_aspect = 4.0f / 3.0f;
 static float s_content_aspect = 73.0f / 60.0f;
 static int s_cx, s_cy, s_cw = 640, s_ch = 480;   /* content rect, framebuffer pixels */
@@ -79,6 +80,7 @@ void xgx_set_content_aspect(float aspect) {
     if (aspect <= 0.0f || fabsf(aspect - s_content_aspect) < 1e-4f) return;
     s_content_aspect = aspect;
     update_content_rect();
+    s_draw_force = XGX_DIRTY_ALL;
 }
 
 void xgx_content_size(uint32_t* w, uint32_t* h) {
@@ -98,19 +100,54 @@ static int map_y(float y) { return s_cy + (int)floorf(y * (float)s_ch / XGX_EFB_
 #define TEX_POOL_480 (6u * 1024 * 1024)
 #define TEX_POOL_720 (5u * 1024 * 1024)
 #define RING_BYTES (1536u * 1024)
+#ifndef XGX_EFB_GPU_COPY
+#define XGX_EFB_GPU_COPY 1   /* EFB -> texture copies drawn by the GPU (efb_copy_gpu); 0: CPU readback */
+#endif
+#define VB_POOL_480 (2048u * 1024)   /* cached display lists (gx_vtx.c) */
+#define VB_POOL_720 (1536u * 1024)
 #define PB_BYTES (1536u * 1024)
 #define POOL_ALIGN 128
 #define POOL_BIG (256 * 1024)
 
 typedef struct Blk { uint32_t off, size; int free; struct Blk* next; } Blk;
-static uint8_t* s_pool;
-static uint32_t s_pool_bytes, s_pool_used;
-static Blk* s_blocks;
+typedef struct {
+    uint8_t* base;
+    uint32_t bytes, used;
+    Blk* blocks;
+} Pool;
+static Pool s_tp;   /* textures */
+static Pool s_vb;   /* cached display-list vertices (gx_vtx.c) */
 
-static void* pool_alloc(uint32_t size) {
+static int pool_init(Pool* pl, uint32_t bytes) {
+    pl->base = (uint8_t*)MmAllocateContiguousMemoryEx(bytes, 0, MAXRAM, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
+    pl->blocks = pl->base ? (Blk*)calloc(1, sizeof(Blk)) : NULL;
+    if (!pl->blocks) {
+        if (pl->base) MmFreeContiguousMemory(pl->base);
+        memset(pl, 0, sizeof *pl);
+        return 0;
+    }
+    pl->bytes = bytes;
+    pl->used = 0;
+    pl->blocks->size = bytes;
+    pl->blocks->free = 1;
+    return 1;
+}
+
+static void pool_release(Pool* pl) {
+    Blk* b = pl->blocks;
+    while (b) {
+        Blk* n = b->next;
+        free(b);
+        b = n;
+    }
+    if (pl->base) MmFreeContiguousMemory(pl->base);
+    memset(pl, 0, sizeof *pl);
+}
+
+static void* pool_alloc(Pool* pl, uint32_t size) {
     Blk *b, *pick = NULL;
     size = (size + POOL_ALIGN - 1) & ~(uint32_t)(POOL_ALIGN - 1);
-    for (b = s_blocks; b; b = b->next) {
+    for (b = pl->blocks; b; b = b->next) {
         if (!b->free || b->size < size) continue;
         pick = b;
         if (size < POOL_BIG) break;
@@ -132,27 +169,31 @@ static void* pool_alloc(uint32_t size) {
             n->size = size;
             b->size -= size;
             n->free = 0;
-            s_pool_used += size;
-            return s_pool + n->off;
+            pl->used += size;
+            return pl->base + n->off;
         }
     }
     b->free = 0;
-    s_pool_used += size;
-    return s_pool + b->off;
+    pl->used += size;
+    return pl->base + b->off;
 }
 
-static void pool_free(void* p) {
+static int pool_owns(const Pool* pl, const void* p) {
+    return pl->base && (const uint8_t*)p >= pl->base && (const uint8_t*)p < pl->base + pl->bytes;
+}
+
+static void pool_free(Pool* pl, void* p) {
     Blk* b;
     uint32_t off;
     if (!p) return;
-    off = (uint32_t)((uint8_t*)p - s_pool);
-    for (b = s_blocks; b; b = b->next)
+    off = (uint32_t)((uint8_t*)p - pl->base);
+    for (b = pl->blocks; b; b = b->next)
         if (b->off == off && !b->free) {
             b->free = 1;
-            s_pool_used -= b->size;
+            pl->used -= b->size;
             break;
         }
-    for (b = s_blocks; b && b->next;) {
+    for (b = pl->blocks; b && b->next;) {
         if (b->free && b->next->free) {
             Blk* n = b->next;
             b->size += n->size;
@@ -164,10 +205,14 @@ static void pool_free(void* p) {
     }
 }
 
-uint32_t xgx_tex_pool_free_kb(void) { return (s_pool_bytes - s_pool_used) / 1024; }
+uint32_t xgx_tex_pool_free_kb(void) { return (s_tp.bytes - s_tp.used) / 1024; }
+uint32_t xgx_tex_pool_kb(void) { return s_tp.bytes / 1024; }
+uint32_t xgx_vbuf_pool_kb(void) { return s_vb.bytes / 1024; }
+uint32_t xgx_vbuf_pool_free_kb(void) { return (s_vb.bytes - s_vb.used) / 1024; }
 
 static uint8_t* s_ring;
-static uint32_t s_ring_pos, s_draw_start, s_draw_stride;
+static uint32_t s_ring_pos;
+static const uint8_t* s_draw_base;   /* the next draw's vertices: ring or a cached buffer */
 
 /* ======================================================================
  * Pushbuffer
@@ -220,7 +265,7 @@ static void report_gpu_stall(void) {
 
 static void wait_idle(void) {
     uint64_t t0 = 0;
-    int reported = 0;
+    int reported = 0, pf = xhw_perf_enter(XHW_PERF_GPU);
     s_st_waits++;
     pb_close();
     while (pb_busy()) {
@@ -230,6 +275,7 @@ static void wait_idle(void) {
             reported = 1;
         }
     }
+    xhw_perf_leave(pf);
 }
 
 static uint32_t pb_used(void) {
@@ -260,6 +306,7 @@ typedef struct {
     uint16_t w, h;          /* after POT resampling */
     uint8_t levels;
     uint8_t nvfmt;          /* NV097_SET_TEXTURE_FORMAT_COLOR_* */
+    uint32_t bytes;         /* in the pool */
     void* mem;
 } Tex;
 static Tex s_tex[MAX_TEX];
@@ -269,7 +316,7 @@ static int s_ndeferred;
 
 static void release_deferred(void) {
     int i;
-    for (i = 0; i < s_ndeferred; i++) pool_free(s_deferred[i]);
+    for (i = 0; i < s_ndeferred; i++) pool_free(pool_owns(&s_vb, s_deferred[i]) ? &s_vb : &s_tp, s_deferred[i]);
     s_ndeferred = 0;
 }
 
@@ -326,8 +373,30 @@ static uint32_t sample_bilinear(const uint32_t* src, int w, int h, float fx, flo
     return out;
 }
 
-/* one level into swizzled (Morton) order; ARGB8 NPOT images are resampled */
+static void write_level_direct(void* dstv, const void* srcv, int w, int h, int pw, int ph, int bpp);
+
+/* One level into swizzled (Morton) order; ARGB8 NPOT images are resampled.
+ * Texture memory is write-combined, and swizzled stores land all over it,
+ * which defeats write combining: swizzle into a cached buffer first, then
+ * copy it over in order. */
 static void write_level(void* dstv, const void* srcv, int w, int h, int pw, int ph, int bpp) {
+    static uint8_t* scratch;
+    static uint32_t scratch_bytes;
+    uint32_t bytes = (uint32_t)(pw * ph * bpp);
+    if (bytes > scratch_bytes && bytes <= 1024u * 1024) {
+        free(scratch);
+        scratch = (uint8_t*)malloc(bytes);
+        scratch_bytes = scratch ? bytes : 0;
+    }
+    if (bytes > scratch_bytes || bytes < 256) {
+        write_level_direct(dstv, srcv, w, h, pw, ph, bpp);
+        return;
+    }
+    write_level_direct(scratch, srcv, w, h, pw, ph, bpp);
+    memcpy(dstv, scratch, bytes);
+}
+
+static void write_level_direct(void* dstv, const void* srcv, int w, int h, int pw, int ph, int bpp) {
     int x, y;
     swz_tables(pw, ph);
     if (bpp == 4 && (w != pw || h != ph)) {
@@ -420,6 +489,7 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
         if (fmt != XGX_TEX_ARGB8) return 0;   /* only 32-bit images are resampled */
         levels = 1;
     }
+    if (!data) levels = 1;
     for (l = 0, lw = pw, lh = ph; l < (int)levels; l++) {
         bytes += level_size(fmt, lw, lh);
         lw = lw > 1 ? lw / 2 : 1;
@@ -428,19 +498,19 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     id = alloc_handle();
     if (!id) return 0;
     s_st_tex_kb += bytes / 1024;
-    mem = (uint8_t*)pool_alloc(bytes);
-    if (!mem) {
+    mem = (uint8_t*)pool_alloc(&s_tp, bytes);
+    if (!mem && s_ndeferred) {   /* nothing to gain from waiting when nothing is pending */
         wait_idle();
         release_deferred();
-        mem = (uint8_t*)pool_alloc(bytes);
-        if (!mem) return 0;
+        mem = (uint8_t*)pool_alloc(&s_tp, bytes);
     }
+    if (!mem) return 0;
     dst = mem;
     sw = (int)w;
     sh = (int)h;
     lw = pw;
     lh = ph;
-    for (l = 0; l < (int)levels; l++) {
+    for (l = 0; data && l < (int)levels; l++) {   /* no data: the GPU fills it (EFB copy) */
         if (fmt == XGX_TEX_DXT1) memcpy(dst, src, level_size(fmt, lw, lh));   /* block-linear, not swizzled */
         else write_level(dst, src, sw, sh, lw, lh, fmt_bpp(fmt));
         src += level_size(fmt, sw, sh);
@@ -455,8 +525,13 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     s_tex[id].h = (uint16_t)ph;
     s_tex[id].levels = (uint8_t)levels;
     s_tex[id].nvfmt = nv_format(fmt);
+    s_tex[id].bytes = bytes;
     s_tex[id].mem = mem;
     return (uint32_t)id;
+}
+
+uint32_t xgx_tex_bytes(uint32_t tex) {
+    return tex && tex < MAX_TEX && s_tex[tex].used ? s_tex[tex].bytes : 0;
 }
 
 void xgx_tex_destroy(uint32_t tex) {
@@ -471,7 +546,8 @@ void xgx_tex_destroy(uint32_t tex) {
  * ====================================================================== */
 static int s_frame_open;
 static uint32_t s_frame;
-static uint32_t s_draws, s_approx;
+static uint32_t s_draws, s_approx, s_pf_verts;
+static volatile int s_fbdump_once;
 
 unsigned xgx_present_count(void) { return s_frame; }
 static void frame_open(void);
@@ -540,7 +616,6 @@ static void pb_budget(void) {
 #ifndef XHW_FBDUMP_EVERY
 #define XHW_FBDUMP_EVERY 0   /* [FBDUMP] screenshot every N presents (xhw_fbdump.c) */
 #endif
-static volatile int s_fbdump_once;
 void xgx_fbdump_next(void) { s_fbdump_once = 1; }
 
 void xgx_present(int black) {
@@ -559,17 +634,20 @@ void xgx_present(int black) {
         s_gf_logged = s_gf_count;
     }
     s_gf_storms = 0;
-    while (pb_finished()) {}
     {
         /* never draw into the buffer being scanned out (OpenCrossing traps.md) */
-        int guard = 4;
+        int guard = 4, pf = xhw_perf_enter(XHW_PERF_GPU);
+        while (pb_finished()) {}
         while (guard-- && (PCRTC_START_REG & 0x03FFFFFF) == ((uint32_t)pb_back_buffer() & 0x03FFFFFF)) pb_wait_for_vbl();
+        xhw_perf_leave(pf);
     }
+    xhw_perf_frame(s_draws, s_pf_verts);
+    s_pf_verts = 0;
     s_frame++;
     if (s_frame % XGX_STATS_EVERY == 0) {
         /* draws/approximated: the last frame; the rest summed over the interval */
         xhw_logf("[NV2A] frame %u: %u draws (%u approximated), tex pool %u KB free | per %u: %u idle waits, "
-                 "%u EFB reads, %u KB textures, %u verts",
+                 "%u EFB copies, %u KB textures, %u verts",
                  s_frame, s_draws, s_approx, xgx_tex_pool_free_kb(), XGX_STATS_EVERY, s_st_waits, s_st_efb,
                  s_st_tex_kb, s_st_verts);
         s_st_waits = s_st_efb = s_st_tex_kb = s_st_verts = 0;
@@ -922,6 +1000,7 @@ static void emit_combiners(const XgxState* st, const RcProg* rp) {
  * Texture units
  * ====================================================================== */
 static uint32_t s_tex_shadow[4][6];
+static uint32_t s_tex_prog = 0xFFFFFFFFu;   /* NV097_SET_SHADER_STAGE_PROGRAM sent last */
 
 static uint32_t wrap_mode(uint32_t gx) {
     switch (gx) {
@@ -932,7 +1011,6 @@ static uint32_t wrap_mode(uint32_t gx) {
 }
 
 static void emit_textures(const XgxState* st, const int unit_map[4], int nunits) {
-    static uint32_t last_prog = 0xFFFFFFFFu;
     uint32_t prog = 0;
     int u;
     for (u = 0; u < 4; u++) {
@@ -969,9 +1047,9 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
             memcpy(s_tex_shadow[u], v, sizeof v);
         }
     }
-    if (prog != last_prog) {
+    if (prog != s_tex_prog) {
         put1(NV097_SET_SHADER_STAGE_PROGRAM, prog);
-        last_prog = prog;
+        s_tex_prog = prog;
     }
 }
 
@@ -981,8 +1059,10 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
 static int s_fixed[20];
 
 static void state_reset_shadows(void) {
+    s_draw_force = XGX_DIRTY_ALL;
     memset(s_fixed, 0xFF, sizeof s_fixed);
     memset(s_tex_shadow, 0xFF, sizeof s_tex_shadow);
+    s_tex_prog = 0xFFFFFFFFu;
     s_rc_valid = 0;
     s_vc_valid = 0;
     s_vp_cur = -1;
@@ -1097,11 +1177,28 @@ void* xgx_vtx_alloc(uint32_t count, uint32_t stride) {
         pb_open();
         s_ring_pos = 0;
     }
-    s_draw_start = s_ring_pos;
-    s_draw_stride = stride;
+    s_draw_base = s_ring + s_ring_pos;
     s_ring_pos += (bytes + 15) & ~15u;
-    return s_ring + s_draw_start;
+    return (void*)s_draw_base;
 }
+
+void* xgx_vbuf_alloc(uint32_t bytes) {
+    void* p;
+    if (!s_vb.base || bytes > s_vb.bytes) return NULL;
+    p = pool_alloc(&s_vb, bytes);
+    if (!p && s_ndeferred) {   /* buffers the cache evicted wait for the GPU */
+        wait_idle();
+        release_deferred();
+        p = pool_alloc(&s_vb, bytes);
+    }
+    return p;
+}
+
+void xgx_vbuf_free(void* p) {
+    if (p) defer_free(p);
+}
+
+void xgx_vtx_use(const void* verts) { s_draw_base = (const uint8_t*)verts; }
 
 static uint32_t nv_prim(uint32_t gx) {
     switch (gx) {
@@ -1120,7 +1217,7 @@ static uint32_t s_default_mtx = 0xFFFFFFFFu;
 
 static void attr(int slot, int off, uint32_t type, uint32_t size, uint32_t stride) {
     uint32_t fmt = off < 0 ? 2u : type | size << 4 | stride << 8;
-    uint32_t addr = off < 0 ? 0 : (((uint32_t)(s_ring + s_draw_start) & 0x03FFFFFF) + (uint32_t)off);
+    uint32_t addr = off < 0 ? 0 : (((uint32_t)s_draw_base & 0x03FFFFFF) + (uint32_t)off);
     if (s_attr_shadow[slot] != fmt) {
         put1(NV097_SET_VERTEX_DATA_ARRAY_FORMAT + slot * 4, fmt);
         s_attr_shadow[slot] = fmt;
@@ -1163,25 +1260,57 @@ static uint8_t vp_attn(uint32_t attn_fn) {
     }
 }
 
-void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* st) {
-    VpKey vk;
-    RcCfg rc;
-    const RcProg* rp;
-    int unit_map[4], unit_tc[4], nunits = 0, s, i;
-    uint32_t spec_lights = 0, first;
-
-    if (!count) return;
-    s_st_verts += count;
-    frame_open();
-    pb_budget();
-    pb_open();
-
-    /* texture units: one per distinct (texcoord, texmap) the TEV stages sample */
-    memset(&rc, 0, sizeof rc);
-    rc.nstages = (uint8_t)(st->ntev > RC_MAX_TEV ? RC_MAX_TEV : st->ntev ? st->ntev : 1);
-    for (s = 0; s < rc.nstages; s++) {
+#ifdef XGX_DEBUG_TRACE
+/* -DXGX_DEBUG_TRACE: log every draw of the frame an autopad SHOT dumps */
+static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int approx) {
+    uint32_t s, i;
+    xhw_logf("[DRAW] #%u prim %u n %u tev %u ind %u texgen %u approx %d blend %u %u %u alpha %u/%u %u %u/%u z %u/%u/%u",
+             s_draws, prim, count, st->ntev, st->nind, st->ntexgen, approx, st->blend_type, st->blend_src,
+             st->blend_dst, st->alpha_comp0, st->alpha_ref0, st->alpha_op, st->alpha_comp1, st->alpha_ref1,
+             st->z_enable, st->z_func, st->z_update);
+    for (s = 0; s < st->ntev && s < XGX_MAX_TEV; s++) {
         const XgxTevStage* t = &st->tev[s];
-        RcStage* r = &rc.st[s];
+        const XgxMap* m = t->texmap < XGX_MAX_MAPS ? &st->map[t->texmap] : NULL;
+        const Tex* x = m && m->tex && m->tex < MAX_TEX && s_tex[m->tex].used ? &s_tex[m->tex] : NULL;
+        xhw_logf("[DRAW]  s%u tc %u map %u ch %u c %u %u %u %u op %u a %u %u %u %u op %u k %u/%u out %u/%u ind %u/%u/%u/%u"
+                 " tex %ux%u fmt %02x lv %u",
+                 s, t->texcoord, t->texmap, t->chan, t->cin[0], t->cin[1], t->cin[2], t->cin[3], t->cop, t->ain[0],
+                 t->ain[1], t->ain[2], t->ain[3], t->aop, t->kcsel, t->kasel, t->cout, t->aout, t->ind_stage,
+                 t->ind_format, t->ind_mtx, t->ind_add_prev, x ? x->w : 0, x ? x->h : 0, x ? x->nvfmt : 0,
+                 x ? x->levels : 0);
+    }
+    for (i = 0; i < st->ntexgen && i < XGX_MAX_TEXGEN; i++)
+        xhw_logf("[DRAW]  tg%u type %u src %u mtx %u norm %u pt %u", i, st->texgen[i].type, st->texgen[i].src,
+                 st->texgen[i].mtx, st->texgen[i].normalize, st->texgen[i].pt_mtx);
+}
+#endif
+
+/* State derived from the front end's state, rebuilt only when the dirty
+ * groups it depends on changed (or s_draw_force says the GPU state was
+ * reset). Most draws change only matrices and vertices, and rebuilding and
+ * hashing the combiner setup, the vertex-program key and the texture units
+ * for each of ~2000 draws a frame cost more than the game itself. */
+static RcCfg s_d_rc;
+static const RcProg* s_d_rp;
+static int s_d_unit_map[4], s_d_unit_tc[4], s_d_nunits, s_d_unit_miss, s_d_tg_posmtx;
+static VpKey s_d_vk;
+static uint32_t s_d_spec_lights, s_d_layout = 0xFFFFFFFFu;
+
+#define DIRTY_UNITS (XGX_DIRTY_TEV | XGX_DIRTY_MAPS)
+#define DIRTY_VK (DIRTY_UNITS | XGX_DIRTY_CHANS | XGX_DIRTY_TEXGEN | XGX_DIRTY_LIGHTS)
+#define DIRTY_TG (DIRTY_UNITS | XGX_DIRTY_TEXGEN | XGX_DIRTY_TEXMTX)
+#define DIRTY_FIXED (XGX_DIRTY_PIXEL | XGX_DIRTY_SCISSOR | XGX_DIRTY_FOG)
+
+/* texture units (one per distinct texcoord/texmap the TEV samples) and the combiner setup */
+static void derive_units(const XgxState* st) {
+    RcCfg* rc = &s_d_rc;
+    int s, i, nunits = 0;
+    memset(rc, 0, sizeof *rc);
+    s_d_unit_miss = 0;
+    rc->nstages = (uint8_t)(st->ntev > RC_MAX_TEV ? RC_MAX_TEV : st->ntev ? st->ntev : 1);
+    for (s = 0; s < rc->nstages; s++) {
+        const XgxTevStage* t = &st->tev[s];
+        RcStage* r = &rc->st[s];
         int u = -1;
         for (i = 0; i < 4; i++) {
             r->cin[i] = (uint8_t)t->cin[i];
@@ -1198,61 +1327,97 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         r->ras_alpha_bcast = st->swap[t->ras_swap & 3][0] == 3 && st->swap[t->ras_swap & 3][1] == 3;
         if (t->texmap != GX_NULL && t->texmap < XGX_MAX_MAPS && t->texcoord != GX_NULL && st->map[t->texmap].tex) {
             for (i = 0; i < nunits; i++)
-                if (unit_map[i] == (int)t->texmap && unit_tc[i] == (int)t->texcoord) { u = i; break; }
+                if (s_d_unit_map[i] == (int)t->texmap && s_d_unit_tc[i] == (int)t->texcoord) { u = i; break; }
             if (u < 0 && nunits < 4) {
                 u = nunits++;
-                unit_map[u] = (int)t->texmap;
-                unit_tc[u] = (int)t->texcoord;
+                s_d_unit_map[u] = (int)t->texmap;
+                s_d_unit_tc[u] = (int)t->texcoord;
             }
-            if (u < 0) s_approx++;
+            if (u < 0) s_d_unit_miss++;
         }
         r->unit = (int8_t)u;
-        if (u >= 0) rc.units_used |= (uint8_t)(1u << u);
-        if (r->ras == 1) rc.v1_used = 1;
+        if (u >= 0) rc->units_used |= (uint8_t)(1u << u);
+        if (r->ras == 1) rc->v1_used = 1;
     }
-    rp = rc_lookup(&rc);
-    if (rp->approximated) s_approx++;
+    s_d_nunits = nunits;
+    s_d_rp = rc_lookup(rc);
+}
 
-    /* vertex program key */
-    memset(&vk, 0, sizeof vk);
-    vk.has_nrm = layout->off_nrm >= 0;
-    vk.nchans = (uint8_t)(st->nchans > 2 ? 2 : st->nchans);
+static void derive_vk(const XgxState* st, const XgxLayout* layout) {
+    VpKey* vk = &s_d_vk;
+    int i;
+    memset(vk, 0, sizeof *vk);
+    s_d_spec_lights = 0;
+    s_d_tg_posmtx = 0;
+    vk->has_nrm = layout->off_nrm >= 0;
+    vk->nchans = (uint8_t)(st->nchans > 2 ? 2 : st->nchans);
     for (i = 0; i < 4; i++) {
         const XgxChan* c = &st->chan[i];
-        vk.chan[i].enable = (uint8_t)(c->enable != 0);
-        vk.chan[i].amb_vtx = (uint8_t)(c->amb_src != 0 && layout->off_col[i / 2] >= 0);
-        vk.chan[i].mat_vtx = (uint8_t)(c->mat_src != 0 && layout->off_col[i / 2] >= 0);
-        vk.chan[i].diff_fn = (uint8_t)c->diff_fn;
-        vk.chan[i].attn = vp_attn(c->attn_fn);
-        vk.chan[i].light_mask = c->enable ? (uint8_t)c->light_mask : 0;
-        if (c->enable && vk.chan[i].attn == VPL_SPEC) spec_lights |= c->light_mask;
+        vk->chan[i].enable = (uint8_t)(c->enable != 0);
+        vk->chan[i].amb_vtx = (uint8_t)(c->amb_src != 0 && layout->off_col[i / 2] >= 0);
+        vk->chan[i].mat_vtx = (uint8_t)(c->mat_src != 0 && layout->off_col[i / 2] >= 0);
+        vk->chan[i].diff_fn = (uint8_t)c->diff_fn;
+        vk->chan[i].attn = vp_attn(c->attn_fn);
+        vk->chan[i].light_mask = c->enable ? (uint8_t)c->light_mask : 0;
+        if (c->enable && vk->chan[i].attn == VPL_SPEC) s_d_spec_lights |= c->light_mask;
         /* vertex colour sources without a vertex colour: GX reads zero */
-        if (c->amb_src && layout->off_col[i / 2] < 0) vk.chan[i].amb_vtx = 1;
-        if (c->mat_src && layout->off_col[i / 2] < 0) vk.chan[i].mat_vtx = 1;
+        if (c->amb_src && layout->off_col[i / 2] < 0) vk->chan[i].amb_vtx = 1;
+        if (c->mat_src && layout->off_col[i / 2] < 0) vk->chan[i].mat_vtx = 1;
     }
-    vk.ntex = (uint8_t)nunits;
-    for (i = 0; i < nunits; i++) {
-        const XgxTexGen* tg = &st->texgen[unit_tc[i] < XGX_MAX_TEXGEN ? unit_tc[i] : 0];
-        vk.tex[i].src = (uint8_t)tg->src;
-        vk.tex[i].proj = tg->type == GX_TG_MTX3x4;
-        vk.tex[i].normalize = (uint8_t)(tg->normalize != 0);
-        build_texgen(st, i, tg);
+    vk->ntex = (uint8_t)s_d_nunits;
+    for (i = 0; i < s_d_nunits; i++) {
+        const XgxTexGen* tg = &st->texgen[s_d_unit_tc[i] < XGX_MAX_TEXGEN ? s_d_unit_tc[i] : 0];
+        vk->tex[i].src = (uint8_t)tg->src;
+        vk->tex[i].proj = tg->type == GX_TG_MTX3x4;
+        vk->tex[i].normalize = (uint8_t)(tg->normalize != 0);
+        if (tg->mtx < GX_TEXMTX0) s_d_tg_posmtx = 1;
     }
-    vp_select(&vk);
+}
+
+void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* st) {
+    int i, pf;
+    uint32_t first, d, lay;
+
+    if (!count) return;
+    pf = xhw_perf_enter(XHW_PERF_DRAW);
+    s_st_verts += count;
+    s_pf_verts += count;
+    frame_open();
+    pb_budget();
+    pb_open();
+
+    d = st->dirty | s_draw_force | (s_vc_valid ? 0 : XGX_DIRTY_ALL);
+    s_draw_force = 0;
+    lay = (layout->off_nrm >= 0) | (layout->off_col[0] >= 0) << 1 | (layout->off_col[1] >= 0) << 2;
+    if (d & DIRTY_UNITS) derive_units(st);
+    if ((d & DIRTY_VK) || lay != s_d_layout) {
+        VpKey old = s_d_vk;
+        derive_vk(st, layout);
+        s_d_layout = lay;
+        if (memcmp(&old, &s_d_vk, sizeof old) != 0) vp_select(&s_d_vk);
+    }
+    if (s_vp_cur < 0) vp_select(&s_d_vk);
+    s_approx += (uint32_t)s_d_unit_miss + (s_d_rp->approximated ? 1u : 0u);
+#ifdef XGX_DEBUG_TRACE
+    if (s_fbdump_once) trace_draw(prim, count, st, s_d_rp->approximated);
+#endif
+    if ((d & DIRTY_TG) || (s_d_tg_posmtx && (d & XGX_DIRTY_POSMTX)))
+        for (i = 0; i < s_d_nunits; i++)
+            build_texgen(st, i, &st->texgen[s_d_unit_tc[i] < XGX_MAX_TEXGEN ? s_d_unit_tc[i] : 0]);
 
     /* constants */
-    if (st->dirty & (XGX_DIRTY_PROJ | XGX_DIRTY_VIEWPORT) || !s_vc_valid) build_proj(st);
-    if (st->dirty & (XGX_DIRTY_POSMTX | XGX_DIRTY_TEXMTX) || !s_vc_valid) build_mtx(st);
-    if (st->dirty & XGX_DIRTY_CHANS || !s_vc_valid) build_chans(st);
-    if (st->dirty & (XGX_DIRTY_LIGHTS | XGX_DIRTY_CHANS) || !s_vc_valid) build_lights(st, spec_lights);
+    if (d & (XGX_DIRTY_PROJ | XGX_DIRTY_VIEWPORT)) build_proj(st);
+    if (d & (XGX_DIRTY_POSMTX | XGX_DIRTY_TEXMTX)) build_mtx(st);
+    if (d & XGX_DIRTY_CHANS) build_chans(st);
+    if (d & (XGX_DIRTY_LIGHTS | XGX_DIRTY_CHANS)) build_lights(st, s_d_spec_lights);
     emit_vc();
 
-    emit_fixed(st);
-    emit_textures(st, unit_map, nunits);
-    emit_combiners(st, rp);
+    if (d & DIRTY_FIXED) emit_fixed(st);
+    if (d & DIRTY_UNITS) emit_textures(st, s_d_unit_map, s_d_nunits);
+    if (d & (DIRTY_UNITS | XGX_DIRTY_TEVREG)) emit_combiners(st, s_d_rp);
     emit_vertex_arrays(layout, st);
 
-    /* the front end wrote the vertices at s_draw_start */
+    /* the vertices are at s_draw_base (xgx_vtx_alloc or xgx_vtx_use) */
     put1(NV097_SET_BEGIN_END, nv_prim(prim));
     first = 0;
     while (count > 0) {
@@ -1270,12 +1435,13 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
     if (P - s_pb_mark >= PB_KICK) pb_close();
     s_draws++;
+    xhw_perf_leave(pf);
 }
 
 /* ======================================================================
- * EFB -> texture / memory (CPU readback)
+ * EFB -> texture / memory
  * ====================================================================== */
-static void read_rect(const int32_t src[4], uint32_t dw, uint32_t dh, uint32_t* argb) {
+static void read_rect_cpu(const int32_t src[4], uint32_t dw, uint32_t dh, uint32_t* argb) {
     static int32_t col[1024];
     const uint8_t* fb;
     uint32_t pitch, x, y;
@@ -1283,6 +1449,7 @@ static void read_rect(const int32_t src[4], uint32_t dw, uint32_t dh, uint32_t* 
     frame_open();
     wait_idle();
     pb_open();
+    /* write-combined memory: every read here is an uncached bus cycle */
     fb = (const uint8_t*)pb_back_buffer();
     pitch = pb_back_buffer_pitch();
     if (dw > 1024) dw = 1024;
@@ -1312,16 +1479,183 @@ static void read_rect(const int32_t src[4], uint32_t dw, uint32_t dh, uint32_t* 
     }
 }
 
-uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int intensity, uint32_t reuse) {
+static void read_rect(const int32_t src[4], uint32_t dw, uint32_t dh, uint32_t* argb) {
+    int pf = xhw_perf_enter(XHW_PERF_EFB);
+    read_rect_cpu(src, dw, dh, argb);
+    xhw_perf_leave(pf);
+}
+
+#if XGX_EFB_GPU_COPY
+/* EFB -> texture on the GPU: the back buffer, bound as a linear texture, is
+ * drawn with one quad into the swizzled texture as the render target. The
+ * CPU readback cost ~8 ms per 256x256 shadow map on the console: the
+ * framebuffer is write-combined, so every read is an uncached bus cycle,
+ * and the copy waited for the GPU first. Here nothing waits; the GPU runs
+ * the copy between the draws before it and the draws that sample it.
+ *
+ * The combiners keep the channel the copy format stores (XGX_COPY_*), as
+ * the CPU path below does. Afterwards the back buffer is the target again
+ * and xgx_draw re-sends every state group. 32-bit framebuffers only: at
+ * 720p the depth buffer is 16-bit, and the NV2A wants colour and depth
+ * surfaces of the same width. */
+enum { CR_ZERO = 0, CR_C0 = 1, CR_T0 = 8, CR_R0 = 12 };
+#define CR_IN(reg, alpha, inv) ((uint32_t)(reg) | (uint32_t)(alpha) << 4 | (uint32_t)(inv) << 5)
+#define CR_ONE CR_IN(CR_ZERO, 0, 1)
+#define CR_AB_TO(reg) ((uint32_t)(reg) << 4)   /* output control word: AB -> reg */
+#define CR_AB_DOT (1u << 13)
+
+static void copy_combiners(int mode) {
+    uint32_t cicw[2] = { 0, 0 }, cocw[2] = { 0, 0 }, aicw[2] = { 0, 0 }, aocw[2] = { 0, 0 }, k = 0;
+    int n = 1, i;
+    switch (mode) {
+        case XGX_COPY_LUMA: case XGX_COPY_LUMA_ALPHA: k = 0x004D961Du; break;   /* 77, 150, 29 / 255 */
+        case XGX_COPY_RED: case XGX_COPY_RED_ALPHA: k = 0x00FF0000u; break;
+        case XGX_COPY_GREEN: k = 0x0000FF00u; break;
+        case XGX_COPY_BLUE: k = 0x000000FFu; break;
+        default: break;
+    }
+    if (k) {
+        /* rgb = t0 . k in every channel */
+        cicw[0] = CR_IN(CR_T0, 0, 0) << 24 | CR_IN(CR_C0, 0, 0) << 16;
+        cocw[0] = CR_AB_TO(CR_R0) | CR_AB_DOT;
+        if (mode == XGX_COPY_LUMA_ALPHA || mode == XGX_COPY_RED_ALPHA) {
+            aicw[0] = CR_IN(CR_T0, 1, 0) << 24 | CR_ONE << 16;
+            aocw[0] = CR_AB_TO(CR_R0);
+        } else {
+            /* alpha = the same value: R0's blue, in a second stage */
+            aicw[1] = CR_IN(CR_R0, 0, 0) << 24 | CR_ONE << 16;
+            aocw[1] = CR_AB_TO(CR_R0);
+            n = 2;
+        }
+    } else {
+        /* colour as is, or alpha in every channel */
+        cicw[0] = CR_IN(CR_T0, mode == XGX_COPY_ALPHA, 0) << 24 | CR_ONE << 16;
+        cocw[0] = CR_AB_TO(CR_R0);
+        aicw[0] = CR_IN(CR_T0, 1, 0) << 24 | CR_ONE << 16;
+        aocw[0] = CR_AB_TO(CR_R0);
+    }
+    put1(NV097_SET_COMBINER_CONTROL, (uint32_t)n | (1u << 12) | (1u << 16));
+    for (i = 0; i < n; i++) {
+        put1(NV097_SET_COMBINER_COLOR_ICW + i * 4, cicw[i]);
+        put1(NV097_SET_COMBINER_COLOR_OCW + i * 4, cocw[i]);
+        put1(NV097_SET_COMBINER_ALPHA_ICW + i * 4, aicw[i]);
+        put1(NV097_SET_COMBINER_ALPHA_OCW + i * 4, aocw[i]);
+    }
+    put1(NV097_SET_COMBINER_FACTOR0, k);
+    put1(NV097_SET_COMBINER_SPECULAR_FOG_CW0, (uint32_t)CR_R0 << 8);   /* out = R0 */
+    put1(NV097_SET_COMBINER_SPECULAR_FOG_CW1, (uint32_t)(CR_R0 | 1 << 4) << 8 | 0x80);
+}
+
+static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
+    static const VpKey k_copy = { .copy = 1 };
+    uint32_t pw = t->w, ph = t->h, fb = (uint32_t)pb_back_buffer() & 0x03FFFFFF, i;
+    float u0 = s_cx + src[0] * (float)s_cw / XGX_EFB_W + 0.5f, u1 = u0 + src[2] * (float)s_cw / XGX_EFB_W;
+    float v0 = s_cy + src[1] * (float)s_ch / XGX_EFB_H + 0.5f, v1 = v0 + src[3] * (float)s_ch / XGX_EFB_H;
+    float* v;
+    int pf = xhw_perf_enter(XHW_PERF_EFB);
+    s_st_efb++;
+    frame_open();
+    pb_budget();
+    v = (float*)xgx_vtx_alloc(4, 20);
+    if (!v) {
+        xhw_perf_leave(pf);
+        return;
+    }
+    /* x y z u v: the texture's corners and the source rect's, in texels
+     * (+0.5: nearest sampling picks the texel the CPU path rounds to) */
+    {
+        const float q[4][5] = { { 0, 0, 1, u0, v0 }, { (float)pw, 0, 1, u1, v0 },
+                                { (float)pw, (float)ph, 1, u1, v1 }, { 0, (float)ph, 1, u0, v1 } };
+        memcpy(v, q, sizeof q);
+    }
+    pb_open();
+    put1(NV097_WAIT_FOR_IDLE, 0);   /* the source's pixels are in memory */
+
+    /* target: the texture, through pbkit's DMA object over all of RAM (3) */
+    put1(NV097_SET_CONTEXT_DMA_COLOR, 3);
+    put1(NV097_SET_SURFACE_FORMAT, NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8 |
+                                       NV097_SET_SURFACE_FORMAT_ZETA_Z24S8 << 4 |
+                                       NV097_SET_SURFACE_FORMAT_TYPE_SWIZZLE << 8 |
+                                       (uint32_t)log2i((int)pw) << 16 | (uint32_t)log2i((int)ph) << 24);
+    put1(NV097_SET_SURFACE_PITCH, pw * 4 | (pw * 4) << 16);
+    put1(NV097_SET_SURFACE_COLOR_OFFSET, (uint32_t)t->mem & 0x03FFFFFF);
+    put1(NV097_SET_SURFACE_CLIP_HORIZONTAL, pw << 16);
+    put1(NV097_SET_SURFACE_CLIP_VERTICAL, ph << 16);
+    put1(NV097_SET_WINDOW_CLIP_HORIZONTAL, pw << 16);
+    put1(NV097_SET_WINDOW_CLIP_VERTICAL, ph << 16);
+
+    /* pixel state: write every channel, test nothing (no depth access) */
+    put1(NV097_SET_DEPTH_TEST_ENABLE, 0);
+    put1(NV097_SET_DEPTH_MASK, 0);
+    put1(NV097_SET_STENCIL_TEST_ENABLE, 0);
+    put1(NV097_SET_ALPHA_TEST_ENABLE, 0);
+    put1(NV097_SET_BLEND_ENABLE, 0);
+    put1(NV097_SET_LOGIC_OP_ENABLE, 0);
+    put1(NV097_SET_CULL_FACE_ENABLE, 0);
+    put1(NV097_SET_DITHER_ENABLE, 0);
+    put1(NV097_SET_COLOR_MASK, NV097_SET_COLOR_MASK_RED_WRITE_ENABLE | NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE |
+                                   NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE | NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE);
+
+    /* source: the back buffer as a linear texture, texel coordinates, nearest */
+    put1(NV097_SET_TEXTURE_OFFSET, fb);
+    put1(NV097_SET_TEXTURE_FORMAT, 1 | (1u << 3) | (2u << 4) |
+                                       (uint32_t)NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8 << 8 | (1u << 16));
+    put1(NV097_SET_TEXTURE_ADDRESS, 3 | (3u << 8) | (3u << 16));
+    put1(NV097_SET_TEXTURE_CONTROL0, 0x4003FFC0u);
+    put1(NV097_SET_TEXTURE_CONTROL1, pb_back_buffer_pitch() << 16);
+    put1(NV097_SET_TEXTURE_FILTER, (1u << 16) | (1u << 24) | 0x2000u);
+    put1(NV097_SET_TEXTURE_IMAGE_RECT, (uint32_t)s_fbw << 16 | (uint32_t)s_fbh);
+    for (i = 1; i < 4; i++) put1(NV097_SET_TEXTURE_CONTROL0 + i * 64, 0);
+    put1(NV097_SET_SHADER_STAGE_PROGRAM, 1);   /* unit 0: 2D_PROJECTIVE */
+    copy_combiners(mode);
+    vp_select(&k_copy);
+
+    attr(VPI_POS, 0, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 3, 20);
+    attr(VPI_MTX, -1, 0, 0, 0);
+    attr(VPI_NRM, -1, 0, 0, 0);
+    attr(VPI_COL0, -1, 0, 0, 0);
+    attr(VPI_COL1, -1, 0, 0, 0);
+    for (i = 0; i < 8; i++) attr(vpi_tex((int)i), i ? -1 : 12, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 2, 20);
+    put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_QUADS);
+    *P++ = 1u << 18 | NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_DRAW_ARRAYS);
+    *P++ = 3u << 24;   /* 4 vertices from 0 */
+    put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
+    put1(NV097_WAIT_FOR_IDLE, 0);   /* the copy is in memory before anything samples it */
+
+    /* back to the back buffer and the game's state */
+    put1(NV097_SET_STENCIL_TEST_ENABLE, 1);   /* as pbkit leaves it */
+    pb_close();
+    pb_target_back_buffer();
+    memset(s_fixed, 0xFF, sizeof s_fixed);
+    memset(s_tex_shadow, 0xFF, sizeof s_tex_shadow);
+    s_tex_prog = 0xFFFFFFFFu;
+    s_rc_valid = 0;
+    s_vp_cur = -1;
+    s_draw_force = XGX_DIRTY_ALL;
+    xhw_perf_leave(pf);
+}
+#endif
+
+uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int mode, uint32_t reuse) {
     static uint32_t* buf;
     static uint32_t buf_texels;
     uint32_t pw, ph, n, i;
+    int reusable;
     if (!dst_w || !dst_h || dst_w > 1024 || dst_h > 1024) return 0;
 #ifdef XGX_DEBUG_NOEFB
     return 0;
 #endif
     pw = (uint32_t)pot((int)dst_w);
     ph = (uint32_t)pot((int)dst_h);
+    reusable = reuse && reuse < MAX_TEX && s_tex[reuse].used && s_tex[reuse].w == pw && s_tex[reuse].h == ph &&
+               s_tex[reuse].levels == 1 && s_tex[reuse].nvfmt == nv_format(XGX_TEX_ARGB8);
+#if XGX_EFB_GPU_COPY
+    if (s_bpp == 32) {
+        uint32_t tex = reusable ? reuse : xgx_tex_create(pw, ph, 1, XGX_TEX_ARGB8, NULL);
+        if (tex) efb_copy_gpu(src, &s_tex[tex], mode);
+        return tex;
+    }
+#endif
     n = pw * ph;
     if (n > buf_texels) {
         free(buf);
@@ -1330,14 +1664,20 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
         if (!buf) return 0;
     }
     read_rect(src, pw, ph, buf);   /* waits for the GPU: nothing is reading `reuse` now */
-    if (intensity)
+    if (mode != XGX_COPY_COLOR)
         for (i = 0; i < n; i++) {
-            uint32_t c = buf[i], r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
-            uint32_t yv = (r * 77 + g * 150 + b * 29) >> 8;
-            buf[i] = (c & 0xFF000000u) | yv << 16 | yv << 8 | yv;
+            uint32_t c = buf[i], a = c >> 24, r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF, v;
+            switch (mode) {
+                case XGX_COPY_LUMA: case XGX_COPY_LUMA_ALPHA: v = (r * 77 + g * 150 + b * 29) >> 8; break;
+                case XGX_COPY_RED: case XGX_COPY_RED_ALPHA: v = r; break;
+                case XGX_COPY_GREEN: v = g; break;
+                case XGX_COPY_BLUE: v = b; break;
+                default: v = a; break;
+            }
+            if (mode != XGX_COPY_LUMA_ALPHA && mode != XGX_COPY_RED_ALPHA) a = v;
+            buf[i] = a << 24 | v << 16 | v << 8 | v;
         }
-    if (reuse && reuse < MAX_TEX && s_tex[reuse].used && s_tex[reuse].w == pw && s_tex[reuse].h == ph &&
-        s_tex[reuse].levels == 1 && s_tex[reuse].nvfmt == nv_format(XGX_TEX_ARGB8)) {
+    if (reusable) {
         write_level(s_tex[reuse].mem, buf, (int)pw, (int)ph, (int)pw, (int)ph, 4);
         return reuse;
     }
@@ -1400,6 +1740,7 @@ static void setup_state(void) {
 
 int xgx_init(void) {
     const xhw_video_mode* vm = xhw_video();
+    uint32_t tex_pool_bytes = TEX_POOL_480, vb_pool_bytes = VB_POOL_480;
     int err;
     static int done;
     if (done) return 1;
@@ -1412,31 +1753,31 @@ int xgx_init(void) {
             pb_set_color_format(NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5, false);
             pb_DepthFmt = NV097_SET_SURFACE_FORMAT_ZETA_Z16;   /* NV2x: match colour and depth widths */
             s_zmax = 65535.0f;
-            s_pool_bytes = TEX_POOL_720;
+            tex_pool_bytes = TEX_POOL_720;
+            vb_pool_bytes = VB_POOL_720;
         } else {
             pb_set_color_format(NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8, false);
             pb_DepthFmt = NV097_SET_SURFACE_FORMAT_ZETA_Z24S8;
             s_zmax = 16777215.0f;
-            s_pool_bytes = TEX_POOL_480;
+            tex_pool_bytes = TEX_POOL_480;
+            vb_pool_bytes = VB_POOL_480;
         }
         pb_size(PB_BYTES);
         err = pb_init();
         if (!err) {
-            s_pool = (uint8_t*)MmAllocateContiguousMemoryEx(s_pool_bytes, 0, MAXRAM, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
             s_ring = (uint8_t*)MmAllocateContiguousMemoryEx(RING_BYTES, 0, MAXRAM, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
-            if (s_pool && s_ring) break;
-            if (s_pool) MmFreeContiguousMemory(s_pool);
+            if (pool_init(&s_tp, tex_pool_bytes) && s_ring) break;
+            pool_release(&s_tp);
             if (s_ring) MmFreeContiguousMemory(s_ring);
-            s_pool = s_ring = NULL;
+            s_ring = NULL;
             pb_kill();
         }
         xhw_logf("[NV2A] %dx%d start failed (pb_init %d)", vm->width, vm->height, err);
         if (vm->bpp == 32) xhw_fatal("Graphics init failed", "The NV2A could not be started.");
         xhw_video_fallback_480();
     }
-    s_blocks = (Blk*)calloc(1, sizeof(Blk));
-    s_blocks->size = s_pool_bytes;
-    s_blocks->free = 1;
+    /* optional: without it display lists are decoded every call */
+    if (!pool_init(&s_vb, vb_pool_bytes)) xhw_logf("[NV2A] no memory for the %u KB vertex cache", vb_pool_bytes / 1024);
     pb_show_front_screen();
     s_fbw = (int)pb_back_buffer_width();
     s_fbh = (int)pb_back_buffer_height();
@@ -1450,7 +1791,7 @@ int xgx_init(void) {
     frame_open();
     setup_state();
     xhw_logf("[NV2A] up: %dx%d %d-bit, %s, tex pool %u KB", s_fbw, s_fbh, s_bpp,
-             vm->widescreen ? "16:9" : "4:3", s_pool_bytes / 1024);
+             vm->widescreen ? "16:9" : "4:3", s_tp.bytes / 1024);
     xhw_mem_log("after nv2a");
     return 1;
 }

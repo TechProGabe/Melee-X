@@ -98,6 +98,8 @@ static void main_body(void* arg) {
     read_image_range();
     xhw_logf("[BOOT] image %08x-%08x", xhw_image_base, xhw_image_end);
     xhw_watchdog_start();
+    xhw_prof_set_game_thread();
+    xhw_prof_start();
     xhw_mem_log("boot");
     xhw_splash_show();
 

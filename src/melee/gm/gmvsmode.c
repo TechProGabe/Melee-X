@@ -209,6 +209,15 @@ void onEnterDebugVs(GameModeState* state)
             start->players[i].slot_type = Gm_PKind_Cpu;
         }
     }
+    /* PORT: MELEE_DEBUG_VS_TIME=<seconds>: a timed match, so a run reaches
+     * the TIME! ending (docs/testing.md). */
+    if (getenv("MELEE_DEBUG_VS_TIME") != NULL) {
+        int secs = atoi(getenv("MELEE_DEBUG_VS_TIME"));
+        if (secs > 0) {
+            start->rules.timer_enabled = 1;
+            start->rules.time_limit = secs;
+        }
+    }
     /* MELEE_DEBUG_VS_STOCKS=<n>: a stock match instead of an untimed time
      * one, so a run can end on GAME! with stocks the replay (src/pc/slp.c)
      * must carry. */

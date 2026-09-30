@@ -86,6 +86,8 @@ target_include_directories(mx_hw PRIVATE
     ${NXDK_DIR}/lib/zlib/zlib)
 target_compile_definitions(mx_hw PRIVATE XBOX "USBH_USE_EXTERNAL_CONFIG=\"usbh_config_xbox.h\"")
 target_compile_options(mx_hw PRIVATE -O2 -march=pentium3 -Wall -Wno-unused-function)
+# the string routines must not be recognised as themselves (xhw_string.c)
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/hw/xhw_string.c PROPERTIES COMPILE_OPTIONS "-fno-builtin;-ffreestanding")
 
 # ---- link ----
 add_executable(melee_x $<TARGET_OBJECTS:mx_sdk> $<TARGET_OBJECTS:mx_hw>)

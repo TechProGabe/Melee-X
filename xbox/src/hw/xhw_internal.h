@@ -38,6 +38,8 @@ void xhw_splash_release(void);   /* the mode is about to change */
 
 /* xhw_watchdog.c: hang dumper (hang.log + screen) */
 void xhw_watchdog_start(void);
+void xhw_prof_set_game_thread(void);   /* call on the game thread */
+void xhw_prof_start(void);             /* -DXHW_PROF=1: sampling profiler (xhw_prof.c) */
 void xhw_watchdog_disable(void);
 void xhw_watchdog_busy(int on);   /* a long, deliberate stall (screenshot) */
 

@@ -61,6 +61,11 @@ a single-core console with interrupt handlers.
 - Textures use native NV2A formats.
 - If it still doesn't fit, the next step is disc-backed ARAM pages.
 
+**Our own memcpy, memmove, memset and memcmp** (`xbox/src/hw/xhw_string.c`).
+nxdk's pdclib implements them as byte loops, and on hardware they took about
+40% of a VS match's frame. The platform's versions move 32 bits at a time
+and win the link over libpdclib.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 
@@ -87,6 +92,8 @@ marked `PORT:`:
   clears `speciallw.x0` by name. On GameCube, the `specialhi.x0 = 0` just
   before it cleared that pointer too. melee-pc moved it to +08, so a stale
   word from the previous state was read as the thunder gobj.
+- `src/melee/gm/gmvsmode.c`: `MELEE_DEBUG_VS_TIME=<seconds>` next to
+  melee-pc's other debug-VS hooks, so a scripted match can end on TIME!.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after
@@ -103,17 +110,14 @@ To sync a newer melee-pc:
 
 ## Known risks
 
-- **Untested on hardware.** In xemu it boots, reaches the title screen and
-  runs the attract-demo matches. It has not run on a console.
-- **Hang when the texture pool fills.** About one boot in five of the
-  attract loop in xemu stops at around frame 2100. The game thread spins in
-  `xgx_tex_create` -> `pb_busy`, waiting for the GPU while evicting. The
-  watchdog's `hang.log` shows it.
+- **Hardware coverage is thin.** It boots on a console and plays VS
+  matches; menus run at 60 fps.
+- **Performance.** On hardware a 4-player VS match started at 4.5 fps,
+  CPU-bound (the `[PERF]` and `[PROF]` lines, `docs/testing.md`). Faster libc
+  routines, cached display lists and dirty-driven draw state brought Green
+  Greens to 7 fps; the CPU readback of the four shadow maps was then about
+  half the frame, and the copies now run on the GPU (unmeasured on the
+  console yet).
 - **The demand-commit fault handler** relies on the Xbox kernel sending
   kernel-mode access violations on reserved memory to the thread's SEH
   chain. That is how nxdk's `__try` works, but it hasn't been exercised.
-- **Performance** on a 733 MHz Pentium III with 4 players is unmeasured.
-  The costliest parts are likely:
-  - the CPU EFB copies;
-  - vertex decoding;
-  - the software audio mixer.

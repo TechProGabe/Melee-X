@@ -38,7 +38,9 @@ static void mixer(void* arg) {
         uint32_t q = queued_frames();
         if (q < LEAD_FRAMES) {
             int want = (int)((LEAD_FRAMES - q) * 2 * sizeof(float));
+            uint64_t t0 = xhw_perf_now();
             s->cb(s->user, s, want, want);
+            xhw_perf_audio(xhw_perf_now() - t0);
         } else {
             xhw_sleep_ms(2);
         }

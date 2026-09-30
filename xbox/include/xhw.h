@@ -29,6 +29,26 @@ int64_t xhw_wallclock_2000(uint32_t* ns_out);
 void xhw_sleep_ms(uint32_t ms);
 void xhw_yield(void);
 
+/* ---- frame profile: a [PERF] line every 5 s (xhw_perf.c) ----
+ * Game-thread time is charged to one bucket at a time; enter switches to a
+ * bucket and returns the one to restore with leave, so nested sections are
+ * charged exclusively. Everything not in a section is game logic. */
+enum {
+    XHW_PERF_LOGIC,   /* the game itself (and anything preempting it) */
+    XHW_PERF_DLIST,   /* GX display lists -> canonical vertices */
+    XHW_PERF_DRAW,    /* back end: state diff, pushbuffer */
+    XHW_PERF_TEX,     /* texture conversion and upload */
+    XHW_PERF_EFB,     /* EFB copies read back on the CPU */
+    XHW_PERF_GPU,     /* waiting for the GPU to go idle */
+    XHW_PERF_VSYNC,   /* pacing to 60 Hz: spare time */
+    XHW_PERF_N
+};
+int xhw_perf_enter(int bucket);
+void xhw_perf_leave(int prev);
+uint64_t xhw_perf_now(void);                   /* rdtsc, for xhw_perf_audio */
+void xhw_perf_audio(uint64_t ticks);           /* mixer thread: time spent mixing */
+void xhw_perf_frame(uint32_t draws, uint32_t verts);   /* once per presented frame */
+
 /* ---- threads and locks ---- */
 typedef struct xhw_mutex xhw_mutex;
 xhw_mutex* xhw_mutex_create(void);   /* recursive */

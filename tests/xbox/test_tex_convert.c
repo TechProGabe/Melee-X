@@ -21,6 +21,10 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     return 1;
 }
 void xgx_tex_destroy(uint32_t tex) { (void)tex; }
+uint32_t xgx_tex_bytes(uint32_t tex) { (void)tex; return 0; }
+uint32_t xgx_tex_pool_kb(void) { return 6144; }
+int xhw_perf_enter(int bucket) { return bucket; }
+void xhw_perf_leave(int prev) { (void)prev; }
 uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t w, uint32_t h, int i, uint32_t reuse) { return 0; }
 void xgx_read_efb(const int32_t src[4], uint32_t w, uint32_t h, uint8_t* rgba) {}
 void xhw_logf(const char* fmt, ...) {}

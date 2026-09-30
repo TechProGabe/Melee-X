@@ -13,7 +13,12 @@
  *     SL SR SU SD                                         left stick, full tilt
  *     CL CR CU CD                                         right stick (C-stick)
  *     SHOT                                                [FBDUMP] of the next frame
- * Example: "600 A" presses A at frame 600; "900 SHOT" takes a screenshot. */
+ * Example: "600 A" presses A at frame 600; "900 SHOT" takes a screenshot.
+ *
+ * "env NAME=VALUE" lines set what getenv() returns, which reaches melee-pc's
+ * test hooks: MELEE_BOOT_SCENE=vs, MELEE_DEBUG_VS_STAGE=<StKind>,
+ * MELEE_DEBUG_VS=cpu4, MELEE_SEED=<n>, MELEE_NO_ATTRACT=1 (grep src/ for
+ * getenv). Without the script, getenv() returns NULL as before. */
 #include <windows.h>
 #include <stdlib.h>
 #include <string.h>
@@ -79,6 +84,19 @@ static char* next_tok(char** save) {
     return start;
 }
 
+#define MAX_ENV 16
+static const char* s_env[MAX_ENV];
+static int s_nenv;
+
+/* Replaces pdclib's getenv (the linker takes this object's definition). */
+char* getenv(const char* name) {
+    size_t n = strlen(name);
+    int i;
+    for (i = 0; i < s_nenv; i++)
+        if (!strncmp(s_env[i], name, n) && s_env[i][n] == '=') return (char*)s_env[i] + n + 1;
+    return NULL;
+}
+
 static void parse_line(char* line) {
     char* tok;
     char* save = line;
@@ -86,6 +104,14 @@ static void parse_line(char* line) {
     char* hash = strchr(line, '#');
     if (hash) *hash = '\0';
     tok = next_tok(&save);
+    if (tok && !strcmp(tok, "env")) {
+        tok = next_tok(&save);
+        if (tok && strchr(tok, '=') && s_nenv < MAX_ENV) {
+            s_env[s_nenv++] = tok;   /* points into the static file buffer */
+            xhw_logf("[AUTOPAD] env %s", tok);
+        }
+        return;
+    }
     if (!tok || s_nev >= MAX_EVENTS) return;
     memset(&e, 0, sizeof e);
     e.frame = (unsigned)strtoul(tok, NULL, 10);

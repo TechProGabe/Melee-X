@@ -313,6 +313,15 @@ void vp_generate(const VpKey* k, VpProgram* out) {
     Gen gen = { out, 0 }, *g = &gen;
     int needs_nrm = 0, i;
     memset(out, 0, sizeof *out);
+    if (k->copy) {
+        /* screen-space position and a texel-space coordinate, straight through */
+        MOV(O(O_POS, MXYZW), V(VPI_POS));
+        MOV(O(O_T0, MXYZW), V(vpi_tex(0)));
+        MOV(O(O_D0, MXYZW), K1());
+        MOV(O(O_D1, MXYZW), K0());
+        out->words[(out->n - 1) * 4 + 3] |= 1u;   /* FINAL */
+        return;
+    }
     for (i = 0; i < 4; i++)
         if (i < k->nchans * 2 && k->chan[i].enable && k->chan[i].light_mask) needs_nrm = 1;
     needs_nrm = needs_nrm && k->has_nrm;

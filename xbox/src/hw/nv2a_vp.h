@@ -46,7 +46,8 @@ typedef struct {
     VpChan chan[4];               /* COLOR0 ALPHA0 COLOR1 ALPHA1 */
     uint8_t ntex;                 /* NV2A texture units fed, 0..4 */
     VpTexGen tex[4];
-    uint8_t pad[3];
+    uint8_t copy;                 /* EFB copy pass (nv2a.c): position and texcoord 0 as given */
+    uint8_t pad[2];
 } VpKey;
 
 #define VP_MAX_INSNS 136

@@ -8,10 +8,15 @@
  *    (big-endian disc data, or native when the game built them).
  * Both decode each attribute by the current vertex descriptor and the VAT
  * of the batch's vertex format, into a vertex slot the back end handed out. */
+#include <stdlib.h>
 #include <string.h>
 
 #include "gx_internal.h"
 #include "xhw.h"
+
+#ifndef XGX_STATS_EVERY
+#define XGX_STATS_EVERY 600
+#endif
 
 /* GX attribute order within a vertex */
 static const uint8_t k_order[] = {
@@ -45,6 +50,8 @@ static struct {
     uint8_t* base;       /* back-end vertex memory */
     uint8_t* cur;        /* current vertex */
     int cursor;          /* next slot within the vertex */
+    float pos_carry[3];   /* GXPosition2f32 components not yet a whole XYZ position */
+    int npos_carry;
 } B;
 
 void gx_vtx_reset(void) { memset(&B, 0, sizeof B); }
@@ -207,6 +214,7 @@ static void begin_batch(uint32_t prim, int vtxfmt, uint32_t n) {
     B.base = (uint8_t*)xgx_vtx_alloc(n, B.plan.layout.stride);
     B.cur = B.base;
     B.open = 1;
+    B.npos_carry = 0;
     if (B.base && n) memset(B.base, 0, B.plan.layout.stride);
 }
 
@@ -282,7 +290,26 @@ void GXPosition3u16(u16 x, u16 y, u16 z) { float f[3] = { q(x, GX_VA_POS), q(y, 
 void GXPosition3s16(s16 x, s16 y, s16 z) { float f[3] = { q(x, GX_VA_POS), q(y, GX_VA_POS), q(z, GX_VA_POS) }; imm_floats(GX_VA_POS, f, 3); }
 void GXPosition3u8(u8 x, u8 y, u8 z) { float f[3] = { q(x, GX_VA_POS), q(y, GX_VA_POS), q(z, GX_VA_POS) }; imm_floats(GX_VA_POS, f, 3); }
 void GXPosition3s8(s8 x, s8 y, s8 z) { float f[3] = { q(x, GX_VA_POS), q(y, GX_VA_POS), q(z, GX_VA_POS) }; imm_floats(GX_VA_POS, f, 3); }
-void GXPosition2f32(f32 x, f32 y) { float f[3] = { x, y, 0 }; imm_floats(GX_VA_POS, f, 3); }
+/* The GX FIFO takes components as a stream, so code that writes an XYZ
+ * format's positions as pairs (HSD's shadow background quad: 12 floats in
+ * six GXPosition2f32 calls) still makes whole vertices. Collect them. */
+void GXPosition2f32(f32 x, f32 y) {
+    float f[3] = { x, y, 0 };
+    if (B.open && g_gx.vat[B.vtxfmt][GX_VA_POS].cnt == GX_POS_XYZ) {
+        B.pos_carry[B.npos_carry++] = x;
+        if (B.npos_carry == 3) {
+            imm_floats(GX_VA_POS, B.pos_carry, 3);
+            B.npos_carry = 0;
+        }
+        B.pos_carry[B.npos_carry++] = y;
+        if (B.npos_carry == 3) {
+            imm_floats(GX_VA_POS, B.pos_carry, 3);
+            B.npos_carry = 0;
+        }
+        return;
+    }
+    imm_floats(GX_VA_POS, f, 3);
+}
 void GXPosition2u16(u16 x, u16 y) { float f[3] = { q(x, GX_VA_POS), q(y, GX_VA_POS), 0 }; imm_floats(GX_VA_POS, f, 3); }
 void GXPosition2s16(s16 x, s16 y) { float f[3] = { q(x, GX_VA_POS), q(y, GX_VA_POS), 0 }; imm_floats(GX_VA_POS, f, 3); }
 void GXPosition2u8(u8 x, u8 y) { float f[3] = { q(x, GX_VA_POS), q(y, GX_VA_POS), 0 }; imm_floats(GX_VA_POS, f, 3); }
@@ -427,7 +454,47 @@ static uint32_t dl_vertex_bytes(const Plan* p) {
     return n;
 }
 
-void GXCallDisplayList(const void* list, u32 nbytes) {
+/* index range each indexed attribute used, for the cache's array hash */
+typedef struct {
+    uint32_t lo[GX_VA_MAX_ATTR], hi[GX_VA_MAX_ATTR];
+} IdxRange;
+
+static uint8_t array_attr(const Slot* s) {
+    return s->attr == GX_VA_NRM && g_gx.desc[GX_VA_NRM] == GX_NONE ? GX_VA_NBT : s->attr;
+}
+
+/* n vertices of plan p from the list at `at` into out; returns the new offset */
+static uint32_t decode_verts(const uint8_t* dl, uint32_t at, const Plan* p, uint32_t n, uint8_t* out,
+                             IdxRange* r) {
+    uint32_t v;
+    for (v = 0; v < n; v++, out += p->layout.stride) {
+        int i;
+        memset(out, 0, p->layout.stride);
+        for (i = 0; i < p->n; i++) {
+            const Slot* s = &p->slot[i];
+            if (s->type == GX_DIRECT) {
+                store(s, dl + at, 1, out);
+                at += (uint32_t)data_size(s);
+            } else {
+                int k, idx_count = s->attr == GX_VA_NRM && s->fmt.cnt == GX_NRM_NBT3 ? 3 : 1;
+                for (k = 0; k < idx_count; k++) {
+                    uint32_t idx = s->type == GX_INDEX8 ? dl[at] : gx_be16(dl + at);
+                    at += s->type == GX_INDEX8 ? 1 : 2;
+                    if (k) continue;
+                    fetch_indexed(s, idx, out);
+                    if (r) {
+                        uint8_t a = array_attr(s);
+                        if (idx < r->lo[a]) r->lo[a] = idx;
+                        if (idx + 1 > r->hi[a]) r->hi[a] = idx + 1;
+                    }
+                }
+            }
+        }
+    }
+    return at;
+}
+
+static void call_display_list(const void* list, u32 nbytes) {
     const uint8_t* dl = (const uint8_t*)list;
     uint32_t at = 0;
     gx_vtx_flush();
@@ -445,7 +512,7 @@ void GXCallDisplayList(const void* list, u32 nbytes) {
         if (cmd == 0x44) { at++; continue; }
         if (cmd == 0x61) { at += 5; continue; }                             /* LOAD_BP_REG */
         if (cmd >= 0x80 && cmd < 0xC0 && at + 3 <= nbytes) {
-            uint32_t prim = cmd & 0xF8, fmt = cmd & 7, n = gx_be16(dl + at + 1), v;
+            uint32_t prim = cmd & 0xF8, fmt = cmd & 7, n = gx_be16(dl + at + 1);
             uint32_t vbytes;
             at += 3;
             begin_batch(prim, (int)fmt, n);
@@ -454,29 +521,300 @@ void GXCallDisplayList(const void* list, u32 nbytes) {
                 B.open = 0;
                 return;
             }
-            for (v = 0; v < n; v++) {
-                int i;
-                uint8_t* out = B.base + v * B.plan.layout.stride;
-                memset(out, 0, B.plan.layout.stride);
-                for (i = 0; i < B.plan.n; i++) {
-                    const Slot* s = &B.plan.slot[i];
-                    if (s->type == GX_DIRECT) {
-                        store(s, dl + at, 1, out);
-                        at += (uint32_t)data_size(s);
-                    } else {
-                        int k, idx_count = s->attr == GX_VA_NRM && s->fmt.cnt == GX_NRM_NBT3 ? 3 : 1;
-                        for (k = 0; k < idx_count; k++) {
-                            uint32_t idx = s->type == GX_INDEX8 ? dl[at] : gx_be16(dl + at);
-                            at += s->type == GX_INDEX8 ? 1 : 2;
-                            if (k == 0) fetch_indexed(s, idx, out);
-                        }
-                    }
-                }
-            }
+            at = decode_verts(dl, at, &B.plan, n, B.base, NULL);
             B.done = n;
             end_batch();
             continue;
         }
         break;   /* unknown command: stop rather than misparse */
     }
+}
+
+/* ---- display-list cache ----
+ * HSD's display lists are model data: the same list, with the same arrays,
+ * is drawn every frame. The first call decodes it into a vertex buffer that
+ * outlives the frame (xgx_vbuf_alloc); later calls replay the stored draws.
+ * An entry is keyed by the list's address and size, and checked on every
+ * call against a signature of the vertex descriptor, the formats the list
+ * uses and the arrays it reads. At most once a frame a sampled hash of the
+ * list and of the array ranges it indexed is compared too, because HSD
+ * reuses memory and some arrays are rewritten (shape animation). A list that
+ * keeps changing is marked volatile and decoded every call as before. */
+#define DLC_MAX 1024
+#define DLC_BUCKETS 2048
+#define DLC_MAX_BATCH 64
+#define DLC_MAX_RANGE 12
+#define DLC_VOLATILE 4          /* rebuilds before a list counts as volatile */
+
+typedef struct {
+    uint32_t prim, count, offset;   /* offset: bytes into the entry's buffer */
+    XgxLayout layout;
+} DlBatch;
+
+typedef struct {
+    const uint8_t* p;
+    uint32_t bytes;
+} DlRange;
+
+typedef struct {
+    const uint8_t* dl;
+    uint32_t nbytes;
+    uint32_t sig, hash;
+    uint32_t checked, last_used;
+    uint8_t* mem;
+    uint32_t mem_bytes;
+    DlBatch* batch;
+    uint16_t nbatch;
+    uint8_t fmts, nrange, rebuilds, is_volatile;
+    DlRange range[DLC_MAX_RANGE];
+    int next;                      /* bucket chain, -1: end */
+} DlEntry;
+
+static DlEntry s_dlc[DLC_MAX];
+static int s_dlc_n;
+static int s_dlc_bucket[DLC_BUCKETS];
+static int s_dlc_ready;
+static uint32_t s_st_dl_hits, s_st_dl_builds, s_st_dl_direct;
+
+static uint32_t fnv(uint32_t h, const void* p, uint32_t n) {
+    const uint8_t* b = (const uint8_t*)p;
+    while (n--) h = (h ^ *b++) * 16777619u;
+    return h;
+}
+
+/* 64 sampled words plus the tail, as the texture cache does */
+static uint32_t sample_hash(uint32_t h, const uint8_t* p, uint32_t n) {
+    uint32_t i, step;
+    if (n < 256) return fnv(h, p, n);
+    step = (n - 4) / 64;
+    for (i = 0; i < 64; i++) {
+        uint32_t w;
+        memcpy(&w, p + i * step, 4);
+        h = (h ^ w) * 16777619u;
+    }
+    return fnv(h, p + n - 4, 4);
+}
+
+static uint32_t vtx_sig(uint32_t fmts) {
+    uint32_t h = fnv(2166136261u, g_gx.desc, sizeof g_gx.desc), f, a;
+    for (f = 0; f < 8; f++)
+        if (fmts & (1u << f)) h = fnv(h, g_gx.vat[f], sizeof g_gx.vat[f]);
+    for (a = 0; a < GX_VA_MAX_ATTR; a++)
+        if (g_gx.desc[a] == GX_INDEX8 || g_gx.desc[a] == GX_INDEX16) {
+            h = fnv(h, &g_gx.array[a], sizeof g_gx.array[a]);
+            h = fnv(h, &g_gx.array_stride[a], sizeof g_gx.array_stride[a]);
+            h = fnv(h, &g_gx.array_le[a], 1);
+        }
+    return h;
+}
+
+static uint32_t content_hash(const DlEntry* e) {
+    uint32_t h = sample_hash(2166136261u, e->dl, e->nbytes);
+    int i;
+    for (i = 0; i < e->nrange; i++) h = sample_hash(h, e->range[i].p, e->range[i].bytes);
+    return h;
+}
+
+static uint32_t dl_bucket(const void* dl) { return ((uint32_t)(uintptr_t)dl >> 5) % DLC_BUCKETS; }
+
+static void dlc_unlink(int idx) {
+    int* link = &s_dlc_bucket[dl_bucket(s_dlc[idx].dl)];
+    while (*link >= 0 && *link != idx) link = &s_dlc[*link].next;
+    if (*link == idx) *link = s_dlc[idx].next;
+}
+
+static void dlc_release(DlEntry* e) {
+    xgx_vbuf_free(e->mem);
+    free(e->batch);
+    e->mem = NULL;
+    e->batch = NULL;
+    e->mem_bytes = 0;
+    e->nbatch = 0;
+}
+
+/* entries stay in their slot; freed slots go on a stack */
+static int s_dlc_free[DLC_MAX];
+static int s_dlc_nfree;
+
+static void dlc_drop(int idx) {
+    dlc_unlink(idx);
+    dlc_release(&s_dlc[idx]);
+    s_dlc[idx].dl = NULL;
+    s_dlc_free[s_dlc_nfree++] = idx;
+    s_dlc_n--;
+}
+
+/* evicts the least recently used entry not drawn this frame, other than
+ * `keep`; 0: none */
+static int dlc_evict_one(uint32_t frame, const DlEntry* keep) {
+    int i, pick = -1;
+    for (i = 0; i < DLC_MAX; i++)
+        if (s_dlc[i].dl && &s_dlc[i] != keep && s_dlc[i].last_used != frame &&
+            (pick < 0 || s_dlc[i].last_used < s_dlc[pick].last_used))
+            pick = i;
+    if (pick < 0) return 0;
+    dlc_drop(pick);
+    return 1;
+}
+
+static DlEntry* dlc_find(const uint8_t* dl, uint32_t nbytes) {
+    int i;
+    for (i = s_dlc_bucket[dl_bucket(dl)]; i >= 0; i = s_dlc[i].next)
+        if (s_dlc[i].dl == dl && s_dlc[i].nbytes == nbytes) return &s_dlc[i];
+    return NULL;
+}
+
+/* decode the whole list into one buffer; 0 when it can't be cached */
+static int dlc_build(DlEntry* e, uint32_t frame) {
+    static IdxRange r;
+    const uint8_t* dl = e->dl;
+    DlBatch batch[DLC_MAX_BATCH];
+    Plan plan;
+    uint32_t at = 0, total = 0, a;
+    int nb = 0, i;
+    uint8_t fmts = 0;
+    /* pass 1: the draws and their sizes */
+    while (at < e->nbytes) {
+        uint8_t cmd = dl[at];
+        if (cmd == 0x00 || cmd == 0x48 || cmd == 0x44) { at++; continue; }
+        if (cmd == 0x08) { at += 6; continue; }
+        if (cmd == 0x10) {
+            uint32_t n = at + 5 <= e->nbytes ? (uint32_t)gx_be16(dl + at + 1) + 1 : 0;
+            at += 5 + n * 4;
+            continue;
+        }
+        if ((cmd & 0xE7) == 0x20 || cmd == 0x61) { at += 5; continue; }
+        if (cmd == 0x40) { at += 9; continue; }
+        if (cmd >= 0x80 && cmd < 0xC0 && at + 3 <= e->nbytes) {
+            uint32_t n = gx_be16(dl + at + 1), fmt = cmd & 7, vbytes;
+            if (nb == DLC_MAX_BATCH) return 0;
+            make_plan(&plan, (int)fmt);
+            vbytes = dl_vertex_bytes(&plan);
+            at += 3;
+            if (at + n * vbytes > e->nbytes) return 0;
+            batch[nb].prim = cmd & 0xF8;
+            batch[nb].count = n;
+            batch[nb].offset = total;
+            batch[nb].layout = plan.layout;
+            total += (n * plan.layout.stride + 15) & ~15u;
+            fmts |= (uint8_t)(1u << fmt);
+            at += n * vbytes;
+            nb++;
+            continue;
+        }
+        break;
+    }
+    if (!nb || !total) return 0;
+    e->mem = (uint8_t*)xgx_vbuf_alloc(total);
+    while (!e->mem && dlc_evict_one(frame, e)) e->mem = (uint8_t*)xgx_vbuf_alloc(total);
+    if (!e->mem) return 0;
+    e->batch = (DlBatch*)malloc(sizeof(DlBatch) * (size_t)nb);
+    if (!e->batch) {
+        dlc_release(e);
+        return 0;
+    }
+    /* pass 2: decode */
+    for (a = 0; a < GX_VA_MAX_ATTR; a++) {
+        r.lo[a] = 0xFFFFFFFFu;
+        r.hi[a] = 0;
+    }
+    at = 0;
+    for (i = 0; i < nb;) {
+        uint8_t cmd = dl[at];
+        if (cmd >= 0x80 && cmd < 0xC0) {
+            make_plan(&plan, cmd & 7);
+            at = decode_verts(dl, at + 3, &plan, batch[i].count, e->mem + batch[i].offset, &r);
+            i++;
+            continue;
+        }
+        if (cmd == 0x08) at += 6;
+        else if (cmd == 0x10) at += 5 + ((uint32_t)gx_be16(dl + at + 1) + 1) * 4;
+        else if ((cmd & 0xE7) == 0x20 || cmd == 0x61) at += 5;
+        else if (cmd == 0x40) at += 9;
+        else at++;
+    }
+    memcpy(e->batch, batch, sizeof(DlBatch) * (size_t)nb);
+    e->nbatch = (uint16_t)nb;
+    e->mem_bytes = total;
+    e->fmts = fmts;
+    e->nrange = 0;
+    for (a = 0; a < GX_VA_MAX_ATTR; a++)
+        if (r.hi[a] > r.lo[a] && g_gx.array[a] && e->nrange < DLC_MAX_RANGE) {
+            e->range[e->nrange].p = g_gx.array[a] + r.lo[a] * g_gx.array_stride[a];
+            e->range[e->nrange].bytes = (r.hi[a] - r.lo[a]) * g_gx.array_stride[a];
+            e->nrange++;
+        }
+    e->sig = vtx_sig(fmts);
+    e->hash = content_hash(e);
+    e->checked = frame;
+    s_st_dl_builds++;
+    return 1;
+}
+
+/* 1: drawn from the cache */
+static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
+    uint32_t frame = xgx_present_count();
+    DlEntry* e;
+    int i;
+    if (!s_dlc_ready) {
+        memset(s_dlc_bucket, 0xFF, sizeof s_dlc_bucket);
+        for (i = 0; i < DLC_MAX; i++) s_dlc_free[i] = DLC_MAX - 1 - i;
+        s_dlc_nfree = DLC_MAX;
+        s_dlc_ready = 1;
+    }
+    e = dlc_find(dl, nbytes);
+    if (e && e->is_volatile) return 0;
+    if (e && e->mem && (e->sig != vtx_sig(e->fmts) ||
+                        (e->checked != frame && (e->checked = frame, e->hash != content_hash(e))))) {
+        dlc_release(e);   /* changed: rebuild below */
+        if (++e->rebuilds >= DLC_VOLATILE) {
+            e->is_volatile = 1;
+            return 0;
+        }
+    }
+    if (!e) {
+        int idx;
+        if (!s_dlc_nfree && !dlc_evict_one(frame, NULL)) return 0;
+        idx = s_dlc_free[--s_dlc_nfree];
+        e = &s_dlc[idx];
+        memset(e, 0, sizeof *e);
+        e->dl = dl;
+        e->nbytes = nbytes;
+        e->next = s_dlc_bucket[dl_bucket(dl)];
+        s_dlc_bucket[dl_bucket(dl)] = idx;
+        s_dlc_n++;
+    }
+    if (!e->mem && !dlc_build(e, frame)) return 0;
+    e->last_used = frame;
+    s_st_dl_hits++;
+    for (i = 0; i < e->nbatch; i++) {
+        const DlBatch* b = &e->batch[i];
+        if (!b->count) continue;
+        xgx_vtx_use(e->mem + b->offset);
+        xgx_draw(b->prim, b->count, &b->layout, &g_xgx);
+        g_xgx.dirty = 0;
+    }
+    return 1;
+}
+
+void gx_vtx_frame_end(void) {
+    if (xgx_present_count() % XGX_STATS_EVERY == 0 && s_dlc_ready) {
+        int i, vol = 0;
+        for (i = 0; i < DLC_MAX; i++) vol += s_dlc[i].dl && s_dlc[i].is_volatile;
+        xhw_logf("[DLC] %d lists (%d volatile), vertex pool %u of %u KB free | per %u: %u cached calls, %u builds, "
+                 "%u decoded",
+                 s_dlc_n, vol, xgx_vbuf_pool_free_kb(), xgx_vbuf_pool_kb(), XGX_STATS_EVERY, s_st_dl_hits,
+                 s_st_dl_builds, s_st_dl_direct);
+        s_st_dl_hits = s_st_dl_builds = s_st_dl_direct = 0;
+    }
+}
+
+void GXCallDisplayList(const void* list, u32 nbytes) {
+    int pf = xhw_perf_enter(XHW_PERF_DLIST);
+    gx_vtx_flush();
+    if (!list || !nbytes || !dlc_call((const uint8_t*)list, nbytes)) {
+        s_st_dl_direct++;
+        call_display_list(list, nbytes);
+    }
+    xhw_perf_leave(pf);
 }

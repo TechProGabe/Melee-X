@@ -50,13 +50,34 @@ regex matches. See the script header for the `MX_*` variables:
   platform build.
 
 Screenshots come out of the serial log as `[FBDUMP]` lines. Decode them
-with `tools/xbox/fbdump_to_png.py serial.log shot`.
+with `tools/xbox/fbdump_to_png.py serial.log shot`. A run that should end on a screenshot needs
+`'FBDUMP\] END'` as its stop regex: `SHOT at frame` is logged before the
+dump is written.
 
 If the log stops dead, heartbeat included, the guest has bugchecked. In the
 monitor, `info registers` then shows `HLT=1` with IF clear, and the
 bugcheck code is on the stack (`0x7F, 8` is a double fault). A double fault
 arrives through a task gate, so the faulting EIP and ESP are in the TSS
 that the current TSS's link field names (read the GDT to find it).
+
+## Measuring on the console
+
+Every build logs a `[PERF]` line every 5 s (`xhw_perf.c`): fps and the
+milliseconds per frame spent in game logic, display-list decoding, back-end
+draws, texture conversion, EFB readback, GPU waits and vsync pacing, plus
+the audio mixer's share of the CPU and the draws and vertices per frame.
+
+Built with `XBOX_CFLAGS=-DXHW_PROF=1`, a sampling profiler (`xhw_prof.c`)
+also records where the game thread is, about 1000 times a second, and logs
+the hottest code every 20 s as `[PROF]` lines. Fold them into functions with
+the link map of the same build:
+
+```sh
+tools/xbox/prof_report.py boot.log --map path/to/melee_x.map
+```
+
+Profile buckets are 64 bytes, so a small function right after another can
+be credited to its neighbour (pdclib's `memcmp` showed up as `longjmp`).
 
 ## Logs
 
@@ -108,7 +129,12 @@ report.
 |---|---|
 | `-DXHW_CRASH_GUARD=0` | no SEH guard. Crashes become bugchecks, and demand-committed memory stops working, so debug only |
 | `-DXHW_AUDIO_APU=0` | never use the xemu APU fallback |
-| `-DXHW_AUTOPAD=1` | scripted input from `D:\autopad.txt`: `<frame> <buttons/SHOT> [for N]` per line (`xhw_autopad.c`) |
+| `-DXHW_AUTOPAD=1` | scripted input from `D:\autopad.txt`: `<frame> <buttons/SHOT> [for N]` per line (`xhw_autopad.c`). `env NAME=VALUE` lines feed `getenv`, which reaches melee-pc's test hooks (below) |
+| `-DXHW_PROF=1` | sampling profiler: `[PROF]` lines every 20 s (`xhw_prof.c`, `tools/xbox/prof_report.py`) |
+| `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU instead of drawn by the GPU |
+| `-DXGX_DEBUG_EFBLOG` | log the first 200 EFB copies (source rect, size, format) as `[EFB]` lines |
+| `-DXGX_DEBUG_TRACE` | log every draw (TEV stages, textures, texgens, blend) of the frame an autopad `SHOT` dumps, as `[DRAW]` lines |
+| `-DXGX_DEBUG_NOMIP` | bind only the base level of every texture |
 | `-DXHW_FBDUMP_EVERY=<n>` | screenshot every n presented frames |
 | `-DXGX_STATS_EVERY=<n>` | `[NV2A]` / `[TEX]` stats period, in frames (default 600) |
 | `-DXHW_WATCHDOG=0`, `-DXHW_HEARTBEAT_SECS=<n>` | hang dumper off; `[BEAT]` period (0 = off) |
@@ -116,6 +142,23 @@ report.
 | `XBOX_FORCE=1 tools/xbox/compile_game.py` | rebuild every game unit |
 | `XBOX_KEEP_TEMPS=1` | keep the `.i` / `.lowered.c` intermediates |
 | `XBOX_CFLAGS`, `XBOX_CMAKE_ARGS`, `XBOX_NINJA_ARGS` | passed through by `xbox/build.sh`; `XBOX_CFLAGS` sets the platform's C flags |
+
+## Straight into a match
+
+With an autopad build, `env` lines in `autopad.txt` set what `getenv`
+returns, so melee-pc's harness hooks work on the Xbox too:
+
+```
+env MELEE_BOOT_SCENE=vs        # skip the menus: debug VS (onEnterDebugVs, gmvsmode.c)
+env MELEE_DEBUG_VS_STAGE=10    # StKind (src/melee/gr/forward.h): 10 = Mute City
+env MELEE_DEBUG_VS=cpu4        # Link, Mario, Fox and DK as four CPUs
+env MELEE_DEBUG_VS_TIME=20     # a 20-second timed match: ends on TIME!
+300 SHOT
+```
+
+`MELEE_SEED=<n>` fixes the attract demo's pick, and `MELEE_NO_ATTRACT=1`
+turns the attract loop off. Loading a match takes long enough in xemu that
+the watchdog reports "frames stopped" once; the run carries on.
 
 ## First-boot checklist
 

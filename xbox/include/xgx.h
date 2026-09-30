@@ -187,17 +187,40 @@ enum {
     XGX_TEX_A8Y8,        /* uint8 pairs: luminance, alpha (GX IA4/IA8) */
     XGX_TEX_DXT1,        /* DXT1 blocks (GX CMPR, reordered and byte-swapped) */
 };
-/* Returns a handle or 0 when the pool is full. */
+/* Returns a handle or 0 when the pool is full (after waiting for the GPU
+ * to finish with textures already destroyed, if any are pending). */
 uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data);
 void xgx_tex_destroy(uint32_t tex);   /* deferred until the GPU is done */
+uint32_t xgx_tex_bytes(uint32_t tex); /* pool bytes a live texture holds, 0 otherwise */
 uint32_t xgx_tex_pool_free_kb(void);
+uint32_t xgx_tex_pool_kb(void);
+
+/* Vertex buffers that outlive a frame (gx_vtx.c's display-list cache), in
+ * canonical layout, from their own pool. alloc returns NULL when the pool is
+ * full or absent; free is deferred until the GPU is done. xgx_vtx_use points
+ * the next xgx_draw at vertices in such a buffer instead of the ring. */
+void* xgx_vbuf_alloc(uint32_t bytes);
+void xgx_vbuf_free(void* p);
+uint32_t xgx_vbuf_pool_kb(void);
+uint32_t xgx_vbuf_pool_free_kb(void);
+void xgx_vtx_use(const void* verts);
 /* EFB -> texture: copies the logical rect into a texture of dst_w x dst_h
- * (point-sampled). intensity: convert to grey (I4/I8/IA copies).
+ * (point-sampled). mode: XGX_COPY_*, what the copy format keeps.
  * reuse: the texture the previous copy to the same destination made; when it
  * has the same size it is refilled in place (no allocation, no deferred free)
  * and returned. Otherwise a new texture is made. The copy is read at the next
  * power-of-two size, so it is never resampled. */
-uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int intensity, uint32_t reuse);
+enum {
+    XGX_COPY_COLOR,        /* RGB(A) formats: as rendered */
+    XGX_COPY_LUMA,         /* I4/I8: luma in every channel, alpha included */
+    XGX_COPY_LUMA_ALPHA,   /* IA4/IA8: luma, alpha kept */
+    XGX_COPY_RED,          /* R4/R8: red in every channel */
+    XGX_COPY_RED_ALPHA,    /* RA4/RA8 */
+    XGX_COPY_GREEN,
+    XGX_COPY_BLUE,
+    XGX_COPY_ALPHA,
+};
+uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int mode, uint32_t reuse);
 /* EFB -> CPU (GXCopyTex into memory the game reads): logical rect, RGBA8 out */
 void xgx_read_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, uint8_t* rgba);
 
