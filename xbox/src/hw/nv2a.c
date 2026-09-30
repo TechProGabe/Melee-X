@@ -263,6 +263,8 @@ static void pb_close(void) {
 
 /* per-interval counters for the [NV2A] frame line */
 static uint32_t s_st_waits, s_st_efb, s_st_tex_kb, s_st_verts, s_st_tex_fail;
+static uint32_t s_st_draws, s_st_dirty_none, s_st_dirty_mtx, s_st_dirty[13];
+static uint32_t s_st_prim[8];   /* by GX primitive, (prim >> 3) & 7 */
 
 /* GPU faults, recorded by the patched pbkit (ocx_pb_gpu_fault below) */
 static volatile uint32_t s_gf_count, s_gf_storms, s_gf_last[5];
@@ -705,6 +707,17 @@ void xgx_present(int black) {
                  "waits, %u EFB copies, %u KB textures, %u pool allocations failed, %u verts",
                  s_frame, s_draws, s_approx, xgx_tex_pool_free_kb(), xgx_tex_pool_largest_kb(), XGX_STATS_EVERY,
                  s_st_waits, s_st_efb, s_st_tex_kb, s_st_tex_fail, s_st_verts);
+        xhw_logf("[NV2A] per %u draws by primitive: quads %u, triangles %u, strips %u, fans %u, lines %u, line strips "
+                 "%u, points %u", XGX_STATS_EVERY, s_st_prim[0], s_st_prim[2], s_st_prim[3], s_st_prim[4], s_st_prim[5],
+                 s_st_prim[6], s_st_prim[7]);
+        memset(s_st_prim, 0, sizeof s_st_prim);
+        xhw_logf("[NV2A] per %u draws: %u changed nothing, %u only a position matrix | proj %u view %u posmtx %u texmtx "
+                 "%u lights %u chans %u texgen %u tev %u tevreg %u pixel %u fog %u maps %u scissor %u",
+                 s_st_draws, s_st_dirty_none, s_st_dirty_mtx, s_st_dirty[0], s_st_dirty[1], s_st_dirty[2], s_st_dirty[3],
+                 s_st_dirty[4], s_st_dirty[5], s_st_dirty[6], s_st_dirty[7], s_st_dirty[8], s_st_dirty[9],
+                 s_st_dirty[10], s_st_dirty[11], s_st_dirty[12]);
+        memset(s_st_dirty, 0, sizeof s_st_dirty);
+        s_st_draws = s_st_dirty_none = s_st_dirty_mtx = 0;
         s_st_waits = s_st_efb = s_st_tex_kb = s_st_verts = s_st_tex_fail = 0;
     }
     s_draws = s_approx = 0;
@@ -1249,10 +1262,18 @@ void* xgx_vtx_alloc(uint32_t count, uint32_t stride) {
         pb_open();
         s_ring_pos = 0;
     }
-    s_draw_base = s_ring + s_ring_pos;
-    s_ring_pos += (bytes + 15) & ~15u;
+    /* at a multiple of the stride from the ring's start: see xgx_draw */
+    s_draw_base = s_ring + (s_ring_pos + stride - 1) / stride * stride;
+    if (s_draw_base + bytes > s_ring + RING_BYTES) {
+        wait_idle();
+        pb_open();
+        s_draw_base = s_ring;
+    }
+    s_ring_pos = (uint32_t)(s_draw_base - s_ring) + bytes;
     return (void*)s_draw_base;
 }
+
+uint32_t xgx_vbuf_offset(const void* p) { return (uint32_t)((const uint8_t*)p - s_vb.base); }
 
 void* xgx_vbuf_alloc(uint32_t bytes) {
     void* p;
@@ -1285,9 +1306,11 @@ static uint32_t nv_prim(uint32_t gx) {
 }
 
 
+static const uint8_t* s_attr_base;   /* what the array offsets point at (xgx_draw) */
+
 static void attr(int slot, int off, uint32_t type, uint32_t size, uint32_t stride) {
     uint32_t fmt = off < 0 ? 2u : type | size << 4 | stride << 8;
-    uint32_t addr = off < 0 ? 0 : (((uint32_t)s_draw_base & 0x03FFFFFF) + (uint32_t)off);
+    uint32_t addr = off < 0 ? 0 : (((uint32_t)s_attr_base & 0x03FFFFFF) + (uint32_t)off);
     if (s_attr_shadow[slot] != fmt) {
         put1(NV097_SET_VERTEX_DATA_ARRAY_FORMAT + slot * 4, fmt);
         s_attr_shadow[slot] = fmt;
@@ -1463,6 +1486,12 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     pb_open();
 
     d = st->dirty | s_draw_force | (s_vc_valid ? 0 : XGX_DIRTY_ALL);
+    {   /* what changed before each draw: what keeps draws from merging */
+        uint32_t k;
+        if (!d) s_st_dirty_none++;
+        else if (d == XGX_DIRTY_POSMTX) s_st_dirty_mtx++;
+        for (k = 0; k < 13; k++) s_st_dirty[k] += (d >> k) & 1;
+    }
     s_draw_force = 0;
     lay = (layout->off_nrm >= 0) | (layout->off_col[0] >= 0) << 1 | (layout->off_col[1] >= 0) << 2;
     if (d & DIRTY_UNITS) derive_units(st);
@@ -1491,11 +1520,28 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     if (d & DIRTY_FIXED) emit_fixed(st);
     if (d & DIRTY_UNITS) emit_textures(st, s_d_unit_map, s_d_nunits);
     if (d & (DIRTY_UNITS | XGX_DIRTY_TEVREG)) emit_combiners(st, s_d_rp);
-    emit_vertex_arrays(layout, st);
 
-    /* the vertices are at s_draw_base (xgx_vtx_alloc or xgx_vtx_use) */
-    put1(NV097_SET_BEGIN_END, nv_prim(prim));
+    /* The vertices are at s_draw_base (xgx_vtx_alloc or xgx_vtx_use). The
+     * arrays point at the start of the ring or of the vertex pool, and the
+     * draw starts at the vertex's index from there (both place vertices at
+     * a multiple of the stride): consecutive draws of one layout then send
+     * no array offsets in between. xemu joins such back-to-back
+     * BEGIN/DRAW_ARRAYS/END runs into one draw, and each xemu draw costs a
+     * geometry-shader pass that macOS's GL runs as a compute pass. */
+    s_attr_base = s_draw_base;
     first = 0;
+    {
+        const uint8_t* region = s_draw_base >= s_ring && s_draw_base < s_ring + RING_BYTES ? s_ring
+                                : pool_owns(&s_vb, s_draw_base)                             ? s_vb.base
+                                                                                            : NULL;
+        uint32_t rel = region ? (uint32_t)(s_draw_base - region) : 0;
+        if (region && rel % layout->stride == 0 && rel / layout->stride + count < 0x1000000u) {
+            s_attr_base = region;
+            first = rel / layout->stride;
+        }
+    }
+    emit_vertex_arrays(layout, st);
+    put1(NV097_SET_BEGIN_END, nv_prim(prim));
     while (count > 0) {
         uint32_t batch = count > 256 * 64 ? 256 * 64 : count, k, words = 0;
         uint32_t* hdr = P++;
@@ -1511,6 +1557,8 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
     if (P - s_pb_mark >= PB_KICK) pb_close();
     s_draws++;
+    s_st_draws++;
+    s_st_prim[(prim >> 3) & 7]++;
     xhw_perf_leave(pf);
 }
 
@@ -1641,7 +1689,7 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
      * (+0.5: nearest sampling picks the texel the CPU path rounds to) */
     {
         const float q[4][5] = { { 0, 0, 1, u0, v0 }, { (float)pw, 0, 1, u1, v0 },
-                                { (float)pw, (float)ph, 1, u1, v1 }, { 0, (float)ph, 1, u0, v1 } };
+                                { 0, (float)ph, 1, u0, v1 }, { (float)pw, (float)ph, 1, u1, v1 } };
         memcpy(v, q, sizeof q);
     }
     pb_open();
@@ -1686,13 +1734,14 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     copy_combiners(mode);
     vp_select(&k_copy);
 
+    s_attr_base = s_draw_base;
     attr(VPI_POS, 0, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 3, 20);
     attr(VPI_MTX, -1, 0, 0, 0);
     attr(VPI_NRM, -1, 0, 0, 0);
     attr(VPI_COL0, -1, 0, 0, 0);
     attr(VPI_COL1, -1, 0, 0, 0);
     for (i = 0; i < 8; i++) attr(vpi_tex((int)i), i ? -1 : 12, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 2, 20);
-    put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_QUADS);
+    put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_TRIANGLE_STRIP);   /* not a quad: see gx_vtx.c out_prim */
     *P++ = 1u << 18 | NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_DRAW_ARRAYS);
     *P++ = 3u << 24;   /* 4 vertices from 0 */
     put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);

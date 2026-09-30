@@ -202,6 +202,7 @@ uint32_t xgx_tex_pool_largest_kb(void);   /* the largest free block: fragmentati
  * the next xgx_draw at vertices in such a buffer instead of the ring. */
 void* xgx_vbuf_alloc(uint32_t bytes);
 void xgx_vbuf_free(void* p);
+uint32_t xgx_vbuf_offset(const void* p);   /* bytes from the pool's start: draws sit at multiples of their stride */
 uint32_t xgx_vbuf_pool_kb(void);
 uint32_t xgx_vbuf_pool_free_kb(void);
 void xgx_vtx_use(const void* verts);

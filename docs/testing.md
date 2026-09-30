@@ -63,9 +63,17 @@ that the current TSS's link field names (read the GDT to find it).
 ## Measuring on the console
 
 Every build logs a `[PERF]` line every 5 s (`xhw_perf.c`): fps and the
-milliseconds per frame spent in game logic, display-list decoding, back-end
-draws, texture conversion, EFB readback, GPU waits and vsync pacing, plus
-the audio mixer's share of the CPU and the draws and vertices per frame.
+milliseconds per frame spent in the game's simulation (`sim`), its render
+pass (`render`: HSD walking the scene and setting GX state), display-list
+decoding, back-end draws, texture conversion, EFB readback, GPU waits and
+vsync pacing, plus simulation ticks per render, the audio mixer's share of
+the CPU and the draws and vertices per frame.
+
+Melee runs one simulation tick per pad poll queued since the last frame (up
+to 5, `gm_801A4D34`), then renders once. A slow frame makes the next one run
+more ticks, so `sim` per frame is `ticks per render` times the cost of one
+tick, and cutting a tick's cost pays twice: less time per tick, and fewer
+ticks per render as the frame rate rises.
 
 Built with `XBOX_CFLAGS=-DXHW_PROF=1`, a sampling profiler (`xhw_prof.c`)
 also records where the game thread is, about 1000 times a second, and logs
@@ -156,6 +164,7 @@ report.
 | `-DXHW_AUDIO_APU=0` | never use the xemu APU fallback |
 | `-DXHW_AUTOPAD=1` | scripted input from `D:\autopad.txt`: `<frame> <buttons/SHOT> [for N]` per line (`xhw_autopad.c`). `env NAME=VALUE` lines feed `getenv`, which reaches melee-pc's test hooks (below) |
 | `-DXHW_PROF=1` | sampling profiler: `[PROF]` lines every 20 s (`xhw_prof.c`, `tools/xbox/prof_report.py`) |
+| `-DXHW_PROF_SECS=<n>`, `-DXHW_PROF_TOP=<n>` | profiler report period (default 20 s); buckets and call sites per report (default 192) |
 | `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU instead of drawn by the GPU |
 | `-DXGX_DEBUG_EFBLOG` | log the first 200 EFB copies (source rect, size, format) as `[EFB]` lines |
 | `-DXGX_DEBUG_TRACE` | log every draw (TEV stages, textures, texgens, blend) of the frame an autopad `SHOT` dumps, as `[DRAW]` lines |

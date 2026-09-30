@@ -32,6 +32,7 @@ extern GxFront g_gx;
 
 void gx_vtx_reset(void);
 void gx_vtx_flush(void);   /* submit a pending GXBegin batch */
+void gx_vtx_close(void);   /* end an open GXBegin batch; a finished one may still wait to be merged */
 void gx_tex_bind(uint32_t map, const GXTexObj* obj);
 void gx_tex_frame_end(void);
 void gx_tex_invalidate_all(void);

@@ -40,7 +40,7 @@ tools/xbox/fbdump_to_png.py $MX_RUN/serial.log out   # [FBDUMP] screenshots (-DX
 ```
 
 Hardware: FTP `192.168.158.113` (`xbox`/`xbox`), deploy to `/F/Applications/Melee-X/`
-(`default.xbe` next to the disc image), logs in `/E/UDATA/4d580001/` (`boot.log`,
+(`default.xbe` and `default.tbn`, the dashboard icon, next to the disc image), logs in `/E/UDATA/4d580001/` (`boot.log`,
 `crash.log`, `hang.log`). Keep each deployed build's `melee_x.map` in `~/xemu/hw/` so
 `tools/xbox/sym.py` and `tools/xbox/prof_report.py` can symbolize its logs.
 

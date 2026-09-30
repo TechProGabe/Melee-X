@@ -24,7 +24,7 @@ static inline uint64_t rdtsc(void) {
     __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
     return (uint64_t)hi << 32 | lo;
 }
-static uint32_t s_frames, s_draws, s_verts;
+static uint32_t s_frames, s_draws, s_verts, s_ticks, s_renders;
 
 static void charge(void) {
     uint64_t now = rdtsc();
@@ -46,13 +46,21 @@ void xhw_perf_leave(int prev) {
 
 uint64_t xhw_perf_now(void) { return rdtsc(); }
 
+/* Melee runs one simulation tick per pad poll queued since the last frame
+ * (up to 5), then renders once: a slow frame makes the next one run more
+ * ticks. "ticks" is that count per render pass. */
+void xhw_perf_ticks(uint32_t n) {
+    s_ticks += n;
+    s_renders++;
+}
+
 void xhw_perf_audio(uint64_t ticks) { __atomic_fetch_add(&s_audio, ticks, __ATOMIC_RELAXED); }
 
 /* tenths, for printing without floating point (pdclib's %f is unreliable) */
 static unsigned tenths(uint64_t num, uint64_t den) { return den ? (unsigned)((num * 10 + den / 2) / den) : 0; }
 
 void xhw_perf_frame(uint32_t draws, uint32_t verts) {
-    static const char* const k_names[XHW_PERF_N] = { "logic", "dlist", "draw", "tex", "efb", "gpu", "vsync" };
+    static const char* const k_names[XHW_PERF_N] = { "sim", "render", "dlist", "draw", "tex", "efb", "gpu", "vsync" };
     uint64_t now = rdtsc(), ns = xhw_time_ns(), span, span_ns, audio, per_ms;
     char line[320];
     int i, n;
@@ -77,12 +85,14 @@ void xhw_perf_frame(uint32_t draws, uint32_t verts) {
             unsigned t = tenths(s_acc[i], per_ms * s_frames);
             n += snprintf(line + n, sizeof line - (size_t)n, " %s %u.%u", k_names[i], t / 10, t % 10);
         }
-        snprintf(line + n, sizeof line - (size_t)n, " | audio %u%% | %u draws %u verts per frame | cpu %u MHz",
+        unsigned tk = tenths(s_ticks, s_renders);
+        snprintf(line + n, sizeof line - (size_t)n,
+                 " | %u.%u ticks per render | audio %u%% | %u draws %u verts per frame | cpu %u MHz", tk / 10, tk % 10,
                  (unsigned)(audio * 100 / span), s_draws / s_frames, s_verts / s_frames, (unsigned)(per_ms / 1000));
     }
     xhw_log(line);
     for (i = 0; i < XHW_PERF_N; i++) s_acc[i] = 0;
-    s_frames = s_draws = s_verts = 0;
+    s_frames = s_draws = s_verts = s_ticks = s_renders = 0;
     s_t0 = now;
     s_ns0 = ns;
 }

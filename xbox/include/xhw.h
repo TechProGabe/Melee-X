@@ -34,7 +34,8 @@ void xhw_yield(void);
  * bucket and returns the one to restore with leave, so nested sections are
  * charged exclusively. Everything not in a section is game logic. */
 enum {
-    XHW_PERF_LOGIC,   /* the game itself (and anything preempting it) */
+    XHW_PERF_LOGIC,   /* the game's simulation ticks (and anything preempting it) */
+    XHW_PERF_RENDER,  /* the game's render pass: HSD walking the scene, GX state */
     XHW_PERF_DLIST,   /* GX display lists -> canonical vertices */
     XHW_PERF_DRAW,    /* back end: state diff, pushbuffer */
     XHW_PERF_TEX,     /* texture conversion and upload */
@@ -48,6 +49,7 @@ void xhw_perf_leave(int prev);
 uint64_t xhw_perf_now(void);                   /* rdtsc, for xhw_perf_audio */
 void xhw_perf_audio(uint64_t ticks);           /* mixer thread: time spent mixing */
 void xhw_perf_frame(uint32_t draws, uint32_t verts);   /* once per presented frame */
+void xhw_perf_ticks(uint32_t n);               /* simulation ticks run before a render pass */
 
 /* ---- threads and locks ---- */
 typedef struct xhw_mutex xhw_mutex;

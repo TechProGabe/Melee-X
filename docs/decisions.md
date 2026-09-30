@@ -73,6 +73,22 @@ which implies `-fno-builtin`: a `memcpy(v, out, 12)` was a real call and a
 `__builtin_*`, so constant sizes are inlined and the rest still calls
 `xhw_string.c`. On the console those calls were ~18% of a match frame.
 
+**Fewer, bigger draws** (`gx_vtx.c`, `docs/renderer.md`). A display list's
+batches are merged into one draw (strips stitched with degenerate
+triangles), finished immediate-mode batches wait to be continued by the next
+one with the same state, quads and fans go out as triangle lists, and array
+offsets stay fixed so back-to-back draws send nothing in between. In xemu on
+macOS every draw is a geometry-shader compute pass and a render pass of its
+own; a 4-CPU match went from ~2950 to ~800 draws and from 4 to ~12 fps
+there. On the console it saves the per-draw state work and pushbuffer
+traffic. The cost: 1.5x vertices for quads, 2-3 extra per stitched strip.
+
+**Dashboard icon.** `tools/xbox/xbe_title_image.py` (from OpenCrossing-Xbox)
+adds a `$$XTIMAGE` section (128x128 DXT1 XPR0) after the link, and writes
+`default.tbn` for XBMC-style dashboards, from `xbox/assets/logo.png`, which
+`tools/xbox/make_logo.py` draws (original art). Runs on the host after the
+Docker build when Pillow is there.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 
@@ -106,6 +122,9 @@ marked `PORT:`:
   a console that freezes during a transition leaves the scene in `boot.log`.
 - `src/melee/gm/gmvs.c`: `[GAME]` log lines where a match ends (TIME!,
   GAME!, no contest) and where the end banner hands over to the results.
+- `src/melee/gm/gmscene.c` (`gm_801A4D34`): the render pass is bracketed
+  with `xsdk_perf_render_begin/end` (`xbox/src/sdk/vi.c`), so `[PERF]`
+  separates simulation ticks from rendering and counts ticks per render.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after

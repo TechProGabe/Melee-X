@@ -53,6 +53,39 @@ changed it is fetched on every call), then copies the template into the
 vertex ring in one sequential write. Lists that don't fit the budget are
 decoded every call (volatile). `[DLC]` lines report both.
 
+Draws are merged where the state allows, because a draw costs about the
+same whatever its size. In xemu on macOS it costs most: xemu's GL renderer
+sends every non-point draw through a geometry shader, and macOS's GL runs a
+geometry shader as a compute pass that ends the render pass, so each draw
+was a render pass of its own (~75 µs of emulation, ~90% of a match frame).
+
+- The batches of one display list share its material, so consecutive ones
+  with the same vertex layout and primitive become one draw when the list is
+  decoded: triangle lists run on, strips are stitched with degenerate
+  triangles (the last vertex again, then the next strip's first once or
+  twice so it starts on an even vertex and keeps its winding). Dynamic lists
+  merge the same way when their template is copied out.
+- Immediate-mode vertices (`GXBegin`..`GXEnd`) are built in cached memory and
+  copied to the write-combined ring when drawn. A batch of a list primitive
+  that got all its vertices isn't drawn at `GXEnd`: it waits, and the next
+  `GXBegin` with the same primitive and layout continues it. Anything that
+  changes state flushes it first: every setter that changes a value,
+  `GXLoadTexObj`/`GXLoadTlut` when the binding changes, display-list calls,
+  copies and draw-done. Vertex descriptor, format and array setters only
+  close an open batch: a finished one already holds its vertices.
+- Quads and fans are sent as triangle lists (`out_prim` in `gx_vtx.c`), and
+  the EFB-copy quad as a strip.
+- Array offsets point at the start of the vertex ring or the vertex pool,
+  and each draw starts at its first vertex's index from there (both place
+  draws at a multiple of their stride). Consecutive draws of one layout with
+  nothing else changed then have no methods between them, which xemu joins
+  into one draw and which saves the console the offset writes.
+
+`[NV2A]` lines count draws by primitive and by what changed before each
+(`changed nothing`, `only a position matrix`, then per dirty group); the
+`[DLC]` line counts joined batches and names the calls that drew a waiting
+immediate batch.
+
 `xgx.h` is compiled by both triples (game and nxdk), so its structs hold only
 32-bit scalars, floats and byte arrays: no bit-fields, no 64-bit members.
 

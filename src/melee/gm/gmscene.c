@@ -375,6 +375,12 @@ static bool scene_end_gate(struct gm_80479D58_t* st)
 }
 #endif
 
+#ifdef TARGET_XBOX
+/* PORT: the render pass for [PERF] (xbox/src/sdk/vi.c) */
+void xsdk_perf_render_begin(int ticks);
+void xsdk_perf_render_end(void);
+#endif
+
 void gm_801A4D34(void (*on_frame)(void), GameSceneInfo* info)
 {
     int pad_queue_count;
@@ -458,6 +464,10 @@ void gm_801A4D34(void (*on_frame)(void), GameSceneInfo* info)
 #ifdef TARGET_PC
         pc_net_render_audit(false);
 #endif
+#ifdef TARGET_XBOX
+        /* PORT: [PERF] splits simulation from rendering (xbox/src/sdk/vi.c) */
+        xsdk_perf_render_begin(pad_queue_count);
+#endif
         lb_800195D0();
         GXInvalidateVtxCache();
         GXInvalidateTexAll();
@@ -466,6 +476,9 @@ void gm_801A4D34(void (*on_frame)(void), GameSceneInfo* info)
         HSD_Init_803755A8();
         HSD_PerfSetDrawTime();
         HSD_VICopyXFBAsync(HSD_RP_SCREEN);
+#ifdef TARGET_XBOX
+        xsdk_perf_render_end();   /* PORT: see xsdk_perf_render_begin above */
+#endif
 #ifdef TARGET_PC
         pc_net_render_audit(true);
 #endif

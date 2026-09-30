@@ -20,3 +20,10 @@ docker run --rm $tty -v "$root":/src -w /src \
       -lclang-cpp $(llvm-config --libs --system-libs) -o "$DISC_LOWER"
   fi
   xbox/build.sh'
+# Dashboard icon: a $$XTIMAGE section in the XBE plus default.tbn next to it,
+# from xbox/assets/logo.png (tools/xbox/make_logo.py). Needs host python3 +
+# Pillow, which the image doesn't have; skipped without them or with XBOX_NO_ICON.
+xbe="$root/build-xbox/xbe/default.xbe"
+if [ -z "${XBOX_NO_ICON:-}" ] && [ -f "$xbe" ] && python3 -c "import PIL" 2>/dev/null; then
+  python3 "$root/tools/xbox/xbe_title_image.py" "$xbe" "$root/xbox/assets/logo.png" "$root/build-xbox/xbe/default.tbn"
+fi

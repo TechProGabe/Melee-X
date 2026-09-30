@@ -501,6 +501,15 @@ static uint32_t magenta_tex(void) {
 #endif
 }
 
+/* the same object again, already looked up and validated this frame:
+ * nothing changes (s_bound is cleared whenever an entry is dropped) */
+static int bind_unchanged(uint32_t map, const TexObj* o) {
+    const MapBind* b = &s_bound[map];
+    const TlutObj* tl = o->is_ci && o->tlut < TLUT_SLOTS ? &s_tlut[o->tlut] : NULL;
+    return b->frame == s_frame && b->tex && g_xgx.map[map].tex == b->tex && b->tlut_data == (tl ? tl->data : NULL) &&
+           memcmp(&b->obj, o, sizeof *o) == 0;
+}
+
 void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
     const TexObj* o = (const TexObj*)obj;
     const TlutObj* tl = NULL;
@@ -518,10 +527,7 @@ void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
         return;
     }
     if (o->is_ci && o->tlut < TLUT_SLOTS) tl = &s_tlut[o->tlut];
-    /* the same object again, already looked up and validated this frame:
-     * nothing changes (s_bound is cleared whenever an entry is dropped) */
-    if (b->frame == s_frame && b->tex && m->tex == b->tex && b->tlut_data == (tl ? tl->data : NULL) &&
-        memcmp(&b->obj, o, sizeof *o) == 0) {
+    if (bind_unchanged(map, o)) {
         s_st_fast++;
         return;
     }
@@ -741,6 +747,12 @@ GXTexWrapMode GXGetTexObjWrapT(const GXTexObj* obj) { return (GXTexWrapMode)((co
 GXBool GXGetTexObjMipMap(const GXTexObj* obj) { return ((const TexObj*)obj)->mipmap; }
 
 void GXLoadTexObj(GXTexObj* obj, GXTexMapID id) {
+    const TexObj* o = (const TexObj*)obj;
+    /* unchanged: no flush, so a waiting batch can still be continued */
+    if (id < XGX_MAX_MAPS && o && o->magic == TEXOBJ_MAGIC && o->data && o->w && o->h && bind_unchanged(id, o)) {
+        s_st_fast++;
+        return;
+    }
     gx_vtx_flush();
     gx_tex_bind(id, obj);
 }
@@ -754,6 +766,7 @@ void GXInitTlutObj(GXTlutObj* obj, const void* data, GXTlutFmt fmt, u16 entries)
 }
 
 void GXLoadTlut(const GXTlutObj* obj, u32 idx) {
+    if (idx < TLUT_SLOTS && memcmp(&s_tlut[idx], obj, sizeof s_tlut[idx]) == 0) return;
     gx_vtx_flush();
     if (idx < TLUT_SLOTS) s_tlut[idx] = *(const TlutObj*)obj;
 }

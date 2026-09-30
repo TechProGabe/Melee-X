@@ -36,7 +36,10 @@
 #define XHW_PROF_SECS 20
 #endif
 #define BUCKET_SHIFT 6
-#define TOP 48
+#ifndef XHW_PROF_TOP
+#define XHW_PROF_TOP 192   /* buckets and call sites per report */
+#endif
+#define TOP XHW_PROF_TOP
 
 static PKTHREAD s_game;
 

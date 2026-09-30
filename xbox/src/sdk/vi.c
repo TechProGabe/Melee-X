@@ -94,3 +94,17 @@ void xsdk_frame_boundary(void) {
 }
 
 void VIWaitForRetrace(void) { xsdk_frame_boundary(); }
+
+/* gmscene.c's frame loop (PORT: there) brackets its render pass with these,
+ * so [PERF] tells simulation from rendering */
+static int s_render_prev = -1;
+
+void xsdk_perf_render_begin(int ticks) {
+    xhw_perf_ticks((uint32_t)ticks);
+    s_render_prev = xhw_perf_enter(XHW_PERF_RENDER);
+}
+
+void xsdk_perf_render_end(void) {
+    if (s_render_prev >= 0) xhw_perf_leave(s_render_prev);
+    s_render_prev = -1;
+}

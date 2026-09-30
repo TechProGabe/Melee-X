@@ -43,6 +43,7 @@ typedef struct {
 /* ---- the batch being built ---- */
 static struct {
     int open;
+    int pending;         /* finished, not drawn: the next batch may join it */
     uint32_t prim;
     int vtxfmt;
     uint32_t expected, done;
@@ -205,31 +206,164 @@ static void fetch_indexed(const Slot* s, uint32_t idx, uint8_t* v) {
     store(s, base + idx * g_gx.array_stride[a], !g_gx.array_le[a], v);
 }
 
-/* ---- batches ---- */
+/* ---- primitives ----
+ * Quads and fans go to the back end as triangle lists. xemu on macOS draws
+ * NV2A quads through a geometry shader, which that GL runs as a compute pass
+ * ahead of the draw, ending the render pass: each quad or fan draw became a
+ * render pass of its own. */
+static uint32_t out_prim(uint32_t prim) { return prim == XGX_QUADS || prim == XGX_TRIFAN ? XGX_TRIANGLES : prim; }
+
+static uint32_t out_count(uint32_t prim, uint32_t n) {
+    if (prim == XGX_QUADS) return n / 4 * 6;
+    if (prim == XGX_TRIFAN) return n >= 3 ? (n - 2) * 3 : 0;
+    return n;
+}
+
+/* n vertices of `prim` at src, stride s, as out_prim(prim) at dst; returns
+ * the bytes written */
+static uint32_t copy_prim(uint8_t* dst, const uint8_t* src, uint32_t prim, uint32_t n, uint32_t s) {
+    uint8_t* d = dst;
+    uint32_t i;
+    if (prim == XGX_QUADS) {
+        for (i = 0; i + 4 <= n; i += 4, src += 4 * s) {   /* 0 1 2, 0 2 3 */
+            memcpy(d, src, 3 * s);
+            memcpy(d + 3 * s, src, s);
+            memcpy(d + 4 * s, src + 2 * s, 2 * s);
+            d += 6 * s;
+        }
+    } else if (prim == XGX_TRIFAN) {
+        for (i = 1; i + 1 < n; i++) {                   /* 0 i i+1 */
+            memcpy(d, src, s);
+            memcpy(d + s, src + i * s, 2 * s);
+            d += 3 * s;
+        }
+    } else {
+        memcpy(d, src, n * s);
+        d += n * s;
+    }
+    return (uint32_t)(d - dst);
+}
+
+/* ---- batches ----
+ * Immediate-mode vertices are built in cached memory (the vertex ring is
+ * write-combined, and they arrive an attribute at a time) and copied to the
+ * ring when drawn. A finished batch of a list primitive (quads, triangles,
+ * lines, points) isn't drawn at GXEnd: it waits, and a next GXBegin of the
+ * same primitive and vertex layout with no state change in between (every
+ * state call that changes something flushes first) continues it. HSD's
+ * particles, text and HUD pieces come as runs of small batches; the cost of
+ * a draw hardly depends on its size, least of all in xemu. */
+#define STAGE_MAX (2u * 1024 * 1024)
+static uint8_t* s_stage;
+static uint32_t s_stage_cap;
+static uint32_t s_st_imm_batches, s_st_imm_joined;
+
+/* room for `bytes` in the staging buffer (its contents kept); 0: too big */
+static int stage_reserve(uint32_t bytes) {
+    uint32_t cap = s_stage_cap ? s_stage_cap : 64 * 1024;
+    uint8_t* p;
+    if (bytes <= s_stage_cap) return 1;
+    if (bytes > STAGE_MAX) return 0;
+    while (cap < bytes) cap *= 2;
+    if (cap > STAGE_MAX) cap = STAGE_MAX;
+    if (!(p = (uint8_t*)realloc(s_stage, cap))) return 0;
+    s_stage = p;
+    s_stage_cap = cap;
+    return 1;
+}
+
+static int list_prim(uint32_t prim, uint32_t n) {
+    switch (prim) {
+        case XGX_QUADS: return n % 4 == 0;
+        case XGX_TRIANGLES: return n % 3 == 0;
+        case XGX_LINES: return n % 2 == 0;
+        case XGX_POINTS: return 1;
+        default: return 0;
+    }
+}
+
+static void draw_batch(void) {
+    uint32_t s = B.plan.layout.stride, n = out_count(B.prim, B.done);
+    uint8_t* v;
+    B.pending = 0;
+    if (!n || !(v = (uint8_t*)xgx_vtx_alloc(n, s))) return;
+    copy_prim(v, B.base, B.prim, B.done, s);
+    xgx_draw(out_prim(B.prim), n, &B.plan.layout, &g_xgx);
+    g_xgx.dirty = 0;
+}
+
 static void begin_batch(uint32_t prim, int vtxfmt, uint32_t n) {
-    make_plan(&B.plan, vtxfmt);
+    Plan plan;
+    uint32_t s;
+    make_plan(&plan, vtxfmt);
+    s = plan.layout.stride;
+    s_st_imm_batches++;
+    if (B.pending) {
+        if (prim == B.prim && n && memcmp(&plan.layout, &B.plan.layout, sizeof plan.layout) == 0 &&
+            stage_reserve((B.done + n) * s)) {
+            B.base = s_stage;
+            B.plan = plan;   /* same layout; the slots may read other formats */
+            B.vtxfmt = vtxfmt;
+            B.expected = B.done + n;
+            B.cursor = 0;
+            B.cur = B.base + B.done * s;
+            B.open = 1;
+            B.pending = 0;
+            B.npos_carry = 0;
+            memset(B.cur, 0, s);
+            s_st_imm_joined++;
+            return;
+        }
+        draw_batch();
+    }
+    B.plan = plan;
     B.prim = prim;
     B.vtxfmt = vtxfmt;
     B.expected = n;
     B.done = 0;
     B.cursor = 0;
-    B.base = (uint8_t*)xgx_vtx_alloc(n, B.plan.layout.stride);
+    B.base = n && stage_reserve(n * s) ? s_stage : NULL;
     B.cur = B.base;
     B.open = 1;
     B.npos_carry = 0;
-    if (B.base && n) memset(B.base, 0, B.plan.layout.stride);
+    if (B.base) memset(B.base, 0, s);
 }
 
 static void end_batch(void) {
-    uint32_t count = B.done;
     B.open = 0;
-    if (!B.base || count == 0) return;
-    xgx_draw(B.prim, count, &B.plan.layout, &g_xgx);
-    g_xgx.dirty = 0;
+    if (!B.base || B.done == 0) return;
+    if (B.done == B.expected && list_prim(B.prim, B.done)) B.pending = 1;
+    else draw_batch();
 }
 
-void gx_vtx_flush(void) {
+void gx_vtx_close(void) {
     if (B.open) end_batch();
+}
+
+/* who drew a waiting batch (the state call that kept the next one from
+ * joining it), for the [DLC] line */
+#define FLUSH_WHO 16
+static uint32_t s_flush_who[FLUSH_WHO], s_flush_n[FLUSH_WHO];
+
+static void count_flush(uint32_t who) {
+    int i, low = 0;
+    for (i = 0; i < FLUSH_WHO; i++) {
+        if (s_flush_who[i] == who) {
+            s_flush_n[i]++;
+            return;
+        }
+        if (s_flush_n[i] < s_flush_n[low]) low = i;
+    }
+    s_flush_who[low] = who;
+    s_flush_n[low] = 1;
+}
+
+__attribute__((noinline)) void gx_vtx_flush(void) {
+    if (B.open) end_batch();
+    if (B.pending) {
+        count_flush((uint32_t)(uintptr_t)__builtin_return_address(0));
+        draw_batch();
+    }
 }
 
 void GXBegin(GXPrimitive type, GXVtxFmt vtxfmt, u16 nverts) {
@@ -414,7 +548,7 @@ void GXParam1u32(const u32 x) { (void)x; }
 
 /* ---- vertex descriptor / formats / arrays ---- */
 void GXSetVtxDesc(GXAttr attr, GXAttrType type) {
-    gx_vtx_flush();
+    gx_vtx_close();   /* a finished batch has its vertices already */
     if (attr < GX_VA_MAX_ATTR) g_gx.desc[attr] = (uint8_t)type;
 }
 
@@ -423,12 +557,12 @@ void GXSetVtxDescv(GXVtxDescList* list) {
 }
 
 void GXClearVtxDesc(void) {
-    gx_vtx_flush();
+    gx_vtx_close();   /* a finished batch has its vertices already */
     memset(g_gx.desc, GX_NONE, sizeof g_gx.desc);
 }
 
 void GXSetVtxAttrFmt(GXVtxFmt fmt, GXAttr attr, GXCompCnt cnt, GXCompType type, u8 frac) {
-    gx_vtx_flush();
+    gx_vtx_close();   /* a finished batch has its vertices already */
     if (fmt >= 8 || attr >= GX_VA_MAX_ATTR) return;
     g_gx.vat[fmt][attr].cnt = (uint8_t)cnt;
     g_gx.vat[fmt][attr].type = (uint8_t)type;
@@ -437,7 +571,7 @@ void GXSetVtxAttrFmt(GXVtxFmt fmt, GXAttr attr, GXCompCnt cnt, GXCompType type, 
 
 void GXSetArray(GXAttr attr, const void* data, u32 size, u8 stride, bool le) {
     (void)size;
-    gx_vtx_flush();
+    gx_vtx_close();
     if (attr >= GX_VA_MAX_ATTR) return;
     g_gx.array[attr] = (const uint8_t*)data;
     g_gx.array_stride[attr] = stride;
@@ -594,12 +728,14 @@ typedef struct {
 
 typedef struct {
     DynBatch* batch;
+    DlBatch* view;                 /* the batches as DlBatch, then the draws they merge into */
+    uint8_t gfirst[DLC_MAX_BATCH]; /* each draw's first batch */
     uint8_t* tmpl;
     uint16_t* idx;
     uint32_t bytes;                /* charged to the budget */
     uint32_t sig, dl_hash;
     DynArray arr[DLC_MAX_RANGE];
-    uint8_t narr, nbatch;
+    uint8_t narr, nbatch, ndraw;
 } DynList;
 
 typedef struct {
@@ -624,6 +760,7 @@ static int s_dlc_ready;
 static uint32_t s_dyn_bytes;
 static uint32_t s_st_dl_hits, s_st_dl_builds, s_st_dl_direct, s_st_dyn_calls, s_st_dyn_fetch, s_st_dyn_builds;
 static uint32_t s_st_chg_sig, s_st_chg_data;   /* why cached lists were rebuilt: formats/arrays, or contents */
+static uint32_t s_st_dl_joined;               /* batches drawn as part of the one before */
 
 /* FNV-1a, 32-bit words (the tail a byte at a time) */
 static uint32_t fnv(uint32_t h, const void* p, uint32_t n) {
@@ -684,6 +821,7 @@ static void dyn_free(DlEntry* e) {
     DynList* d = e->dyn;
     if (!d) return;
     s_dyn_bytes -= d->bytes;
+    free(d->view);
     free(d->batch);
     free(d->tmpl);
     free(d->idx);
@@ -804,27 +942,111 @@ static void dl_decode_all(const uint8_t* dl, uint32_t nbytes, const DlBatch* bat
     }
 }
 
+/* Batches of one list share its material, so consecutive ones with the
+ * same layout and primitive are drawn as one: lists and quads simply run on,
+ * strips are stitched with degenerate triangles. Each draw costs the same
+ * whatever its size (xemu most of all), and HSD's lists hold a few strips
+ * each. */
+static int joinable(const DlBatch* a, uint32_t prim, const XgxLayout* layout) {
+    return a->prim == prim &&
+           (prim == XGX_TRISTRIP || prim == XGX_TRIANGLES || prim == XGX_LINES || prim == XGX_POINTS) &&
+           memcmp(&a->layout, layout, sizeof *layout) == 0;
+}
+
+/* vertices a strip adds when joined after `have`: the last one again, then
+ * its own first once or twice so it starts on an even vertex (its winding) */
+static uint32_t join_extra(uint32_t prim, uint32_t have) { return prim == XGX_TRISTRIP ? 2 + (have & 1) : 0; }
+
+/* groups the batches into draws (quads and fans as triangles, see
+ * out_prim); first[g]: the group's first batch */
+static int merge_plan(const DlBatch* in, int nb, DlBatch* out, uint8_t* first, uint32_t* total) {
+    int i, ng = 0;
+    for (i = 0; i < nb; i++) {
+        uint32_t prim = out_prim(in[i].prim), n = out_count(in[i].prim, in[i].count);
+        if (!n) continue;
+        if (ng && joinable(&out[ng - 1], prim, &in[i].layout)) {
+            out[ng - 1].count += join_extra(prim, out[ng - 1].count) + n;
+            continue;
+        }
+        out[ng] = in[i];
+        out[ng].prim = prim;
+        out[ng].count = n;
+        first[ng++] = (uint8_t)i;
+    }
+    *total = 0;
+    for (i = 0; i < ng; i++) {
+        out[i].offset = *total;
+        *total += (out[i].count * out[i].layout.stride + 15) & ~15u;
+    }
+    return ng;
+}
+
+/* the vertices of batches [from, end) as one draw at dst */
+static void merge_copy_group(const DlBatch* in, int from, int end, const uint8_t* src, uint8_t* dst) {
+    uint32_t s = in[from].layout.stride, have = 0, k;
+    int i;
+    for (i = from; i < end; i++) {
+        const uint8_t* v = src + in[i].offset;
+        uint32_t n = out_count(in[i].prim, in[i].count);
+        if (!n) continue;
+        if (have && in[i].prim == XGX_TRISTRIP) {
+            uint32_t extra = join_extra(XGX_TRISTRIP, have);
+            memcpy(dst, dst - s, s);
+            dst += s;
+            for (k = 1; k < extra; k++, dst += s) memcpy(dst, v, s);
+            have += extra;
+        }
+        dst += copy_prim(dst, v, in[i].prim, in[i].count, s);
+        have += n;
+    }
+}
+
+static void merge_copy(const DlBatch* in, int nb, const uint8_t* src, const DlBatch* out, const uint8_t* first, int ng,
+                       uint8_t* dst) {
+    int g;
+    for (g = 0; g < ng; g++) merge_copy_group(in, first[g], g + 1 < ng ? first[g + 1] : nb, src, dst + out[g].offset);
+}
+
 /* decode the whole list into one buffer; 0 when it can't be cached */
 static int dlc_build(DlEntry* e, uint32_t frame) {
     static IdxRange r;
-    DlBatch batch[DLC_MAX_BATCH];
-    uint32_t total, a;
+    DlBatch batch[DLC_MAX_BATCH], merged[DLC_MAX_BATCH];
+    uint8_t first[DLC_MAX_BATCH];
+    uint32_t total, mtotal, a;
     uint8_t fmts;
-    int nb = dl_scan(e->dl, e->nbytes, batch, &total, &fmts);
+    uint8_t* tmp;
+    int nb = dl_scan(e->dl, e->nbytes, batch, &total, &fmts), ng, i;
     if (!nb) return 0;
-    e->mem = (uint8_t*)xgx_vbuf_alloc(total);
-    while (!e->mem && dlc_evict_one(frame, e)) e->mem = (uint8_t*)xgx_vbuf_alloc(total);
-    if (!e->mem) return 0;
-    e->batch = (DlBatch*)malloc(sizeof(DlBatch) * (size_t)nb);
+    /* decoded in cached memory, then copied on in order: the vertex pool is
+     * write-combined */
+    tmp = (uint8_t*)malloc(total);
+    if (!tmp) return 0;
+    range_reset(&r);
+    dl_decode_all(e->dl, e->nbytes, batch, nb, tmp, &r, NULL, NULL);
+    ng = merge_plan(batch, nb, merged, first, &mtotal);
+    for (i = 0; i < ng; i++) mtotal += merged[i].layout.stride;   /* room to align each draw, below */
+    e->mem = mtotal ? (uint8_t*)xgx_vbuf_alloc(mtotal) : NULL;
+    while (mtotal && !e->mem && dlc_evict_one(frame, e)) e->mem = (uint8_t*)xgx_vbuf_alloc(mtotal);
+    e->batch = e->mem ? (DlBatch*)malloc(sizeof(DlBatch) * (size_t)ng) : NULL;
     if (!e->batch) {
+        free(tmp);
         dlc_release(e);
         return 0;
     }
-    range_reset(&r);
-    dl_decode_all(e->dl, e->nbytes, batch, nb, e->mem, &r, NULL, NULL);
-    memcpy(e->batch, batch, sizeof(DlBatch) * (size_t)nb);
-    e->nbatch = (uint16_t)nb;
-    e->mem_bytes = total;
+    {   /* each draw at a multiple of its stride from the pool's start (xgx_draw) */
+        uint32_t rel = xgx_vbuf_offset(e->mem), at = 0;
+        for (i = 0; i < ng; i++) {
+            uint32_t st = merged[i].layout.stride;
+            merged[i].offset = (rel + at + st - 1) / st * st - rel;
+            at = merged[i].offset + merged[i].count * st;
+        }
+    }
+    merge_copy(batch, nb, tmp, merged, first, ng, e->mem);
+    free(tmp);
+    memcpy(e->batch, merged, sizeof(DlBatch) * (size_t)ng);
+    s_st_dl_joined += (uint32_t)(nb - ng);
+    e->nbatch = (uint16_t)ng;
+    e->mem_bytes = mtotal;
     e->fmts = fmts;
     e->nrange = 0;
     for (a = 0; a < GX_VA_MAX_ATTR; a++)
@@ -894,7 +1116,7 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
             return 0;
         }
     }
-    bytes = total + nidx * 2 + (uint32_t)nb * sizeof(DynBatch);
+    bytes = total + nidx * 2 + (uint32_t)nb * (sizeof(DynBatch) + 2 * sizeof(DlBatch));
     if (s_dyn_bytes + bytes > DLC_DYN_BUDGET) {
         free(d->batch);
         free(d);
@@ -913,6 +1135,17 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
     dl_decode_all(e->dl, e->nbytes, batch, nb, d->tmpl, &r, d->idx, idx_first);
     d->nbatch = (uint8_t)nb;
     d->bytes = bytes;
+    d->view = (DlBatch*)malloc(sizeof(DlBatch) * (size_t)nb * 2);
+    if (d->view) {
+        uint32_t mtotal;
+        for (i = 0; i < nb; i++) {
+            d->view[i].prim = d->batch[i].prim;
+            d->view[i].count = d->batch[i].count;
+            d->view[i].offset = d->batch[i].offset;
+            d->view[i].layout = d->batch[i].plan.layout;
+        }
+        d->ndraw = (uint8_t)merge_plan(d->view, nb, d->view + nb, d->gfirst, &mtotal);
+    }
     s_dyn_bytes += bytes;
     for (a = 0; a < GX_VA_MAX_ATTR; a++)
         if (r.hi[a] > r.lo[a] && g_gx.array[a] && d->narr < DLC_MAX_RANGE) {
@@ -975,7 +1208,15 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
         x->base = base;
         dyn_fetch(d, x->attr, base);
     }
-    for (i = 0; i < d->nbatch; i++) {
+    for (i = 0; d->view && i < d->ndraw; i++) {
+        const DlBatch* b = &d->view[d->nbatch + i];
+        uint8_t* v = (uint8_t*)xgx_vtx_alloc(b->count, b->layout.stride);
+        if (!v) break;   /* too big for the ring as one: batch by batch below */
+        merge_copy_group(d->view, d->gfirst[i], i + 1 < d->ndraw ? d->gfirst[i + 1] : d->nbatch, d->tmpl, v);
+        xgx_draw(b->prim, b->count, &b->layout, &g_xgx);
+        g_xgx.dirty = 0;
+    }
+    for (i = d->view && i < d->ndraw ? d->gfirst[i] : d->view ? d->nbatch : 0; i < d->nbatch; i++) {
         const DynBatch* b = &d->batch[i];
         uint32_t bytes = b->count * b->plan.layout.stride;
         uint8_t* v;
@@ -1047,13 +1288,23 @@ void gx_vtx_frame_end(void) {
             dyn += s_dlc[i].dl && s_dlc[i].dyn;
         }
         xhw_logf("[DLC] %d of %d lists (%d dynamic, %u KB; %d volatile), vertex pool %u of %u KB free | per %u: %u "
-                 "cached calls, %u builds (%u after a format/array change, %u after a content change), %u dynamic "
-                 "calls (%u array fetches, %u builds), %u decoded",
+                 "cached calls, %u builds (%u after a format/array change, %u after a content change; %u batches "
+                 "joined), %u dynamic calls (%u array fetches, %u builds), %u decoded | immediate: %u batches, %u "
+                 "joined",
                  s_dlc_n, DLC_MAX, dyn, s_dyn_bytes / 1024, vol, xgx_vbuf_pool_free_kb(), xgx_vbuf_pool_kb(),
-                 XGX_STATS_EVERY, s_st_dl_hits, s_st_dl_builds, s_st_chg_sig, s_st_chg_data, s_st_dyn_calls,
-                 s_st_dyn_fetch, s_st_dyn_builds, s_st_dl_direct);
+                 XGX_STATS_EVERY, s_st_dl_hits, s_st_dl_builds, s_st_chg_sig, s_st_chg_data, s_st_dl_joined,
+                 s_st_dyn_calls, s_st_dyn_fetch, s_st_dyn_builds, s_st_dl_direct, s_st_imm_batches, s_st_imm_joined);
         s_st_dl_hits = s_st_dl_builds = s_st_dl_direct = s_st_dyn_calls = s_st_dyn_fetch = s_st_dyn_builds = 0;
-        s_st_chg_sig = s_st_chg_data = 0;
+        s_st_chg_sig = s_st_chg_data = s_st_dl_joined = s_st_imm_batches = s_st_imm_joined = 0;
+        {
+            char line[256];
+            int n = 0;
+            for (i = 0; i < FLUSH_WHO; i++)
+                if (s_flush_n[i]) n += snprintf(line + n, sizeof line - (size_t)n, " %08x:%u", s_flush_who[i], s_flush_n[i]);
+            xhw_logf("[DLC] waiting batches drawn from:%s", n ? line : " -");
+            memset(s_flush_n, 0, sizeof s_flush_n);
+            memset(s_flush_who, 0, sizeof s_flush_who);
+        }
     }
 }
 
