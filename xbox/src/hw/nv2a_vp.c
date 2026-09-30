@@ -151,6 +151,7 @@ static void arl(Gen* g, Src a) { const Src* s[3] = { &a, NULL, NULL }; Dst d = {
 #define MAD(d, a, b, c) mad(g, d, a, b, c)
 #define RCP(d, c) ilu(g, ILU_RCP, d, c)
 #define RSQ(d, c) ilu(g, ILU_RSQ, d, c)
+#define EXPP(d, c) ilu(g, ILU_EXP, d, c)   /* .z = 2^c (partial precision) */
 
 #ifdef VP_HOST_TEST
 /* tools/xbox/test_vp_encoder.py: the same instructions as nv2a-vsh source */
@@ -172,6 +173,8 @@ void vp_test_program(VpProgram* p) {
     DP3(O(O_T0 + 1, MX), V(10), C(111));
     MOV(O(O_T0 + 2, MZ | MW), sw(C(4), SWZ(0, 0, 0, 1)));
     RCP(O(O_FOG, MX), sw(R(11), YYYY));
+    EXPP(T(3, MZ), sw(R(3), YYYY));
+    MAD(O(O_FOG, MX), sw(R(3), ZZZZ), sw(C(136), ZZZZ), sw(C(136), YYYY));
 }
 #endif
 
@@ -340,6 +343,25 @@ void vp_generate(const VpKey* k, VpProgram* out) {
     RCP(T(RS, MX), sw(R(RCLIP), WWWW));
     MUL(O(O_POS, MXYZ), R(RCLIP), sw(R(RS), XXXX));
     MOV(O(O_POS, MW), R(RCLIP));
+
+    if (k->fog) {
+        /* GX fog from this vertex's depth (nv2a_fog.h): y = num.P / den.P,
+         * then the curve; the fog unit takes oFog.x as the factor */
+        DP4(T(RS, MY), R(RPOS), C(VPC_FOG));
+        DP4(T(RS, MZ), R(RPOS), C(VPC_FOG + 1));
+        RCP(T(RS, MZ), sw(R(RS), ZZZZ));
+        if (k->fog == VPF_LIN) {
+            MUL(O(O_FOG, MX), sw(R(RS), YYYY), sw(R(RS), ZZZZ));
+        } else {
+            MUL(T(RS, MY), sw(R(RS), YYYY), sw(R(RS), ZZZZ));
+            MAX(T(RS, MY), sw(R(RS), YYYY), K0());
+            MIN(T(RS, MY), sw(R(RS), YYYY), K1());
+            if (k->fog == VPF_EXP2) MUL(T(RS, MY), sw(R(RS), YYYY), sw(R(RS), YYYY));
+            MUL(T(RS, MY), sw(R(RS), YYYY), sw(C(VPC_FOG + 2), XXXX));
+            EXPP(T(RS, MZ), sw(R(RS), YYYY));
+            MAD(O(O_FOG, MX), sw(R(RS), ZZZZ), sw(C(VPC_FOG + 2), ZZZZ), sw(C(VPC_FOG + 2), YYYY));
+        }
+    }
 
     if (needs_nrm) {
         DP3(T(RNRM, MX), V(VPI_NRM), CA(VPC_NRM));

@@ -31,6 +31,8 @@ sge r5.w, r5.z, c4.x
 dp3 oT1.x, v10, c111
 mov oT2.zw, c4.xxxy
 rcp oFog.x, r11.y
+expp r3.z, r3.y
+mad oFog.x, r3.z, c136.z, c136.y
 """
 
 HARNESS = r"""

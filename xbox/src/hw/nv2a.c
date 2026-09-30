@@ -29,6 +29,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "nv2a_fog.h"
 #include "nv2a_rc.h"
 #include "nv2a_vp.h"
 #include "xgx.h"
@@ -889,6 +890,19 @@ static void set_row(int r, float x, float y, float z, float w) {
     s_vc[r][3] = w;
 }
 
+/* GX fog (nv2a_fog.h): what the fog rows, the vertex program's key and the
+ * final combiner were built from. The rows depend on the projection too. */
+static FogSetup s_fog;
+
+static void build_fog(const XgxState* st) {
+    fog_setup(st->fog_type, st->fog_start, st->fog_end, st->fog_near, st->fog_far, s_vc[VPC_PROJ + 2],
+              s_vc[VPC_PROJ + 3], s_zmax, &s_fog);
+    if (!s_fog.kind) return;
+    set_row(VPC_FOG, s_fog.num[0], s_fog.num[1], s_fog.num[2], s_fog.num[3]);
+    set_row(VPC_FOG + 1, s_fog.den[0], s_fog.den[1], s_fog.den[2], s_fog.den[3]);
+    set_row(VPC_FOG + 2, s_fog.curve[0], s_fog.curve[1], s_fog.curve[2], s_fog.curve[3]);
+}
+
 static void build_proj(const XgxState* st) {
     const float(*p)[4] = st->proj;
     float vx = (float)map_x(st->viewport[0]) , vy = (float)map_y(st->viewport[1]);
@@ -904,6 +918,7 @@ static void build_proj(const XgxState* st) {
         s_vc[VPC_PROJ + 2][c] = s_zmax * ((vf - vn) * p[2][c] + vf * p[3][c]);
         s_vc[VPC_PROJ + 3][c] = p[3][c];
     }
+    if (st->fog_type & 7) build_fog(st);
 }
 
 /* only the matrices the front end loaded since the last draw (posmtx_mask) */
@@ -1048,6 +1063,10 @@ static const RcProg* s_rc_sent;       /* the program on the GPU, valid while s_r
 static uint32_t s_rc_sent_gen;
 static int s_rc_valid;
 static uint32_t s_rc_consts[RC_MAX_STAGES][2], s_rc_fconsts[2];
+static uint32_t s_rc_cw0;             /* the final combiner's CW0 as sent, fog included */
+
+/* the program's final combiner, blending toward the fog colour while fog is on */
+static uint32_t final_cw0(const RcProg* rp) { return s_fog.kind ? fog_final_cw0(rp->cw0) : rp->cw0; }
 
 /* FNV-1a over 32-bit words (the tail bytes one at a time) */
 static uint32_t fnv(const void* p, size_t n) {
@@ -1141,7 +1160,8 @@ static void emit_combiners(const XgxState* st, const RcProg* rp) {
             put1(NV097_SET_COMBINER_ALPHA_ICW + i * 4, rp->aicw[i]);
             put1(NV097_SET_COMBINER_ALPHA_OCW + i * 4, rp->aocw[i]);
         }
-        put1(NV097_SET_COMBINER_SPECULAR_FOG_CW0, rp->cw0);
+        s_rc_cw0 = final_cw0(rp);
+        put1(NV097_SET_COMBINER_SPECULAR_FOG_CW0, s_rc_cw0);
         put1(NV097_SET_COMBINER_SPECULAR_FOG_CW1, rp->cw1);
         s_rc_sent = rp;
         s_rc_sent_gen = s_rc_gen;
@@ -1228,7 +1248,8 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
 /* ======================================================================
  * Fixed-function pixel state
  * ====================================================================== */
-static int s_fixed[20];
+static int s_fixed[24];
+static int s_fog_force = 1;   /* emit_fog regardless of XGX_DIRTY_FOG (GPU state reset) */
 /* vertex attribute arrays and inline values last sent (emit_vertex_arrays) */
 static uint32_t s_attr_shadow[16], s_attr_off_shadow[16];
 static uint32_t s_default_mtx = 0xFFFFFFFFu;
@@ -1236,6 +1257,7 @@ static int s_inline_col[2];   /* the inline colour holds our opaque white */
 
 static void state_reset_shadows(void) {
     s_draw_force = XGX_DIRTY_ALL;
+    s_fog_force = 1;
     memset(s_fixed, 0xFF, sizeof s_fixed);
     memset(s_tex_shadow, 0xFF, sizeof s_tex_shadow);
     s_tex_prog = 0xFFFFFFFFu;
@@ -1264,6 +1286,8 @@ static uint32_t blend_factor(uint32_t gx, int is_src) {
         default: return 0x305;
     }
 }
+
+static void emit_fog(const XgxState* st);
 
 static void emit_fixed(const XgxState* st) {
     int x0, y0, x1, y1;
@@ -1341,6 +1365,8 @@ static void emit_fixed(const XgxState* st) {
             SETF(17, NV097_SET_ALPHA_REF, ref);
         }
     }
+    /* the front end clears dirty after each draw: only a changed GXSetFog gets here */
+    if ((st->dirty & XGX_DIRTY_FOG) || s_fog_force) emit_fog(st);
 }
 
 /* ======================================================================
@@ -1475,6 +1501,10 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
     for (i = 0; i < st->ntexgen && i < XGX_MAX_TEXGEN; i++)
         xhw_logf("[DRAW]  tg%u type %u src %u mtx %u norm %u pt %u", i, st->texgen[i].type, st->texgen[i].src,
                  st->texgen[i].mtx, st->texgen[i].normalize, st->texgen[i].pt_mtx);
+    if (st->fog_type & 7)
+        xhw_logf("[DRAW]  fog type %u start %d end %d near %d far %d colour %02x%02x%02x", st->fog_type,
+                 (int)st->fog_start, (int)st->fog_end, (int)st->fog_near, (int)st->fog_far, st->fog_color[0],
+                 st->fog_color[1], st->fog_color[2]);
 }
 #endif
 
@@ -1557,6 +1587,7 @@ static void derive_vk(const XgxState* st, const XgxLayout* layout) {
         if (c->amb_src && layout->off_col[i / 2] < 0) vk->chan[i].amb_vtx = 1;
         if (c->mat_src && layout->off_col[i / 2] < 0) vk->chan[i].mat_vtx = 1;
     }
+    vk->fog = fog_kind(st->fog_type);
     vk->ntex = (uint8_t)s_d_nunits;
     for (i = 0; i < s_d_nunits; i++) {
         const XgxTexGen* tg = &st->texgen[s_d_unit_tc[i] < XGX_MAX_TEXGEN ? s_d_unit_tc[i] : 0];
@@ -1564,6 +1595,39 @@ static void derive_vk(const XgxState* st, const XgxLayout* layout) {
         vk->tex[i].proj = tg->type == GX_TG_MTX3x4;
         vk->tex[i].normalize = (uint8_t)(tg->normalize != 0);
         if (tg->mtx < GX_TEXMTX0) s_d_tg_posmtx = 1;
+    }
+}
+
+/* GX fog changed (or the GPU state was reset): the fog rows, the vertex
+ * program's fog variant, the fog unit and the final combiner. The NV2A's fog
+ * unit runs LINEAR with FOG_PARAMS (1, 1, 0) (the linear mode subtracts 1:
+ * factor = p0 + p1 * oFog.x - 1), so its factor is the vertex program's F;
+ * the gen mode doesn't matter with a vertex program (nxdk_pgraph_tests). */
+static void emit_fog(const XgxState* st) {
+    s_fog_force = 0;
+    build_fog(st);
+    emit_vc();   /* the fog rows: this draw's emit_vc has run */
+    SETF(18, NV097_SET_FOG_ENABLE, s_fog.kind != VPF_OFF);
+    if (s_fog.kind) {
+        SETF(19, NV097_SET_FOG_COLOR, fog_color_abgr(st->fog_color));
+        if (s_fixed[20] != 1) {
+            put1(NV097_SET_FOG_MODE, NV097_SET_FOG_MODE_V_LINEAR);
+            put1(NV097_SET_FOG_GEN_MODE, NV097_SET_FOG_GEN_MODE_V_SPEC_ALPHA);
+            putf(NV097_SET_FOG_PARAMS, 1.0f);
+            putf(NV097_SET_FOG_PARAMS + 4, 1.0f);
+            putf(NV097_SET_FOG_PARAMS + 8, 0.0f);
+            s_fixed[20] = 1;
+        }
+    }
+    if (s_d_vk.fog != s_fog.kind) {   /* derive_vk runs only for its own groups */
+        s_d_vk.fog = s_fog.kind;
+        vp_select(&s_d_vk);
+    }
+    /* the combiner program on the GPU: a new one (DIRTY_UNITS) is sent after
+     * this with final_cw0 anyway */
+    if (s_rc_valid && final_cw0(s_rc_sent) != s_rc_cw0) {
+        s_rc_cw0 = final_cw0(s_rc_sent);
+        put1(NV097_SET_COMBINER_SPECULAR_FOG_CW0, s_rc_cw0);
     }
 }
 

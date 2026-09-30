@@ -118,6 +118,20 @@ another homebrew's icon and name cached under that ID
 (`E:\UDATA\ffff0002\TitleImage.xbx`, `TitleMeta.xbx`). The script writes
 both files for 4D580001 next to `default.tbn`.
 
+**GX fog per vertex, from GX's own registers** (`nv2a_fog.c`,
+`docs/renderer.md`). The NV2A has no per-pixel depth fog: its fog unit
+interpolates a factor the vertex program writes. The vertex program
+computes GX's fog amount from each vertex's depth with the registers
+`GXSetFog` would write (A and C cut to 11 mantissa bits, b_mag and
+b_shift), and the fog unit passes it through (LINEAR, parameters 1, 1, 0);
+the final combiner mixes that much fog colour into the colour. Rebuilding
+the registers, not the textbook formula, matters for Melee: with its
+0.1..16384 camera GX's b_mag rounding makes the fog depth ze up to 1.57
+times smaller at the far plane (thinner fog). The cost: GX evaluates fog per pixel, so a polygon spanning a long
+depth range gets less fog mid-span than on the GameCube (up to ~23/255 on
+long edges), and the EXP curves are linear between vertices.
+`GXSetFogRangeAdj` is not applied.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 
@@ -206,9 +220,10 @@ To sync a newer melee-pc:
   rendering on the console with BACK screenshots, not only in xemu.
 - **Performance.** Matches draw 13-30 fps on the console while the
   simulation keeps 60 ticks (`docs/roadmap.md`).
-- **Rendering gaps**: no indirect texturing (water and reflections), no
-  fog, TEV swap tables only for the alpha broadcast; non-power-of-two
-  textures are resampled; the texture pool is short on busy stages.
+- **Rendering gaps**: no indirect texturing (water and reflections), fog
+  per vertex (long polygons get less fog mid-span; no range adjustment),
+  TEV swap tables only for the alpha broadcast; non-power-of-two textures
+  are resampled; the texture pool is short on busy stages.
 - **Netplay** is not built; the online/LAN lobby returns to the menu.
 - **The demand-commit fault handler** relies on the Xbox kernel sending
   kernel-mode access violations on reserved memory to the thread's SEH

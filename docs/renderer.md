@@ -17,6 +17,7 @@ game -> GX calls -> gx_state.c   (XgxState, dirty bits)
                     nv2a.c       (state diff, pushbuffer, texture pool, vertex ring)
                     nv2a_vp.c    (vertex programs generated from the transform state)
                     nv2a_rc.c    (TEV -> register combiners)
+                    nv2a_fog.c   (GX fog -> vertex-program fog, final combiner)
 ```
 
 Per draw, the back end rebuilds only what the front end's dirty groups
@@ -160,6 +161,7 @@ Constant rows:
 | 70-109 `VPC_LIGHT` | 8 lights x 5 rows: position, direction, colour, angle attenuation, distance attenuation |
 | 110-121 `VPC_TEXGEN` | 4 units x 3 rows (s, t, q), post matrix folded in when there is no normalize |
 | 122-133 `VPC_POSTMTX` | 4 units x 3 rows, the post-transform matrix after normalize |
+| 134-136 `VPC_FOG` | fog numerator, denominator and curve (see Fog) |
 
 Inputs: v0 position, v1 matrix index, v2 normal, v3/v4 colours 0/1, GX
 TEX0..6 -> v9..v15, TEX7 -> v8. The front end writes canonical vertices
@@ -224,9 +226,88 @@ Current limits:
   work only in the movie recipe;
 - TEV swap tables: only the alpha broadcast (`AAAA`) is supported;
 - indirect texturing is ignored (some stage effects);
-- fog is off;
 - destination alpha is missing at 720p (R5G6B5 has no alpha);
 - texture-matrix index attributes (TEXnMTXIDX) are ignored.
+
+## Fog (`nv2a_fog.c`)
+
+GX applies fog after the last TEV stage, to the colour only:
+`rgb = (rgb * (256 - F256) + fog * F256) >> 8` with F256 = F * 256. The
+fog amount F comes from the pixel's 24-bit EFB depth Zs and the registers
+`GXSetFog` writes: A and C cut to 11 mantissa bits, and for perspective fog
+B as a 24-bit magnitude and a shift (libogc `GX_SetFog`, Dolphin's
+`PixelShaderGen`):
+
+| fog | per pixel |
+|---|---|
+| perspective (`GX_FOG_PERSP_*`) | `ze = A * 2^24 / (b_mag - (Zs >> b_shift))`: eye depth / (end - start) when the fog's near and far are the projection's |
+| orthographic (`GX_FOG_ORTHO_*`) | `ze = A * Zs / 2^24` |
+| all | `x = clamp(ze - C, 0, 1)`; LIN `F = x`, EXP `1 - 2^(-8x)`, EXP2 `1 - 2^(-8x^2)`, REVEXP `2^(-8(1-x))`, REVEXP2 `2^(-8(1-x)^2)`; `GX_FOG_NONE`: off |
+
+The NV2A has no per-pixel depth fog. Its fog unit takes oFog.x from the
+vertex program per vertex and interpolates the factor (xemu evaluates it
+per vertex; `FOG_PARAMS` also goes to the transform engine). So:
+
+- **Vertex program.** F is computed per vertex from the vertex's own depth
+  with the same registers. Zs / 2^24 is `(a . P) / (w . P)` for the
+  view-space position P and the projection's depth and w rows (`VPC_PROJ`
+  + 2 and + 3), so `ze - C` is a ratio of two linear functions of P: rows
+  `VPC_FOG` and `VPC_FOG + 1`, built by `fog_setup` when the fog or the
+  projection changes. EXP and EXP2 clamp x and evaluate `2^(-8u)` with
+  `expp` (the REV types use 1 - x; the curve's constants are in
+  `VPC_FOG + 2`). `VpKey.fog` selects the variant (off, linear, exp,
+  exp2); fog makes a program 4 (LIN) to 10 (EXP2) instructions longer, so
+  a program already near the NV2A's 136 drops lights sooner.
+- **Fog unit.** LINEAR, `FOG_PARAMS` (1, 1, 0): the linear mode computes
+  `p0 + p1 * oFog - 1` (nxdk's NV10 notes, xemu's `fogFactor -= 1.0`), so
+  the factor is F, clamped to 0..1 per pixel. nxdk_pgraph_tests' vertex
+  shader fog tests use the same setup; they also found that the gen mode
+  doesn't matter with a vertex program. The NV2A's EXP modes aren't used:
+  they are evaluated per vertex as well, and EXP's zero point measures
+  ~1.51 on hardware where the formula says 1.5.
+- **Final combiner.** CW0 becomes A = FOG.a (the factor), B = FOG.rgb (the
+  fog colour, `SET_FOG_COLOR` is ABGR), C = PREV, D = 0; alpha (CW1's G)
+  is untouched. Without fog CW0 is what `nv2a_rc.c` compiled, and
+  unfogged vertex programs are the same as before (checked on 200000
+  random keys).
+- **State.** Fog is sent only when `GXSetFog` changed something
+  (`XGX_DIRTY_FOG`; `GXSetFog` returns early on equal values like the other
+  setters, as HSD calls it for every camera pass and particle kind) or the
+  projection changed while fog is on.
+
+Accuracy (`tools/xbox/test_fog.py`, against libogc's registers and
+Dolphin's formula): at every vertex F is within 1/255 of what GX gives
+within one of its own depth steps. With Melee's 0.1..16384 game camera GX
+resolves fog coarsely: `b_mag - (Zs >> 2)` is 99 steps at depth 5000 and 41
+at the far plane, and b_mag rounds B up (8388638 / 2^23), which makes GX's
+ze up to 1.57 times smaller at depth than the textbook formula (thinner
+fog). The port reproduces both at the vertices. Between vertices the NV2A
+interpolates F linearly in view space, which is exact for LIN fog while
+b_mag's rounding is negligible (the test checks edges for most cameras).
+With Melee's camera GX's denominator grows by ~57% from near to far, so a
+polygon that spans a long depth range gets less fog mid-span than on the
+GameCube: up to ~23/255 on an edge from depth 2000 to 14000 through a
+narrow fog range. The EXP curves are also linear between vertices.
+
+`GXSetFogRangeAdj` (a horizontal correction toward radial distance, which
+HSD sets when a fog has a FogAdj descriptor) is not applied.
+
+Melee sets fog in these places (`HSD_FogSet`), all compared best against
+Dolphin:
+
+- stages: `Ground_801C1E94` loads the stage's fog descriptor (scaled by the
+  stage's `param->y`; its colour is also the clear colour) and
+  `Ground_801C1E2C` applies it for the stage's camera passes while
+  `stage_info.unk8C.b2` holds (set at stage load; Final Destination's
+  `grlast.c` clears it). The camera turns it off for its later passes
+  (`camera.c`);
+- particles whose kind has `DispFog` (`psdisp.c`);
+- the title screen (`ScTitle_fog`), the Classic and All-Star intros
+  (`gm_1832.c`, `gm_186E.c`), Tournament mode (`gmtou_*.c`), the 1P ending
+  (`gmregenddisp.c`), the staff roll, Adventure cutscenes (`vi0102`,
+  `vi0401`, `vi0501`, `vi0502`, `vi0801`, `vi1201v1`, `vi1201v2`) and the
+  trophy display (`ScMenDisplay_fog`, `tydisplay.c`; `toy.c`'s own white
+  fog is a debug-ROM feature).
 
 ## Textures (`gx_tex.c`, `nv2a.c`)
 

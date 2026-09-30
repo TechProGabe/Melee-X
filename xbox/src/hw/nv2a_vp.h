@@ -12,7 +12,8 @@
 #define VPC_LIGHT 70     /* 8 lights x 5 rows: pos, dir, colour, a, k */
 #define VPC_TEXGEN 110   /* 4 units x 3 rows (s, t, q), post matrix folded in */
 #define VPC_POSTMTX 122  /* 4 units x 3 rows: post-transform after normalize */
-#define VPC_COUNT 134
+#define VPC_FOG 134      /* 3 rows: fog numerator, denominator, curve (nv2a_fog.h) */
+#define VPC_COUNT 137
 
 /* vertex inputs */
 #define VPI_POS 0
@@ -25,6 +26,9 @@ static inline int vpi_tex(int n) { return n < 7 ? 9 + n : 8; }
 
 /* light attenuation variants the generator knows */
 enum { VPL_OFF = 0, VPL_DIFFUSE, VPL_SPOT, VPL_SPEC };
+
+/* GX fog curves the generator writes oFog for (nv2a_fog.h) */
+enum { VPF_OFF = 0, VPF_LIN, VPF_EXP, VPF_EXP2 };
 
 typedef struct {
     uint8_t enable, amb_vtx, mat_vtx;
@@ -47,7 +51,8 @@ typedef struct {
     uint8_t ntex;                 /* NV2A texture units fed, 0..4 */
     VpTexGen tex[4];
     uint8_t copy;                 /* EFB copy pass (nv2a.c): position and texcoord 0 as given */
-    uint8_t pad[2];
+    uint8_t fog;                  /* VPF_*: GX fog amount -> oFog.x */
+    uint8_t pad;
 } VpKey;
 
 #define VP_MAX_INSNS 136

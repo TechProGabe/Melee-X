@@ -27,7 +27,9 @@
 - [x] memory fit measured on hardware (boot.log `[MEM]`); disc-backed ARAM pages
 - [x] 4-CPU VS matches stable on hardware (Pokémon Stadium with transformations,
       Fountain of Dreams, Green Greens), audio, saves, 100% save file loads
-- [ ] fog, indirect texturing, TEV swap tables beyond alpha broadcast
+- [x] fog: every GX fog type, per vertex from GX's registers (`nv2a_fog.c`); not yet
+      compared with Dolphin on the console; no range adjustment
+- [ ] indirect texturing, TEV swap tables beyond alpha broadcast
 - [ ] VS mode with 4 players on hardware at 60 fps
 - [x] movie frames decoded (`thp.c`)
 - [x] dashboard icon (`$$XTIMAGE` + `default.tbn`, own title ID 4D580001)
@@ -63,7 +65,9 @@ Fixed on the console this round (details in `renderer.md`,
 
 1. **Texture accuracy.** Fountain of Dreams' water and other reflections
    need indirect texturing (the NV2A's texture-shader bump modes may do
-   it); fog and TEV swap tables beyond the alpha broadcast. Item crates
+   it); TEV swap tables beyond the alpha broadcast. Fog is new: compare
+   stage backgrounds, the title screen and the Classic/All-Star intros
+   with Dolphin (`docs/renderer.md` lists where Melee uses it). Item crates
    still show the background through their dark gaps. Short black flashes
    remain on Stadium's floor. For each, take a console screenshot (BACK)
    and compare with xemu at the same scene (`docs/testing.md`).

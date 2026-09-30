@@ -49,6 +49,7 @@ jobs:
           python3 tools/lower/test_lower.py
           python3 tools/xbox/test_vp_encoder.py
           python3 tools/xbox/test_tex_convert.py
+          python3 tools/xbox/test_fog.py
 
       - uses: actions/upload-artifact@v4
         with:

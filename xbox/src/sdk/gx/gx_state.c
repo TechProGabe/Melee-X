@@ -731,7 +731,13 @@ void GXEnableTexOffsets(GXTexCoordID coord, GXBool line, GXBool point) { (void)c
 void GXSetZTexture(GXZTexOp op, GXTexFmt fmt, u32 bias) { (void)op; (void)fmt; (void)bias; }
 void GXSetCoPlanar(GXBool on) { (void)on; }
 
+/* Applied by the back end (nv2a_fog.c); HSD_FogSet calls this for every
+ * camera pass and particle kind, mostly with the values it already has. */
 void GXSetFog(GXFogType type, f32 startz, f32 endz, f32 nearz, f32 farz, GXColor color) {
+    if (g_xgx.fog_type == (uint32_t)type && g_xgx.fog_start == startz && g_xgx.fog_end == endz &&
+        g_xgx.fog_near == nearz && g_xgx.fog_far == farz && g_xgx.fog_color[0] == color.r &&
+        g_xgx.fog_color[1] == color.g && g_xgx.fog_color[2] == color.b && g_xgx.fog_color[3] == color.a)
+        return;
     FLUSH();
     g_xgx.fog_type = type;
     g_xgx.fog_start = startz;
@@ -745,6 +751,7 @@ void GXSetFog(GXFogType type, f32 startz, f32 endz, f32 nearz, f32 farz, GXColor
     DIRTY(XGX_DIRTY_FOG);
 }
 
+/* not applied: fog stays planar depth, without GX's horizontal correction */
 void GXSetFogRangeAdj(GXBool enable, u16 center, GXFogAdjTable* table) { (void)enable; (void)center; (void)table; }
 
 /* SDK GXInitFogAdjTable: range adjustment is not applied, but the table must

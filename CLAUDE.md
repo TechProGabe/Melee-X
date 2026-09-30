@@ -24,6 +24,7 @@ tools/xbox/docker/build.sh                        # -> build-xbox/xbe/default.xb
 XBOX_CFLAGS="-DXHW_PROF=1" tools/xbox/docker/build.sh   # extra platform flags (switch table: docs/testing.md)
 python3 tools/xbox/test_tex_convert.py            # host tests (tests/xbox/*.c)
 python3 tools/xbox/test_vp_encoder.py
+python3 tools/xbox/test_fog.py                    # GX fog math (nv2a_fog.c) vs GX's fog factor
 python3 tools/lower/test_lower.py
 ```
 
