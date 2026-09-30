@@ -192,7 +192,9 @@ static void store(const Slot* s, const uint8_t* p, int be, uint8_t* v) {
             scale = 1.0f / (float)(1u << s->fmt.frac);
         }
         for (i = 0; i < n && i < 3; i++) out[i] = read_elem(p + i * es, s->fmt.type, scale, be);
-        memcpy(v + s->dst, out, s->attr == GX_VA_POS || s->attr == GX_VA_NRM ? 12 : 8);
+        /* constant sizes: inline moves (xbuiltin.h) */
+        if (s->attr == GX_VA_POS || s->attr == GX_VA_NRM) memcpy(v + s->dst, out, 12);
+        else memcpy(v + s->dst, out, 8);
     }
 }
 
@@ -271,7 +273,8 @@ static void imm_floats(uint8_t attr, const float* f, int n) {
         float out[3] = { 0, 0, 0 };
         int i;
         for (i = 0; i < n && i < 3; i++) out[i] = f[i];
-        memcpy(B.cur + s->dst, out, attr == GX_VA_POS || attr == GX_VA_NRM ? 12 : 8);
+        if (attr == GX_VA_POS || attr == GX_VA_NRM) memcpy(B.cur + s->dst, out, 12);
+        else memcpy(B.cur + s->dst, out, 8);
     }
     after_attr();
 }
@@ -463,9 +466,12 @@ static uint8_t array_attr(const Slot* s) {
     return s->attr == GX_VA_NRM && g_gx.desc[GX_VA_NRM] == GX_NONE ? GX_VA_NBT : s->attr;
 }
 
-/* n vertices of plan p from the list at `at` into out; returns the new offset */
+/* n vertices of plan p from the list at `at` into out; returns the new
+ * offset. idx (optional): the index of every indexed slot that lands in the
+ * vertex, vertex by vertex in slot order (the display-list cache's dynamic
+ * lists fetch from them again). */
 static uint32_t decode_verts(const uint8_t* dl, uint32_t at, const Plan* p, uint32_t n, uint8_t* out,
-                             IdxRange* r) {
+                             IdxRange* r, uint16_t* idx_out) {
     uint32_t v;
     for (v = 0; v < n; v++, out += p->layout.stride) {
         int i;
@@ -481,6 +487,7 @@ static uint32_t decode_verts(const uint8_t* dl, uint32_t at, const Plan* p, uint
                     uint32_t idx = s->type == GX_INDEX8 ? dl[at] : gx_be16(dl + at);
                     at += s->type == GX_INDEX8 ? 1 : 2;
                     if (k) continue;
+                    if (idx_out && s->dst >= 0) *idx_out++ = (uint16_t)idx;
                     fetch_indexed(s, idx, out);
                     if (r) {
                         uint8_t a = array_attr(s);
@@ -521,7 +528,7 @@ static void call_display_list(const void* list, u32 nbytes) {
                 B.open = 0;
                 return;
             }
-            at = decode_verts(dl, at, &B.plan, n, B.base, NULL);
+            at = decode_verts(dl, at, &B.plan, n, B.base, NULL, NULL);
             B.done = n;
             end_batch();
             continue;
@@ -538,13 +545,25 @@ static void call_display_list(const void* list, u32 nbytes) {
  * call against a signature of the vertex descriptor, the formats the list
  * uses and the arrays it reads. At most once a frame a sampled hash of the
  * list and of the array ranges it indexed is compared too, because HSD
- * reuses memory and some arrays are rewritten (shape animation). A list that
- * keeps changing is marked volatile and decoded every call as before. */
-#define DLC_MAX 1024
-#define DLC_BUCKETS 2048
+ * reuses memory and some arrays are rewritten (shape animation).
+ *
+ * A list whose arrays keep changing (skinned and morphed models: HSD
+ * rewrites their positions and normals, or points them at another buffer,
+ * every frame) goes dynamic: its decode plan, the indices of every vertex
+ * and a decoded template in ordinary cached memory are kept. Each call
+ * re-fetches only the attributes whose array moved or changed (a sampled
+ * hash per array, per call; one that changed once is fetched every call
+ * from then on), then copies the template into the vertex ring in one
+ * sequential write. Before, such a list was parsed and fully decoded on
+ * every call: ~200 a frame, most of the "dlist" time. A dynamic list that
+ * doesn't fit the template budget is decoded every call as before
+ * (volatile). */
+#define DLC_MAX 2048
+#define DLC_BUCKETS 4096
 #define DLC_MAX_BATCH 64
 #define DLC_MAX_RANGE 12
-#define DLC_VOLATILE 4          /* rebuilds before a list counts as volatile */
+#define DLC_VOLATILE 4          /* rebuilds before a list goes dynamic */
+#define DLC_DYN_BUDGET (1024u * 1024)   /* template + index bytes for all dynamic lists */
 
 typedef struct {
     uint32_t prim, count, offset;   /* offset: bytes into the entry's buffer */
@@ -556,6 +575,33 @@ typedef struct {
     uint32_t bytes;
 } DlRange;
 
+/* one array a dynamic list reads */
+typedef struct {
+    uint8_t attr;                  /* array_attr() */
+    uint8_t always;                /* seen changing: fetched every call */
+    uint32_t lo, hi;               /* index range */
+    const uint8_t* base;           /* g_gx.array[attr] when fetched */
+    uint32_t hash;
+} DynArray;
+
+typedef struct {
+    uint32_t prim, count, offset;  /* offset: bytes into the template */
+    uint32_t idx;                  /* first index (uint16) of this batch */
+    uint8_t ncol;                  /* indexed slots that land in the vertex */
+    uint8_t col_slot[N_ORDER];     /* their plan slots */
+    Plan plan;
+} DynBatch;
+
+typedef struct {
+    DynBatch* batch;
+    uint8_t* tmpl;
+    uint16_t* idx;
+    uint32_t bytes;                /* charged to the budget */
+    uint32_t sig, dl_hash;
+    DynArray arr[DLC_MAX_RANGE];
+    uint8_t narr, nbatch;
+} DynList;
+
 typedef struct {
     const uint8_t* dl;
     uint32_t nbytes;
@@ -564,6 +610,7 @@ typedef struct {
     uint8_t* mem;
     uint32_t mem_bytes;
     DlBatch* batch;
+    DynList* dyn;
     uint16_t nbatch;
     uint8_t fmts, nrange, rebuilds, is_volatile;
     DlRange range[DLC_MAX_RANGE];
@@ -574,10 +621,18 @@ static DlEntry s_dlc[DLC_MAX];
 static int s_dlc_n;
 static int s_dlc_bucket[DLC_BUCKETS];
 static int s_dlc_ready;
-static uint32_t s_st_dl_hits, s_st_dl_builds, s_st_dl_direct;
+static uint32_t s_dyn_bytes;
+static uint32_t s_st_dl_hits, s_st_dl_builds, s_st_dl_direct, s_st_dyn_calls, s_st_dyn_fetch, s_st_dyn_builds;
+static uint32_t s_st_chg_sig, s_st_chg_data;   /* why cached lists were rebuilt: formats/arrays, or contents */
 
+/* FNV-1a, 32-bit words (the tail a byte at a time) */
 static uint32_t fnv(uint32_t h, const void* p, uint32_t n) {
     const uint8_t* b = (const uint8_t*)p;
+    for (; n >= 4; n -= 4, b += 4) {
+        uint32_t w;
+        memcpy(&w, b, 4);
+        h = (h ^ w) * 16777619u;
+    }
     while (n--) h = (h ^ *b++) * 16777619u;
     return h;
 }
@@ -595,15 +650,17 @@ static uint32_t sample_hash(uint32_t h, const uint8_t* p, uint32_t n) {
     return fnv(h, p + n - 4, 4);
 }
 
-static uint32_t vtx_sig(uint32_t fmts) {
+/* the vertex descriptor and the formats `fmts` use; with_arrays: the array
+ * bases too (a dynamic list takes moving arrays as they come) */
+static uint32_t vtx_sig(uint32_t fmts, int with_arrays) {
     uint32_t h = fnv(2166136261u, g_gx.desc, sizeof g_gx.desc), f, a;
     for (f = 0; f < 8; f++)
         if (fmts & (1u << f)) h = fnv(h, g_gx.vat[f], sizeof g_gx.vat[f]);
     for (a = 0; a < GX_VA_MAX_ATTR; a++)
         if (g_gx.desc[a] == GX_INDEX8 || g_gx.desc[a] == GX_INDEX16) {
-            h = fnv(h, &g_gx.array[a], sizeof g_gx.array[a]);
+            if (with_arrays) h = fnv(h, &g_gx.array[a], sizeof g_gx.array[a]);
             h = fnv(h, &g_gx.array_stride[a], sizeof g_gx.array_stride[a]);
-            h = fnv(h, &g_gx.array_le[a], 1);
+            h = (h ^ g_gx.array_le[a]) * 16777619u;
         }
     return h;
 }
@@ -623,6 +680,17 @@ static void dlc_unlink(int idx) {
     if (*link == idx) *link = s_dlc[idx].next;
 }
 
+static void dyn_free(DlEntry* e) {
+    DynList* d = e->dyn;
+    if (!d) return;
+    s_dyn_bytes -= d->bytes;
+    free(d->batch);
+    free(d->tmpl);
+    free(d->idx);
+    free(d);
+    e->dyn = NULL;
+}
+
 static void dlc_release(DlEntry* e) {
     xgx_vbuf_free(e->mem);
     free(e->batch);
@@ -630,6 +698,7 @@ static void dlc_release(DlEntry* e) {
     e->batch = NULL;
     e->mem_bytes = 0;
     e->nbatch = 0;
+    dyn_free(e);
 }
 
 /* entries stay in their slot; freed slots go on a stack */
@@ -664,47 +733,85 @@ static DlEntry* dlc_find(const uint8_t* dl, uint32_t nbytes) {
     return NULL;
 }
 
-/* decode the whole list into one buffer; 0 when it can't be cached */
-static int dlc_build(DlEntry* e, uint32_t frame) {
-    static IdxRange r;
-    const uint8_t* dl = e->dl;
-    DlBatch batch[DLC_MAX_BATCH];
+/* skips a non-draw command at `at`; 0: not one this cache knows */
+static uint32_t dl_skip(const uint8_t* dl, uint32_t at, uint32_t nbytes) {
+    uint8_t cmd = dl[at];
+    if (cmd == 0x00 || cmd == 0x48 || cmd == 0x44) return at + 1;
+    if (cmd == 0x08) return at + 6;
+    if (cmd == 0x10) return at + 5 + (at + 5 <= nbytes ? ((uint32_t)gx_be16(dl + at + 1) + 1) * 4 : 0);
+    if ((cmd & 0xE7) == 0x20 || cmd == 0x61) return at + 5;
+    if (cmd == 0x40) return at + 9;
+    return 0;
+}
+
+/* pass 1 over a list: its draws and their layouts; 0 when it can't be cached */
+static int dl_scan(const uint8_t* dl, uint32_t nbytes, DlBatch* batch, uint32_t* total, uint8_t* fmts) {
     Plan plan;
-    uint32_t at = 0, total = 0, a;
-    int nb = 0, i;
-    uint8_t fmts = 0;
-    /* pass 1: the draws and their sizes */
-    while (at < e->nbytes) {
+    uint32_t at = 0, next;
+    int nb = 0;
+    *total = 0;
+    *fmts = 0;
+    while (at < nbytes) {
         uint8_t cmd = dl[at];
-        if (cmd == 0x00 || cmd == 0x48 || cmd == 0x44) { at++; continue; }
-        if (cmd == 0x08) { at += 6; continue; }
-        if (cmd == 0x10) {
-            uint32_t n = at + 5 <= e->nbytes ? (uint32_t)gx_be16(dl + at + 1) + 1 : 0;
-            at += 5 + n * 4;
-            continue;
-        }
-        if ((cmd & 0xE7) == 0x20 || cmd == 0x61) { at += 5; continue; }
-        if (cmd == 0x40) { at += 9; continue; }
-        if (cmd >= 0x80 && cmd < 0xC0 && at + 3 <= e->nbytes) {
+        if (cmd >= 0x80 && cmd < 0xC0 && at + 3 <= nbytes) {
             uint32_t n = gx_be16(dl + at + 1), fmt = cmd & 7, vbytes;
             if (nb == DLC_MAX_BATCH) return 0;
             make_plan(&plan, (int)fmt);
             vbytes = dl_vertex_bytes(&plan);
             at += 3;
-            if (at + n * vbytes > e->nbytes) return 0;
+            if (at + n * vbytes > nbytes) return 0;
             batch[nb].prim = cmd & 0xF8;
             batch[nb].count = n;
-            batch[nb].offset = total;
+            batch[nb].offset = *total;
             batch[nb].layout = plan.layout;
-            total += (n * plan.layout.stride + 15) & ~15u;
-            fmts |= (uint8_t)(1u << fmt);
+            *total += (n * plan.layout.stride + 15) & ~15u;
+            *fmts |= (uint8_t)(1u << fmt);
             at += n * vbytes;
             nb++;
             continue;
         }
-        break;
+        if (!(next = dl_skip(dl, at, nbytes))) break;
+        at = next;
     }
-    if (!nb || !total) return 0;
+    return *total ? nb : 0;
+}
+
+static void range_reset(IdxRange* r) {
+    uint32_t a;
+    for (a = 0; a < GX_VA_MAX_ATTR; a++) {
+        r->lo[a] = 0xFFFFFFFFu;
+        r->hi[a] = 0;
+    }
+}
+
+/* pass 2: decode the draws found by dl_scan into out (template or buffer) */
+static void dl_decode_all(const uint8_t* dl, uint32_t nbytes, const DlBatch* batch, int nb, uint8_t* out, IdxRange* r,
+                          uint16_t* idx, const uint32_t* idx_first) {
+    Plan plan;
+    uint32_t at = 0;
+    int i;
+    for (i = 0; i < nb && at < nbytes;) {
+        uint8_t cmd = dl[at];
+        if (cmd >= 0x80 && cmd < 0xC0) {
+            make_plan(&plan, cmd & 7);
+            at = decode_verts(dl, at + 3, &plan, batch[i].count, out + batch[i].offset, r,
+                              idx ? idx + idx_first[i] : NULL);
+            i++;
+            continue;
+        }
+        at = dl_skip(dl, at, nbytes);
+        if (!at) break;
+    }
+}
+
+/* decode the whole list into one buffer; 0 when it can't be cached */
+static int dlc_build(DlEntry* e, uint32_t frame) {
+    static IdxRange r;
+    DlBatch batch[DLC_MAX_BATCH];
+    uint32_t total, a;
+    uint8_t fmts;
+    int nb = dl_scan(e->dl, e->nbytes, batch, &total, &fmts);
+    if (!nb) return 0;
     e->mem = (uint8_t*)xgx_vbuf_alloc(total);
     while (!e->mem && dlc_evict_one(frame, e)) e->mem = (uint8_t*)xgx_vbuf_alloc(total);
     if (!e->mem) return 0;
@@ -713,26 +820,8 @@ static int dlc_build(DlEntry* e, uint32_t frame) {
         dlc_release(e);
         return 0;
     }
-    /* pass 2: decode */
-    for (a = 0; a < GX_VA_MAX_ATTR; a++) {
-        r.lo[a] = 0xFFFFFFFFu;
-        r.hi[a] = 0;
-    }
-    at = 0;
-    for (i = 0; i < nb;) {
-        uint8_t cmd = dl[at];
-        if (cmd >= 0x80 && cmd < 0xC0) {
-            make_plan(&plan, cmd & 7);
-            at = decode_verts(dl, at + 3, &plan, batch[i].count, e->mem + batch[i].offset, &r);
-            i++;
-            continue;
-        }
-        if (cmd == 0x08) at += 6;
-        else if (cmd == 0x10) at += 5 + ((uint32_t)gx_be16(dl + at + 1) + 1) * 4;
-        else if ((cmd & 0xE7) == 0x20 || cmd == 0x61) at += 5;
-        else if (cmd == 0x40) at += 9;
-        else at++;
-    }
+    range_reset(&r);
+    dl_decode_all(e->dl, e->nbytes, batch, nb, e->mem, &r, NULL, NULL);
     memcpy(e->batch, batch, sizeof(DlBatch) * (size_t)nb);
     e->nbatch = (uint16_t)nb;
     e->mem_bytes = total;
@@ -744,10 +833,159 @@ static int dlc_build(DlEntry* e, uint32_t frame) {
             e->range[e->nrange].bytes = (r.hi[a] - r.lo[a]) * g_gx.array_stride[a];
             e->nrange++;
         }
-    e->sig = vtx_sig(fmts);
+    e->sig = vtx_sig(fmts, 1);
     e->hash = content_hash(e);
     e->checked = frame;
     s_st_dl_builds++;
+    return 1;
+}
+
+static uint32_t dyn_array_hash(const DynArray* a, const uint8_t* base) {
+    uint32_t stride = g_gx.array_stride[a->attr];
+    return sample_hash(2166136261u, base + a->lo * stride, (a->hi - a->lo) * stride);
+}
+
+/* the dynamic form of e (see the comment above DLC_MAX); 0: over budget or
+ * not cacheable */
+static int dyn_build(DlEntry* e, uint32_t frame) {
+    static IdxRange r;
+    DlBatch batch[DLC_MAX_BATCH];
+    uint32_t idx_first[DLC_MAX_BATCH], total, nidx = 0, a, bytes;
+    uint8_t fmts;
+    DynList* d;
+    int nb = dl_scan(e->dl, e->nbytes, batch, &total, &fmts), i, k;
+    if (!nb) return 0;
+    d = (DynList*)calloc(1, sizeof *d);
+    if (!d) return 0;
+    d->batch = (DynBatch*)calloc((size_t)nb, sizeof(DynBatch));
+    if (!d->batch) {
+        free(d);
+        return 0;
+    }
+    for (i = 0; i < nb; i++) {
+        d->batch[i].prim = batch[i].prim;
+        d->batch[i].count = batch[i].count;
+        d->batch[i].offset = batch[i].offset;
+    }
+    /* the plans (dl_scan keeps only the layouts) and the indexed columns */
+    {
+        uint32_t at = 0;
+        for (i = 0; i < nb && at < e->nbytes;) {
+            uint8_t cmd = e->dl[at];
+            if (cmd >= 0x80 && cmd < 0xC0) {
+                DynBatch* b = &d->batch[i];
+                make_plan(&b->plan, cmd & 7);
+                for (k = 0; k < b->plan.n; k++) {
+                    const Slot* sl = &b->plan.slot[k];
+                    if (sl->type != GX_DIRECT && sl->dst >= 0) b->col_slot[b->ncol++] = (uint8_t)k;
+                }
+                b->idx = idx_first[i] = nidx;
+                nidx += b->count * b->ncol;
+                at += 3 + b->count * dl_vertex_bytes(&b->plan);
+                i++;
+                continue;
+            }
+            at = dl_skip(e->dl, at, e->nbytes);
+            if (!at) break;
+        }
+        if (i != nb) {
+            free(d->batch);
+            free(d);
+            return 0;
+        }
+    }
+    bytes = total + nidx * 2 + (uint32_t)nb * sizeof(DynBatch);
+    if (s_dyn_bytes + bytes > DLC_DYN_BUDGET) {
+        free(d->batch);
+        free(d);
+        return 0;
+    }
+    d->tmpl = (uint8_t*)malloc(total);
+    d->idx = (uint16_t*)malloc(nidx ? nidx * 2 : 2);
+    if (!d->tmpl || !d->idx) {
+        free(d->tmpl);
+        free(d->idx);
+        free(d->batch);
+        free(d);
+        return 0;
+    }
+    range_reset(&r);
+    dl_decode_all(e->dl, e->nbytes, batch, nb, d->tmpl, &r, d->idx, idx_first);
+    d->nbatch = (uint8_t)nb;
+    d->bytes = bytes;
+    s_dyn_bytes += bytes;
+    for (a = 0; a < GX_VA_MAX_ATTR; a++)
+        if (r.hi[a] > r.lo[a] && g_gx.array[a] && d->narr < DLC_MAX_RANGE) {
+            DynArray* x = &d->arr[d->narr++];
+            x->attr = (uint8_t)a;
+            x->lo = r.lo[a];
+            x->hi = r.hi[a];
+            x->base = g_gx.array[a];
+            x->hash = dyn_array_hash(x, x->base);
+        }
+    d->sig = vtx_sig(fmts, 0);
+    d->dl_hash = sample_hash(2166136261u, e->dl, e->nbytes);
+    e->dyn = d;
+    e->fmts = fmts;
+    e->checked = frame;
+    s_st_dyn_builds++;
+    return 1;
+}
+
+/* fetch attribute array `attr` again for every vertex of the template */
+static void dyn_fetch(DynList* d, uint8_t attr, const uint8_t* base) {
+    uint32_t stride = g_gx.array_stride[attr];
+    int be = !g_gx.array_le[attr], i, c;
+    for (i = 0; i < d->nbatch; i++) {
+        const DynBatch* b = &d->batch[i];
+        for (c = 0; c < b->ncol; c++) {
+            const Slot* sl = &b->plan.slot[b->col_slot[c]];
+            const uint16_t* idx = d->idx + b->idx + c;
+            uint8_t* out = d->tmpl + b->offset;
+            uint32_t v, vs = b->plan.layout.stride;
+            if (array_attr(sl) != attr) continue;
+            for (v = 0; v < b->count; v++, idx += b->ncol, out += vs) store(sl, base + *idx * stride, be, out);
+        }
+    }
+    s_st_dyn_fetch++;
+}
+
+/* 1: drawn from the dynamic template */
+static int dyn_call(DlEntry* e, uint32_t frame) {
+    DynList* d = e->dyn;
+    int i;
+    if (d->sig != vtx_sig(e->fmts, 0) ||
+        (e->checked != frame && (e->checked = frame, d->dl_hash != sample_hash(2166136261u, e->dl, e->nbytes)))) {
+        dyn_free(e);
+        if (++e->rebuilds >= DLC_VOLATILE * 4 || !dyn_build(e, frame)) {
+            e->is_volatile = 1;
+            return 0;
+        }
+        d = e->dyn;
+    }
+    for (i = 0; i < d->narr; i++) {
+        DynArray* x = &d->arr[i];
+        const uint8_t* base = g_gx.array[x->attr];
+        if (!base) continue;
+        if (!x->always) {
+            uint32_t h;
+            if (base == x->base && (h = dyn_array_hash(x, base)) == x->hash) continue;
+            x->always = 1;
+        }
+        x->base = base;
+        dyn_fetch(d, x->attr, base);
+    }
+    for (i = 0; i < d->nbatch; i++) {
+        const DynBatch* b = &d->batch[i];
+        uint32_t bytes = b->count * b->plan.layout.stride;
+        uint8_t* v;
+        if (!b->count || !(v = (uint8_t*)xgx_vtx_alloc(b->count, b->plan.layout.stride))) continue;
+        memcpy(v, d->tmpl + b->offset, bytes);
+        xgx_draw(b->prim, b->count, &b->plan.layout, &g_xgx);
+        g_xgx.dirty = 0;
+    }
+    e->last_used = frame;
+    s_st_dyn_calls++;
     return 1;
 }
 
@@ -763,11 +1001,15 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
         s_dlc_ready = 1;
     }
     e = dlc_find(dl, nbytes);
+    if (e && e->dyn) return dyn_call(e, frame);
     if (e && e->is_volatile) return 0;
-    if (e && e->mem && (e->sig != vtx_sig(e->fmts) ||
+    if (e && e->mem && (e->sig != vtx_sig(e->fmts, 1) ||
                         (e->checked != frame && (e->checked = frame, e->hash != content_hash(e))))) {
+        if (e->sig != vtx_sig(e->fmts, 1)) s_st_chg_sig++;
+        else s_st_chg_data++;
         dlc_release(e);   /* changed: rebuild below */
         if (++e->rebuilds >= DLC_VOLATILE) {
+            if (dyn_build(e, frame)) return dyn_call(e, frame);
             e->is_volatile = 1;
             return 0;
         }
@@ -799,13 +1041,19 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
 
 void gx_vtx_frame_end(void) {
     if (xgx_present_count() % XGX_STATS_EVERY == 0 && s_dlc_ready) {
-        int i, vol = 0;
-        for (i = 0; i < DLC_MAX; i++) vol += s_dlc[i].dl && s_dlc[i].is_volatile;
-        xhw_logf("[DLC] %d lists (%d volatile), vertex pool %u of %u KB free | per %u: %u cached calls, %u builds, "
-                 "%u decoded",
-                 s_dlc_n, vol, xgx_vbuf_pool_free_kb(), xgx_vbuf_pool_kb(), XGX_STATS_EVERY, s_st_dl_hits,
-                 s_st_dl_builds, s_st_dl_direct);
-        s_st_dl_hits = s_st_dl_builds = s_st_dl_direct = 0;
+        int i, vol = 0, dyn = 0;
+        for (i = 0; i < DLC_MAX; i++) {
+            vol += s_dlc[i].dl && s_dlc[i].is_volatile;
+            dyn += s_dlc[i].dl && s_dlc[i].dyn;
+        }
+        xhw_logf("[DLC] %d of %d lists (%d dynamic, %u KB; %d volatile), vertex pool %u of %u KB free | per %u: %u "
+                 "cached calls, %u builds (%u after a format/array change, %u after a content change), %u dynamic "
+                 "calls (%u array fetches, %u builds), %u decoded",
+                 s_dlc_n, DLC_MAX, dyn, s_dyn_bytes / 1024, vol, xgx_vbuf_pool_free_kb(), xgx_vbuf_pool_kb(),
+                 XGX_STATS_EVERY, s_st_dl_hits, s_st_dl_builds, s_st_chg_sig, s_st_chg_data, s_st_dyn_calls,
+                 s_st_dyn_fetch, s_st_dyn_builds, s_st_dl_direct);
+        s_st_dl_hits = s_st_dl_builds = s_st_dl_direct = s_st_dyn_calls = s_st_dyn_fetch = s_st_dyn_builds = 0;
+        s_st_chg_sig = s_st_chg_data = 0;
     }
 }
 

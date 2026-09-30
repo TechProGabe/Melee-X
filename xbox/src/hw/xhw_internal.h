@@ -18,6 +18,9 @@ void xhw_log_com1_line(const char* line);
 void xhw_mem_log(const char* where);
 void xhw_flush_handle(HANDLE h);
 void xhw_flush_volume(char drive);
+void xhw_log_sync(void);               /* flush pending boot.log lines if the lock is free */
+int xhw_log_try(const char* line);     /* log + flush without blocking on the lock for long */
+int xhw_log_try_file(const char* text);   /* the same, boot.log and the tail only (not COM1) */
 
 /* xhw_crash.c: run fn under the CPU exception reporter (crash.log + screen). */
 void xhw_crash_guard(void (*fn)(void*), void* arg);
@@ -39,6 +42,11 @@ void xhw_splash_release(void);   /* the mode is about to change */
 /* xhw_watchdog.c: hang dumper (hang.log + screen) */
 void xhw_watchdog_start(void);
 void xhw_prof_set_game_thread(void);   /* call on the game thread */
+void* xhw_game_thread(void);           /* its PKTHREAD, NULL before xhw_prof_set_game_thread */
+/* Where a thread that is not running was interrupted: the EIP of the
+ * interrupt frame on its kernel stack (and the stack pointer it had), 0 when
+ * it is waiting instead. Call at DISPATCH_LEVEL (xhw_prof.c). */
+unsigned long xhw_thread_eip(void* kthread, unsigned long* esp_out);
 void xhw_prof_start(void);             /* -DXHW_PROF=1: sampling profiler (xhw_prof.c) */
 void xhw_watchdog_disable(void);
 void xhw_watchdog_busy(int on);   /* a long, deliberate stall (screenshot) */

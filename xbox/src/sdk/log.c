@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "xgx.h"
 #include "xhw.h"
 #include "xsdk.h"
 
@@ -68,4 +69,17 @@ int xsdk_fputs(const char* s, FILE* f) {
         return 0;
     }
     return fputs(s, f);
+}
+
+/* Scene transitions (src/melee/gm/gm_1A3F.c, PORT:), with the memory
+ * picture at that moment: these lines are flushed to disk at once, so a
+ * console that freezes during a transition leaves where and how full it was. */
+unsigned xsdk_frame_count(void);
+
+void xsdk_scene_log(const char* what, int mode, int state, int scene) {
+    xhw_logf("[SCENE] %s: mode %d state %d scene %d (retrace %u, presented %u)", what, mode, state, scene,
+             xsdk_frame_count(), xgx_present_count());
+    xhw_logf("[MEM] scene %s: free %u KB, MEM1+ARAM %u KB, tex pool %u of %u KB free, vertex cache %u of %u KB free",
+             what, xhw_mem_free_kb(), xhw_lazy_committed_kb(), xgx_tex_pool_free_kb(), xgx_tex_pool_kb(),
+             xgx_vbuf_pool_free_kb(), xgx_vbuf_pool_kb());
 }

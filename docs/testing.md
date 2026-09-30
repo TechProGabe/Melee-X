@@ -79,13 +79,21 @@ tools/xbox/prof_report.py boot.log --map path/to/melee_x.map
 Profile buckets are 64 bytes, so a small function right after another can
 be credited to its neighbour (pdclib's `memcmp` showed up as `longjmp`).
 
+Each sample also records a caller: the first word above the interrupted
+stack pointer that points into the XBE right after a call instruction (the
+function's return address, or its caller's once it has made a call itself).
+`[PROFL]` lines count them for samples inside memcpy/memset/memcmp/memmove
+(who copies), `[PROFC]` lines for every sample (the hottest call sites one
+level up). `prof_report.py` folds both into functions after the main table.
+
 ## Logs
 
 Everything is written to `E:\UDATA\4d580001\` (the title ID is `4d580001`):
 
 | file | contents |
 |---|---|
-| `boot.log` | the log (first 256 KB), every line flushed during the first 600 frames, then at most once a second. Tags: `[BOOT]` `[MEM]` `[OS]` `[DVD]` `[NV2A]` `[PAD]` `[AUDIO]` `[CARD]` |
+| `boot.log` | the log (first 2 MB). Every line is flushed to disk during the first 600 frames; after that urgent lines (`[SCENE]` `[GAME]` `[MEM]` `[CARD]` `[WDOG]` `[NV2A] GPU`/`flip` `[TEX] drop` `[FATAL]` `[CRASH]` `[BOOT]` `[WARN]`) at once and the rest within a second (the watchdog thread flushes what is pending every second). Tags: `[BOOT]` `[MEM]` `[OS]` `[DVD]` `[NV2A]` `[PAD]` `[AUDIO]` `[CARD]` `[SCENE]` `[GAME]` `[BEAT]` |
+| `hang.log` | written by the watchdog: the log tail and a dump of every thread (also appended to `boot.log`) |
 | `crash.log` | written on a CPU exception: the last log lines, the fault, registers, XBE addresses found on the stack |
 | `settings.ini` | options (`docs/platform.md`) |
 | `card_a\*.gci` | memory card saves |
@@ -98,9 +106,26 @@ Lines worth reading first:
   ARAM has been committed so far. If free RAM runs low while the game is
   still loading, that is the 64 MB budget (`docs/architecture.md`).
 - `[DVD] GALE01 rev 2, N FST entries`: the image was accepted.
-- `[NV2A] frame N: D draws (A approximated), tex pool K KB free`: logged
-  every 600 frames. A high `approximated` count means TEV setups the
-  combiners only approximate; a tex pool near 0 means texture churn.
+- `[NV2A] frame N: D draws (A approximated), tex pool K KB free (largest L
+  KB)`: logged every 600 frames. A high `approximated` count means TEV
+  setups the combiners only approximate; a tex pool near 0 means texture
+  churn, and `pool allocations failed` that textures were dropped.
+- `[TEX] ... N drops`: textures that could not be uploaded even after
+  evicting (drawn untextured). The first one of each interval has its own
+  `[TEX] drop:` line.
+- `[SCENE] enter/leave: mode M state S scene K` and the `[MEM] scene` line
+  after it: every scene transition with free RAM, committed MEM1+ARAM, the
+  texture pool and the vertex cache. `[GAME] match ends: outcome N` is
+  TIME!/GAME!, `[GAME] end banner done` the moment the results take over.
+- `[BEAT] Ns: retrace R, presented P, free ...`: every 5 s from the
+  watchdog thread. If the log ends with `[BEAT]` lines whose `retrace` still
+  climbs while `presented` stands still, the game is looping without
+  drawing; if the `[BEAT]` lines stop too, the whole machine stopped.
+- `[WDOG] presents stopped, retrace running`: after 10 s of that the
+  watchdog dumps every thread to `boot.log` and `hang.log` (the game thread
+  marked, with the EIP it was interrupted at); after a minute it shows the
+  dump on screen too. `frames stopped` (no retrace for 6 s) shows it at
+  once.
 
 ## Crashes
 
@@ -138,6 +163,9 @@ report.
 | `-DXHW_FBDUMP_EVERY=<n>` | screenshot every n presented frames |
 | `-DXGX_STATS_EVERY=<n>` | `[NV2A]` / `[TEX]` stats period, in frames (default 600) |
 | `-DXHW_WATCHDOG=0`, `-DXHW_HEARTBEAT_SECS=<n>` | hang dumper off; `[BEAT]` period (0 = off) |
+| `-DXHW_WATCHDOG_PRESENT_SECS=<n>` | seconds of retraces without presents before the watchdog reports (default 10) |
+| `-DXGX_TEX_POOL_KB=<n>` | texture pool size (default 8192 at 480, 6144 at 720p) |
+| `-DXGX_DEBUG_MAGENTA` | textures the pool could not take draw magenta instead of untextured |
 | `-DXHW_NO_SPLASH`, `-DXHW_SPLASH_MS=<n>` | boot title card off; its hold time |
 | `XBOX_FORCE=1 tools/xbox/compile_game.py` | rebuild every game unit |
 | `XBOX_KEEP_TEMPS=1` | keep the `.i` / `.lowered.c` intermediates |

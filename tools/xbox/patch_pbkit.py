@@ -18,7 +18,12 @@ Here:
     GPU interrupt so threads can run and the watchdog can report;
   - the depth format can be set before pb_init (pb_DepthFmt no longer static,
     Z16 sized and scaled): 720p pairs a 16-bit colour buffer with Z16, as
-    NV2x wants matching colour and depth widths (xbox/src/hw/nv2a.c).
+    NV2x wants matching colour and depth widths (xbox/src/hw/nv2a.c);
+  - ocx_pb_retarget_back_buffer() points rendering back at the current back
+    buffer after an EFB copy drew elsewhere through another DMA object. DMA
+    object 9 still describes the back buffer, so only the surface state is
+    pushed; pb_target_back_buffer() rewrites object 9 through four
+    GPU->CPU interrupts (PB_SETOUTER) every time.
 Every replacement must match exactly once, or the build fails.
 """
 import re
@@ -96,5 +101,20 @@ sub(r'int DepthBpp = 32;\n    assert\(pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZE
     "int DepthBpp = pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? 16 : 32;\n"
     "    assert(pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z24S8 || pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16);\n"
     "    pb_ZScale = pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? (float)0xFFFF : (float)0xFFFFFF;")
+
+src += """
+
+/* Melee-X (tools/xbox/patch_pbkit.py): back to the current back buffer
+ * without rewriting DMA object 9, which still points at it. */
+void ocx_pb_retarget_back_buffer(void)
+{
+    uint32_t *p=pb_begin();
+    p=pb_push1(p,NV20_TCL_PRIMITIVE_3D_SET_OBJECT3,9);
+    p=pb_push3(p,NV20_TCL_PRIMITIVE_3D_BUFFER_PITCH,(pb_DepthStencilPitch<<16)|(pb_FrameBuffersPitch&0xFFFF),0,0);
+    p=pb_push2(p,NV20_TCL_PRIMITIVE_3D_VIEWPORT_HORIZ,pb_FrameBuffersWidth<<16,pb_FrameBuffersHeight<<16);
+    p=pb_push1(p,NV20_TCL_PRIMITIVE_3D_BUFFER_FORMAT,pb_GPUFrameBuffersFormat|pb_FBVFlag);
+    pb_end(p);
+}
+"""
 
 open(out_path, "w", encoding="utf-8").write(src)

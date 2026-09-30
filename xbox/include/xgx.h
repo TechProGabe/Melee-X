@@ -194,6 +194,7 @@ void xgx_tex_destroy(uint32_t tex);   /* deferred until the GPU is done */
 uint32_t xgx_tex_bytes(uint32_t tex); /* pool bytes a live texture holds, 0 otherwise */
 uint32_t xgx_tex_pool_free_kb(void);
 uint32_t xgx_tex_pool_kb(void);
+uint32_t xgx_tex_pool_largest_kb(void);   /* the largest free block: fragmentation */
 
 /* Vertex buffers that outlive a frame (gx_vtx.c's display-list cache), in
  * canonical layout, from their own pool. alloc returns NULL when the pool is

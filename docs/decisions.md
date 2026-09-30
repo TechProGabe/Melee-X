@@ -66,6 +66,13 @@ nxdk's pdclib implements them as byte loops, and on hardware they took about
 40% of a VS match's frame. The platform's versions move 32 bits at a time
 and win the link over libpdclib.
 
+**Compiler builtins for memcpy & co.** (`xbox/include/xbuiltin.h`). Every
+unit is built `-ffreestanding` (nxdk-cc's flags, and the game's to match),
+which implies `-fno-builtin`: a `memcpy(v, out, 12)` was a real call and a
+`rep movsb`. The header, force-included after `<string.h>`, maps the four to
+`__builtin_*`, so constant sizes are inlined and the rest still calls
+`xhw_string.c`. On the console those calls were ~18% of a match frame.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 
@@ -94,6 +101,11 @@ marked `PORT:`:
   word from the previous state was read as the thunder gobj.
 - `src/melee/gm/gmvsmode.c`: `MELEE_DEBUG_VS_TIME=<seconds>` next to
   melee-pc's other debug-VS hooks, so a scripted match can end on TIME!.
+- `src/melee/gm/gm_1A3F.c` (`gm_801A4014`): every scene enter and leave is
+  logged with the memory picture (`xsdk_scene_log`, `xbox/src/sdk/log.c`), so
+  a console that freezes during a transition leaves the scene in `boot.log`.
+- `src/melee/gm/gmvs.c`: `[GAME]` log lines where a match ends (TIME!,
+  GAME!, no contest) and where the end banner hands over to the results.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after
@@ -118,6 +130,18 @@ To sync a newer melee-pc:
   Greens to 7 fps; the CPU readback of the four shadow maps was then about
   half the frame, and the copies now run on the GPU (unmeasured on the
   console yet).
+- **A freeze at TIME! on the console** (4-player Green Greens, results
+  never came; xemu reaches them). Not reproduced. The log now flushes
+  urgent lines at once and the rest within a second, logs scene and
+  match-end transitions with free memory, and the watchdog also reports a
+  game that keeps pacing retraces without drawing, writes its report into
+  `boot.log` itself, and logs a `[BEAT]` every 5 s. Fixed on the way: the
+  profiler thread did file I/O on a 16 KB stack (the kernel's file-system
+  path runs on it; now 64 KB, as the watchdog's); the flip and vblank waits
+  could spin forever if pbkit masked the GPU interrupt after an interrupt
+  storm (now timed, logged, and the interrupt is turned back on); each EFB
+  copy no longer costs four GPU-to-CPU interrupts to re-target the back
+  buffer.
 - **The demand-commit fault handler** relies on the Xbox kernel sending
   kernel-mode access violations on reserved memory to the thread's SEH
   chain. That is how nxdk's `__try` works, but it hasn't been exercised.

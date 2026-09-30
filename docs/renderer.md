@@ -26,14 +26,32 @@ normals and colours), texgen constants (TEXGEN, TEXMTX, or POSMTX when a
 texgen reads a position matrix), fixed pixel state (PIXEL, SCISSOR, FOG) and
 combiner constants (TEVREG). `s_draw_force` rebuilds everything after a GPU
 state reset or a content-rect change. So every GX setter must mark its
-group; `gx_state.c`'s all do.
+group; `gx_state.c`'s all do. A setter whose values equal the current state
+returns without flushing or marking anything: HSD re-sets the whole TEV,
+channel and pixel state for every material, and those redundant calls used
+to make most draws rebuild and re-hash the combiner setup. The back end also
+skips re-sending a combiner program it sent last (by cache slot, not by
+comparing the program) and the inline white vertex colour while it is still
+there.
 
-Display lists are cached (`gx_vtx.c`): the first call decodes the list into
-a vertex buffer from its own pool (2 MB at 480, 1.5 MB at 720p) and later
-calls replay the draws. An entry is checked against the vertex descriptor,
-formats and arrays on every call, and against a sampled hash of the list and
-of the array ranges it indexed once a frame. Lists that keep changing (shape
-animation) go volatile and are decoded every call. `[DLC]` lines report it.
+memcpy, memmove, memset and memcmp are compiler builtins everywhere
+(`xbox/include/xbuiltin.h`, force-included): nxdk and the game build with
+`-ffreestanding`, which made every fixed-size copy in the decoder and HSD a
+real call. That was ~18% of a match frame on the console.
+
+Display lists are cached (`gx_vtx.c`, up to 2048 lists): the first call
+decodes the list into a vertex buffer from its own pool (3 MB at 480, 2 MB
+at 720p; the results screen filled 2 MB) and later calls replay the draws. An entry is checked against the
+vertex descriptor, formats and arrays on every call, and against a sampled
+hash of the list and of the array ranges it indexed once a frame. A list
+whose arrays keep changing (skinned and morphed models, whose positions and
+normals HSD rewrites or re-points every frame) goes dynamic after four
+rebuilds: its decode plan, every vertex's indices and a decoded template in
+cached RAM are kept (1 MB for all of them). Each call re-fetches only the
+attributes whose array moved or whose sampled hash changed (once one has
+changed it is fetched on every call), then copies the template into the
+vertex ring in one sequential write. Lists that don't fit the budget are
+decoded every call (volatile). `[DLC]` lines report both.
 
 `xgx.h` is compiled by both triples (game and nxdk), so its structs hold only
 32-bit scalars, floats and byte arrays: no bit-fields, no 64-bit members.
@@ -153,15 +171,27 @@ Current limits:
   - both colours are byte-swapped;
   - each index byte has its 2-bit fields reversed (GX puts pixel 0 in bits
     7-6, DXT1 in bits 1-0).
-- The texture pool is contiguous memory: 6 MB at 480, 5 MB at 720p. When it
-  is full, `gx_tex_make_room` evicts least recently used cache entries until
+- The texture pool is contiguous memory: 8 MB at 480, 6 MB at 720p (it was
+  6 / 5 MB and ran out on the console at the start of a match; init falls
+  back 1 MB at a time to 4 MB, `-DXGX_TEX_POOL_KB=<n>` sets it). When it is
+  full, `gx_tex_make_room` evicts least recently used cache entries until
   about the needed size is released, then the GPU is waited on once and the
   allocation retried; each round frees twice as much, since the pool
-  fragments. Textures bound to a texture map are never evicted. EFB copies
+  fragments. Textures bound to a texture map are never evicted, and a
+  texture drawn this frame only goes when nothing older is left. EFB copies
   are evicted too (a stale one would otherwise pin the pool: the attract demo
-  copies to a new address every frame), but they count as 60 frames younger,
-  since they can't be rebuilt from memory. When nothing is left to evict the
-  texture is dropped for that draw instead of waiting forever.
+  copies to a new address every frame), but among the older entries they
+  count as 60 frames younger, since they can't be rebuilt from memory. When
+  nothing is left to evict the texture is dropped for that draw (drawn
+  untextured, usually black) instead of waiting forever. Drops are counted
+  in the `[TEX]` line, the first of each interval gets a `[TEX] drop:` line
+  (size, pool free, largest free block), and `-DXGX_DEBUG_MAGENTA` draws
+  them magenta.
+- Cache lookups go through a hash of the data pointer. Binding the object a
+  texture map already holds this frame skips the lookup entirely. Textures
+  are revalidated (sampled hash) once a frame; `GXInvalidateTexAll`, which
+  HSD calls after each of its four shadow copies, no longer forces another
+  round.
 - EFB copies (`GXCopyTex`) are drawn by the GPU (`efb_copy_gpu`): the back
   buffer, bound as a linear texture, is drawn with one quad into the
   destination texture as a swizzled render target (pbkit's DMA object 3,
@@ -170,7 +200,10 @@ Current limits:
   channels the copy format stores: the shadow maps are `GX_CTF_R4`, sampled
   as I4, so red goes to every channel. `WAIT_FOR_IDLE` on both sides orders
   the copy against the draws before and after it; the CPU never waits.
-  Afterwards the back buffer is the target again and every state group is
+  Afterwards the back buffer is the target again
+  (`ocx_pb_retarget_back_buffer`, added by `tools/xbox/patch_pbkit.py`: it
+  re-sends the surface state only, where `pb_target_back_buffer` rewrites
+  DMA object 9 through four GPU-to-CPU interrupts) and every state group is
   re-sent. The CPU readback (`-DXGX_EFB_GPU_COPY=0`, and 720p, whose 16-bit
   depth buffer can't pair with a 32-bit texture target) cost ~8 ms per
   256x256 shadow map on the console: the framebuffer is write-combined, so

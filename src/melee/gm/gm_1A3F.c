@@ -44,6 +44,13 @@ ASSERT_SIZE(struct stateMachine, 0x14);
 
 /* 1A3F48 */ static void preloadState(GameModeState*);
 
+#ifdef TARGET_XBOX
+/* PORT: scene transitions go to the Xbox log with free memory
+ * (xbox/src/sdk/log.c), so a console that freezes on one leaves the last
+ * scene in boot.log. */
+void xsdk_scene_log(const char* what, int mode, int state, int scene);
+#endif
+
 /**
  * @brief Runs one game-mode scene transition and invokes the run loop for a
  * given scene
@@ -166,6 +173,10 @@ void gm_801A4014(GameMode* mode)
     sm = &state_machine;
     state = findState(mode->states);
     sm->routing.curr_state_id = state->id;
+#ifdef TARGET_XBOX
+    /* PORT: see xsdk_scene_log above */
+    xsdk_scene_log("enter", sm->routing.curr_mode, state->id, state->info.scene_kind);
+#endif
 
 #ifdef TARGET_PC
     /* The state id is what separates "the mode loaded" from "the match is
@@ -190,6 +201,10 @@ void gm_801A4014(GameMode* mode)
         scene->on_enter(info->enter_data);
     }
     gm_801A4D34(scene->on_frame, info);
+#ifdef TARGET_XBOX
+    /* PORT: see xsdk_scene_log above */
+    xsdk_scene_log("leave", sm->routing.curr_mode, state->id, info->scene_kind);
+#endif
     if (!gmMainLib_8046B0F0.resetting && scene->on_exit != NULL) {
         scene->on_exit(info->exit_data);
     }

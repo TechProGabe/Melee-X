@@ -56,8 +56,9 @@ here than on x86-64:
 | MEM1 (game heaps) | 24 MB reserved as on the GameCube, committed on demand |
 | ARAM (preload cache, sound banks) | 16 MB reserved, committed on demand |
 | NV2A: 720p R5G6B5 x3 + Z16 | 7.4 MB |
-| NV2A: texture pool | 5 MB at 720p, 6 MB at 480 |
+| NV2A: texture pool | 6 MB at 720p, 8 MB at 480 |
 | pushbuffer + vertex ring | 3 MB |
+| NV2A: display-list vertex cache | 3 MB at 480, 2 MB at 720p |
 
 MEM1 and ARAM are reserved at fixed VAs and committed 64 KB at a time
 (`xhw_reserve_lazy`). The first touch of a chunk faults, and the SEH

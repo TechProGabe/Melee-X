@@ -44,17 +44,61 @@ typedef struct {
     uint32_t hash, tlut_hash;
     uint32_t tex;
     uint32_t last_used, checked;
+    int next;                   /* bucket chain by data pointer, -1: end */
 } Entry;
 
 #define CACHE_MAX 2048
+#define CACHE_BUCKETS 1024
 static Entry s_cache[CACHE_MAX];
 static int s_count;
+static int s_bucket[CACHE_BUCKETS];
+static int s_bucket_ready;
 static uint32_t s_frame = 1;
 static uint32_t* s_scratch;
 static uint32_t s_scratch_texels;   /* in 32-bit words */
-static uint32_t s_st_uploads, s_st_evicts;
+static uint32_t s_st_uploads, s_st_evicts, s_st_evicts_hot, s_st_drops, s_st_drop_kb, s_st_fast;
+static uint32_t s_drop_logged;
 
-void gx_tex_init(void) {}
+/* The last object bound to each texture map this frame: binding it again
+ * (HSD loads the same texture for every pobj of a material) skips the
+ * lookup and the dirty bit. Cleared whenever an entry is dropped. */
+typedef struct {
+    TexObj obj;
+    const uint8_t* tlut_data;
+    uint32_t tex, frame;
+} MapBind;
+static MapBind s_bound[XGX_MAX_MAPS];
+
+static uint32_t bucket_of(const uint8_t* data) { return ((uint32_t)(uintptr_t)data >> 5) % CACHE_BUCKETS; }
+
+static void chain_init(void) {
+    if (s_bucket_ready) return;
+    memset(s_bucket, 0xFF, sizeof s_bucket);
+    s_bucket_ready = 1;
+}
+
+static void chain_link(int i) {
+    int* b = &s_bucket[bucket_of(s_cache[i].data)];
+    s_cache[i].next = *b;
+    *b = i;
+}
+
+static void chain_unlink(int i) {
+    int* link = &s_bucket[bucket_of(s_cache[i].data)];
+    while (*link >= 0 && *link != i) link = &s_cache[*link].next;
+    if (*link == i) *link = s_cache[i].next;
+}
+
+/* a new entry at the end of the array, linked */
+static Entry* entry_add(const uint8_t* data) {
+    Entry* e = &s_cache[s_count];
+    memset(e, 0, sizeof *e);
+    e->data = data;
+    chain_link(s_count++);
+    return e;
+}
+
+void gx_tex_init(void) { chain_init(); }
 
 /* ---- sizes ---- */
 static void block_dims(uint32_t fmt, int* bw, int* bh, int* bpp) {
@@ -225,7 +269,8 @@ static uint32_t hash_bytes(const uint8_t* p, uint32_t n) {
 
 static Entry* find(const uint8_t* data, uint16_t w, uint16_t h, uint8_t fmt, uint8_t levels, const uint8_t* tlut_data) {
     int i;
-    for (i = 0; i < s_count; i++) {
+    chain_init();
+    for (i = s_bucket[bucket_of(data)]; i >= 0; i = s_cache[i].next) {
         Entry* e = &s_cache[i];
         if (e->tex && e->data == data && (e->efb || (e->w == w && e->h == h && e->fmt == fmt && e->levels == levels &&
                                                      e->tlut_data == tlut_data)))
@@ -241,8 +286,10 @@ static int is_bound(uint32_t tex) {
     return 0;
 }
 
-static void drop(Entry* e) {
-    int m;
+/* Removes s_cache[i]; the last entry moves into its slot. */
+static void drop_at(int i) {
+    Entry* e = &s_cache[i];
+    int m, last = s_count - 1;
     if (e->tex) {
         for (m = 0; m < XGX_MAX_MAPS; m++)
             if (g_xgx.map[m].tex == e->tex) {
@@ -251,25 +298,43 @@ static void drop(Entry* e) {
             }
         xgx_tex_destroy(e->tex);
     }
-    *e = s_cache[--s_count];
+    memset(s_bound, 0, sizeof s_bound);
+    chain_unlink(i);
+    if (i != last) {
+        chain_unlink(last);
+        s_cache[i] = s_cache[last];
+        chain_link(i);
+    }
+    s_count--;
 }
 
-/* Eviction victim: the least recently used entry no texture map holds.
- * An EFB copy can't be made again from memory, so it counts as EFB_GRACE
- * frames younger than it is: textures are re-uploaded first, but a stale
- * copy still goes. -1: nothing to evict. */
+static void drop(Entry* e) { drop_at((int)(e - s_cache)); }
+
+/* Eviction victim: the least recently used entry no texture map holds, and
+ * never one drawn this frame while an older one is left (evicting those
+ * only makes the frame upload them again, or drop them). An EFB copy can't
+ * be made again from memory, so among the older entries it counts as
+ * EFB_GRACE frames younger than it is: textures are re-uploaded first, but
+ * a stale copy still goes. -1: nothing to evict. */
 #define EFB_GRACE 60
 static int lru_victim(void) {
-    int i, pick = -1;
-    uint32_t best = 0;
+    int i, pick = -1, pick_hot = -1;
+    int32_t best = 0;
     for (i = 0; i < s_count; i++) {
-        uint32_t rank = s_cache[i].last_used + (s_cache[i].efb ? EFB_GRACE : 0);
-        if ((pick < 0 || rank < best) && !is_bound(s_cache[i].tex)) {
-            pick = i;
-            best = rank;
+        const Entry* e = &s_cache[i];
+        if (is_bound(e->tex)) continue;
+        if (e->last_used != s_frame) {
+            int32_t rank = (int32_t)(s_frame - e->last_used) - (e->efb ? EFB_GRACE : 0);   /* higher: evict first */
+            if (pick < 0 || rank > best) {
+                pick = i;
+                best = rank;
+            }
+        } else if (pick_hot < 0) {
+            pick_hot = i;
         }
     }
-    return pick;
+    if (pick < 0 && pick_hot >= 0) s_st_evicts_hot++;
+    return pick >= 0 ? pick : pick_hot;
 }
 
 /* Evicts until about `bytes` of the pool is released. Returns how many
@@ -282,7 +347,7 @@ int gx_tex_make_room(uint32_t bytes) {
     while (freed < bytes && (i = lru_victim()) >= 0) {
         freed += xgx_tex_bytes(s_cache[i].tex);
         s_st_evicts++;
-        drop(&s_cache[i]);
+        drop_at(i);
         n++;
     }
     return n;
@@ -292,7 +357,7 @@ static void evict_one(void) {
     int i = lru_victim();
     if (i < 0) i = 0;   /* every entry bound: 2048 entries, 8 maps, can't happen */
     s_st_evicts++;
-    drop(&s_cache[i]);
+    drop_at(i);
 }
 
 /* ---- native formats ----
@@ -419,16 +484,45 @@ static uint32_t upload(const TexObj* o, const TlutObj* tl, uint32_t levels, uint
     return tex;
 }
 
+/* -DXGX_DEBUG_MAGENTA: a texture that could not be uploaded draws magenta
+ * instead of untextured, so a drop shows on screen */
+static uint32_t magenta_tex(void) {
+#ifdef XGX_DEBUG_MAGENTA
+    static uint32_t s_magenta;
+    if (!s_magenta) {
+        static uint32_t px[64];
+        int i;
+        for (i = 0; i < 64; i++) px[i] = 0xFFFF00FFu;
+        s_magenta = xgx_tex_create(8, 8, 1, XGX_TEX_ARGB8, px);
+    }
+    return s_magenta;
+#else
+    return 0;
+#endif
+}
+
 void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
     const TexObj* o = (const TexObj*)obj;
     const TlutObj* tl = NULL;
     uint32_t levels = 1, bytes, hash, thash = 0;
     Entry* e;
-    XgxMap* m = &g_xgx.map[map];
+    XgxMap* m;
+    MapBind* b;
     if (map >= XGX_MAX_MAPS) return;
+    m = &g_xgx.map[map];
+    b = &s_bound[map];
     if (!o || o->magic != TEXOBJ_MAGIC || !o->data || !o->w || !o->h) {
         m->tex = 0;
+        b->frame = 0;
         g_xgx.dirty |= XGX_DIRTY_MAPS;
+        return;
+    }
+    if (o->is_ci && o->tlut < TLUT_SLOTS) tl = &s_tlut[o->tlut];
+    /* the same object again, already looked up and validated this frame:
+     * nothing changes (s_bound is cleared whenever an entry is dropped) */
+    if (b->frame == s_frame && b->tex && m->tex == b->tex && b->tlut_data == (tl ? tl->data : NULL) &&
+        memcmp(&b->obj, o, sizeof *o) == 0) {
+        s_st_fast++;
         return;
     }
     if (o->mipmap) {
@@ -443,7 +537,6 @@ void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
 #ifdef XGX_DEBUG_NOMIP
     levels = 1;
 #endif
-    if (o->is_ci && o->tlut < TLUT_SLOTS) tl = &s_tlut[o->tlut];
     bytes = GXGetTexBufferSize(o->w, o->h, o->fmt, o->mipmap, (u8)levels);
     e = find(o->data, o->w, o->h, o->fmt, (uint8_t)levels, tl ? tl->data : NULL);
     if (e && !e->efb && e->checked != s_frame) {
@@ -460,13 +553,27 @@ void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
         if (s_count == CACHE_MAX) evict_one();
         tex = upload(o, tl, levels, bytes);
         if (!tex) {
-            m->tex = 0;
+            /* the pool can't take it even after evicting: the surface draws
+             * untextured this time (black, usually) and the next bind tries again */
+            s_st_drops++;
+            s_st_drop_kb += bytes / 1024;
+            if (!s_drop_logged) {
+                s_drop_logged = 1;
+                xhw_logf("[TEX] drop: %ux%u fmt %u, %u levels (%u KB of GX data); pool %u of %u KB free, largest "
+                         "block %u KB, %d cached",
+                         o->w, o->h, o->fmt, levels, bytes / 1024, xgx_tex_pool_free_kb(), xgx_tex_pool_kb(),
+                         xgx_tex_pool_largest_kb(), s_count);
+            }
+            m->tex = magenta_tex();
+            m->w = m->h = 8;
+            m->wrap_s = m->wrap_t = GX_REPEAT;
+            m->min_filter = m->mag_filter = GX_NEAR;
+            m->lod_bias = 0;
+            b->frame = 0;
             g_xgx.dirty |= XGX_DIRTY_MAPS;
             return;
         }
-        e = &s_cache[s_count++];
-        memset(e, 0, sizeof *e);
-        e->data = o->data;
+        e = entry_add(o->data);
         e->w = o->w;
         e->h = o->h;
         e->fmt = o->fmt;
@@ -487,37 +594,45 @@ void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
     m->mag_filter = o->mag_f;
     m->lod_bias = o->lod_bias;
     g_xgx.dirty |= XGX_DIRTY_MAPS;
+    b->obj = *o;
+    b->tlut_data = tl ? tl->data : NULL;
+    b->tex = e->tex;
+    b->frame = s_frame;
 }
 
 /* the texture the last EFB copy to `dest` made, for xgx_tex_from_efb to refill */
 uint32_t gx_tex_efb_texture(const void* dest) {
     int i;
-    for (i = 0; i < s_count; i++)
+    chain_init();
+    for (i = s_bucket[bucket_of((const uint8_t*)dest)]; i >= 0; i = s_cache[i].next)
         if (s_cache[i].efb && s_cache[i].data == (const uint8_t*)dest) return s_cache[i].tex;
     return 0;
 }
 
 /* EFB copy: remember which texture now holds the pixels at `dest` */
 void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h, uint32_t fmt) {
-    int i;
-    for (i = 0; i < s_count; i++)
-        if (s_cache[i].data == (const uint8_t*)dest) {
-            if (tex && s_cache[i].efb && s_cache[i].tex == tex) {   /* refilled in place */
-                s_cache[i].w = (uint16_t)w;
-                s_cache[i].h = (uint16_t)h;
-                s_cache[i].fmt = (uint8_t)fmt;
-                s_cache[i].last_used = s_frame;
-                return;
+    chain_init();
+    for (;;) {
+        int i, hit = -1;
+        for (i = s_bucket[bucket_of((const uint8_t*)dest)]; i >= 0; i = s_cache[i].next)
+            if (s_cache[i].data == (const uint8_t*)dest) {
+                hit = i;
+                break;
             }
-            drop(&s_cache[i]);
-            i--;
+        if (hit < 0) break;
+        if (tex && s_cache[hit].efb && s_cache[hit].tex == tex) {   /* refilled in place */
+            s_cache[hit].w = (uint16_t)w;
+            s_cache[hit].h = (uint16_t)h;
+            s_cache[hit].fmt = (uint8_t)fmt;
+            s_cache[hit].last_used = s_frame;
+            return;
         }
+        drop_at(hit);
+    }
     if (!tex) return;
     if (s_count == CACHE_MAX) evict_one();
     {
-        Entry* e = &s_cache[s_count++];
-        memset(e, 0, sizeof *e);
-        e->data = (const uint8_t*)dest;
+        Entry* e = entry_add((const uint8_t*)dest);
         e->w = (uint16_t)w;
         e->h = (uint16_t)h;
         e->fmt = (uint8_t)fmt;
@@ -537,7 +652,7 @@ void gx_tex_frame_end(void) {
     if (s_frame % XGX_STATS_EVERY == 0) {
         /* working set of the last frame, by GX format: count / KB as GX data */
         uint32_t n[16] = { 0 }, kb[16] = { 0 }, live = 0;
-        char line[256];
+        char line[320];
         int k, len;
         for (i = 0; i < s_count; i++)
             if (s_cache[i].last_used == s_frame && !s_cache[i].efb) {
@@ -547,25 +662,30 @@ void gx_tex_frame_end(void) {
                                             s_cache[i].levels) / 1024;
                 live++;
             }
-        len = snprintf(line, sizeof line, "[TEX] %d cached, %u used last frame; per %u: %u uploads, %u evictions; fmt n/KB:",
-                       s_count, live, XGX_STATS_EVERY, s_st_uploads, s_st_evicts);
+        len = snprintf(line, sizeof line,
+                       "[TEX] %d cached, %u used last frame; per %u: %u uploads, %u evictions (%u of this frame's), "
+                       "%u drops (%u KB), %u rebinds skipped; fmt n/KB:",
+                       s_count, live, XGX_STATS_EVERY, s_st_uploads, s_st_evicts, s_st_evicts_hot, s_st_drops,
+                       s_st_drop_kb, s_st_fast);
         for (k = 0; k < 16; k++)
             if (n[k]) len += snprintf(line + len, sizeof line - (size_t)len, " %x:%u/%u", k, n[k], kb[k]);
         xhw_log(line);
-        s_st_uploads = s_st_evicts = 0;
+        s_st_uploads = s_st_evicts = s_st_evicts_hot = s_st_drops = s_st_drop_kb = s_st_fast = 0;
+        s_drop_logged = 0;
     }
     s_frame++;
     for (i = 0; i < s_count; i++)
         if (s_frame - s_cache[i].last_used > 600) {
-            drop(&s_cache[i]);
+            drop_at(i);
             i--;
         }
 }
 
-void gx_tex_invalidate_all(void) {
-    int i;
-    for (i = 0; i < s_count; i++) s_cache[i].checked = 0;
-}
+/* Every texture is revalidated (sampled hash) once a frame anyway. The
+ * game invalidates after each EFB copy too (HSD's shadows: four times a
+ * frame), which only concerns the copies, never hashed; revalidating every
+ * texture again there cost ~2% of a match frame. */
+void gx_tex_invalidate_all(void) {}
 
 /* ---- GX API ---- */
 void GXInitTexObj(GXTexObj* obj, const void* data, u16 w, u16 h, GXTexFmt fmt, GXTexWrapMode ws, GXTexWrapMode wt,

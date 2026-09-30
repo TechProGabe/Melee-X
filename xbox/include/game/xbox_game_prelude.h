@@ -59,6 +59,9 @@ float pc_atanf(float);
 #define M_SQRT1_2 0.70710678118654752440
 #endif
 
+/* memcpy & co. as builtins despite -ffreestanding (xbox/include/xbuiltin.h) */
+#include "../xbuiltin.h"
+
 /* pdclib's stdout and stderr are dead handles on nxdk: printf-family output
  * goes to the Xbox log instead (xbox/src/sdk/log.c defines these). */
 #include <stdio.h>

@@ -36,6 +36,7 @@
 
 void xhw_video_fallback_480(void);
 extern unsigned int pb_DepthFmt;   /* settable: tools/xbox/patch_pbkit.py */
+void ocx_pb_retarget_back_buffer(void);   /* tools/xbox/patch_pbkit.py */
 
 /* GX values used here (dolphin headers are not on the hw include path) */
 enum { GX_CULL_NONE, GX_CULL_FRONT, GX_CULL_BACK, GX_CULL_ALL };
@@ -96,15 +97,27 @@ static int map_y(float y) { return s_cy + (int)floorf(y * (float)s_ch / XGX_EFB_
 /* ======================================================================
  * Contiguous memory: texture pool and vertex ring
  * ====================================================================== */
-/* sized for 64 MB next to the game (docs/architecture.md "Memory") */
-#define TEX_POOL_480 (6u * 1024 * 1024)
-#define TEX_POOL_720 (5u * 1024 * 1024)
+/* sized for 64 MB next to the game (docs/architecture.md "Memory"). 6 MB
+ * ran out on the console (textures dropped, drawn black): the menus' and
+ * the stage's working sets meet at the start of a match. xemu still has
+ * ~14 MB free on the results screen; if the pool can't be had, init falls
+ * back 1 MB at a time down to TEX_POOL_MIN. -DXGX_TEX_POOL_KB=<n> sets it. */
+#ifdef XGX_TEX_POOL_KB
+#define TEX_POOL_480 ((uint32_t)XGX_TEX_POOL_KB * 1024)
+#define TEX_POOL_720 ((uint32_t)XGX_TEX_POOL_KB * 1024)
+#else
+#define TEX_POOL_480 (8u * 1024 * 1024)
+#define TEX_POOL_720 (6u * 1024 * 1024)
+#endif
+#define TEX_POOL_MIN (4u * 1024 * 1024)
 #define RING_BYTES (1536u * 1024)
 #ifndef XGX_EFB_GPU_COPY
 #define XGX_EFB_GPU_COPY 1   /* EFB -> texture copies drawn by the GPU (efb_copy_gpu); 0: CPU readback */
 #endif
-#define VB_POOL_480 (2048u * 1024)   /* cached display lists (gx_vtx.c) */
-#define VB_POOL_720 (1536u * 1024)
+/* cached display lists (gx_vtx.c); the results screen (6500 draws) filled
+ * 2 MB and rebuilt lists every frame */
+#define VB_POOL_480 (3072u * 1024)
+#define VB_POOL_720 (2048u * 1024)
 #define PB_BYTES (1536u * 1024)
 #define POOL_ALIGN 128
 #define POOL_BIG (256 * 1024)
@@ -206,6 +219,13 @@ static void pool_free(Pool* pl, void* p) {
 }
 
 uint32_t xgx_tex_pool_free_kb(void) { return (s_tp.bytes - s_tp.used) / 1024; }
+uint32_t xgx_tex_pool_largest_kb(void) {
+    const Blk* b;
+    uint32_t best = 0;
+    for (b = s_tp.blocks; b; b = b->next)
+        if (b->free && b->size > best) best = b->size;
+    return best / 1024;
+}
 uint32_t xgx_tex_pool_kb(void) { return s_tp.bytes / 1024; }
 uint32_t xgx_vbuf_pool_kb(void) { return s_vb.bytes / 1024; }
 uint32_t xgx_vbuf_pool_free_kb(void) { return (s_vb.bytes - s_vb.used) / 1024; }
@@ -242,7 +262,7 @@ static void pb_close(void) {
 }
 
 /* per-interval counters for the [NV2A] frame line */
-static uint32_t s_st_waits, s_st_efb, s_st_tex_kb, s_st_verts;
+static uint32_t s_st_waits, s_st_efb, s_st_tex_kb, s_st_verts, s_st_tex_fail;
 
 /* GPU faults, recorded by the patched pbkit (ocx_pb_gpu_fault below) */
 static volatile uint32_t s_gf_count, s_gf_storms, s_gf_last[5];
@@ -263,12 +283,27 @@ static void report_gpu_stall(void) {
              w[7]);
 }
 
+/* Set by the patched pbkit when an interrupt storm made it leave the GPU
+ * interrupt masked. Vblank flips and pbkit's PB_SETOUTER calls need that
+ * interrupt, so the next frame would hang for good: turn it back on (at
+ * passive level, once the storm has had time to pass) and say so. */
+volatile int ocx_pb_irq_off;
+
+static void irq_recover(void) {
+    if (!ocx_pb_irq_off) return;
+    ocx_pb_irq_off = 0;
+    s_gf_storms = 0;
+    *(volatile uint32_t*)0xFD000140u = 1;   /* NV_PMC_INTR_EN_0 = INTA_HARDWARE */
+    xhw_logf("[NV2A] GPU interrupt storm: interrupt re-enabled (faults %u)", (unsigned)s_gf_count);
+}
+
 static void wait_idle(void) {
     uint64_t t0 = 0;
     int reported = 0, pf = xhw_perf_enter(XHW_PERF_GPU);
     s_st_waits++;
     pb_close();
     while (pb_busy()) {
+        irq_recover();
         if (!t0) t0 = xhw_time_ns();
         else if (!reported && xhw_time_ns() - t0 > 2000000000ull) {
             report_gpu_stall();
@@ -284,7 +319,6 @@ static uint32_t pb_used(void) {
 }
 
 /* GPU faults, recorded by the patched pbkit (tools/xbox/patch_pbkit.py) */
-volatile int ocx_pb_irq_off;
 static uint32_t s_gf_logged;
 
 void ocx_pb_gpu_fault(unsigned kind, unsigned a, unsigned b, unsigned c, unsigned d) {
@@ -504,7 +538,10 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
         release_deferred();
         mem = (uint8_t*)pool_alloc(&s_tp, bytes);
     }
-    if (!mem) return 0;
+    if (!mem) {
+        s_st_tex_fail++;
+        return 0;
+    }
     dst = mem;
     sw = (int)w;
     sh = (int)h;
@@ -634,11 +671,29 @@ void xgx_present(int black) {
         s_gf_logged = s_gf_count;
     }
     s_gf_storms = 0;
+    irq_recover();
     {
-        /* never draw into the buffer being scanned out (OpenCrossing traps.md) */
-        int guard = 4, pf = xhw_perf_enter(XHW_PERF_GPU);
-        while (pb_finished()) {}
-        while (guard-- && (PCRTC_START_REG & 0x03FFFFFF) == ((uint32_t)pb_back_buffer() & 0x03FFFFFF)) pb_wait_for_vbl();
+        /* never draw into the buffer being scanned out (OpenCrossing traps.md).
+         * Both waits depend on pbkit's vblank DPC; if the GPU interrupt is
+         * masked (an interrupt storm, ocx_pb_irq_off) they would never end
+         * and nothing would say why, so they are timed and logged. */
+        int guard = 4, pf = xhw_perf_enter(XHW_PERF_GPU), warned = 0;
+        uint64_t t0 = 0;
+        while (pb_finished()) {
+            irq_recover();
+            if (!t0) t0 = xhw_time_ns();
+            else if (!warned && xhw_time_ns() - t0 > 1000000000ull) {
+                xhw_logf("[NV2A] flip stalled: no back buffer free for 1 s, vblank %u, faults %u%s",
+                         (unsigned)pb_get_vbl_counter(), (unsigned)s_gf_count,
+                         ocx_pb_irq_off ? " (GPU interrupt masked)" : "");
+                warned = 1;
+            }
+        }
+        while (guard-- && (PCRTC_START_REG & 0x03FFFFFF) == ((uint32_t)pb_back_buffer() & 0x03FFFFFF)) {
+            DWORD vbl = pb_get_vbl_counter();
+            int ms;
+            for (ms = 0; ms < 50 && pb_get_vbl_counter() == vbl; ms++) xhw_sleep_ms(1);
+        }
         xhw_perf_leave(pf);
     }
     xhw_perf_frame(s_draws, s_pf_verts);
@@ -646,11 +701,11 @@ void xgx_present(int black) {
     s_frame++;
     if (s_frame % XGX_STATS_EVERY == 0) {
         /* draws/approximated: the last frame; the rest summed over the interval */
-        xhw_logf("[NV2A] frame %u: %u draws (%u approximated), tex pool %u KB free | per %u: %u idle waits, "
-                 "%u EFB copies, %u KB textures, %u verts",
-                 s_frame, s_draws, s_approx, xgx_tex_pool_free_kb(), XGX_STATS_EVERY, s_st_waits, s_st_efb,
-                 s_st_tex_kb, s_st_verts);
-        s_st_waits = s_st_efb = s_st_tex_kb = s_st_verts = 0;
+        xhw_logf("[NV2A] frame %u: %u draws (%u approximated), tex pool %u KB free (largest %u KB) | per %u: %u idle "
+                 "waits, %u EFB copies, %u KB textures, %u pool allocations failed, %u verts",
+                 s_frame, s_draws, s_approx, xgx_tex_pool_free_kb(), xgx_tex_pool_largest_kb(), XGX_STATS_EVERY,
+                 s_st_waits, s_st_efb, s_st_tex_kb, s_st_tex_fail, s_st_verts);
+        s_st_waits = s_st_efb = s_st_tex_kb = s_st_verts = s_st_tex_fail = 0;
     }
     s_draws = s_approx = 0;
     s_frame_open = 0;
@@ -893,22 +948,31 @@ typedef struct { uint32_t hash; RcCfg cfg; RcProg prog; } RcEntry;
 #define RC_CACHE 256
 static RcEntry* s_rc;
 static int s_rc_count, s_rc_last = -1;
-static RcProg s_rc_cur;
+static uint32_t s_rc_gen;             /* bumped whenever a cache slot is (re)compiled */
+static const RcProg* s_rc_sent;       /* the program on the GPU, valid while s_rc_sent_gen == s_rc_gen */
+static uint32_t s_rc_sent_gen;
 static int s_rc_valid;
 static uint32_t s_rc_consts[RC_MAX_STAGES][2], s_rc_fconsts[2];
 
+/* FNV-1a over 32-bit words (the tail bytes one at a time) */
 static uint32_t fnv(const void* p, size_t n) {
     const uint8_t* b = (const uint8_t*)p;
     uint32_t h = 2166136261u;
+    for (; n >= 4; n -= 4, b += 4) {
+        uint32_t w;
+        memcpy(&w, b, 4);
+        h = (h ^ w) * 16777619u;
+    }
     while (n--) h = (h ^ *b++) * 16777619u;
     return h;
 }
 
 static const RcProg* rc_lookup(const RcCfg* cfg) {
-    uint32_t h = fnv(cfg, sizeof *cfg);
+    uint32_t h;
     int k;
-    if (s_rc_last >= 0 && s_rc[s_rc_last].hash == h && memcmp(&s_rc[s_rc_last].cfg, cfg, sizeof *cfg) == 0)
-        return &s_rc[s_rc_last].prog;
+    /* most draws that get here set up the same TEV as the draw before */
+    if (s_rc_last >= 0 && memcmp(&s_rc[s_rc_last].cfg, cfg, sizeof *cfg) == 0) return &s_rc[s_rc_last].prog;
+    h = fnv(cfg, sizeof *cfg);
     for (k = 0; k < s_rc_count; k++)
         if (s_rc[k].hash == h && memcmp(&s_rc[k].cfg, cfg, sizeof *cfg) == 0) {
             s_rc_last = k;
@@ -916,6 +980,7 @@ static const RcProg* rc_lookup(const RcCfg* cfg) {
         }
     k = s_rc_count < RC_CACHE ? s_rc_count++ : (int)(s_draws % RC_CACHE);
     s_rc_last = k;
+    s_rc_gen++;
     s_rc[k].hash = h;
     s_rc[k].cfg = *cfg;
     rc_compile(cfg, &s_rc[k].prog);
@@ -968,7 +1033,7 @@ static uint32_t pack_const(const XgxState* st, uint16_t rgb_ref, uint16_t a_ref)
 
 static void emit_combiners(const XgxState* st, const RcProg* rp) {
     int i;
-    if (!s_rc_valid || memcmp(&s_rc_cur, rp, sizeof *rp) != 0) {
+    if (!s_rc_valid || rp != s_rc_sent || s_rc_sent_gen != s_rc_gen) {
         put1(NV097_SET_COMBINER_CONTROL, (uint32_t)rp->nstages | (1u << 12) | (1u << 16));
         for (i = 0; i < rp->nstages; i++) {
             put1(NV097_SET_COMBINER_COLOR_ICW + i * 4, rp->cicw[i]);
@@ -978,7 +1043,8 @@ static void emit_combiners(const XgxState* st, const RcProg* rp) {
         }
         put1(NV097_SET_COMBINER_SPECULAR_FOG_CW0, rp->cw0);
         put1(NV097_SET_COMBINER_SPECULAR_FOG_CW1, rp->cw1);
-        s_rc_cur = *rp;
+        s_rc_sent = rp;
+        s_rc_sent_gen = s_rc_gen;
         s_rc_valid = 1;
         memset(s_rc_consts, 0xA5, sizeof s_rc_consts);
         memset(s_rc_fconsts, 0xA5, sizeof s_rc_fconsts);
@@ -1057,6 +1123,10 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
  * Fixed-function pixel state
  * ====================================================================== */
 static int s_fixed[20];
+/* vertex attribute arrays and inline values last sent (emit_vertex_arrays) */
+static uint32_t s_attr_shadow[16], s_attr_off_shadow[16];
+static uint32_t s_default_mtx = 0xFFFFFFFFu;
+static int s_inline_col[2];   /* the inline colour holds our opaque white */
 
 static void state_reset_shadows(void) {
     s_draw_force = XGX_DIRTY_ALL;
@@ -1066,6 +1136,8 @@ static void state_reset_shadows(void) {
     s_rc_valid = 0;
     s_vc_valid = 0;
     s_vp_cur = -1;
+    s_inline_col[0] = s_inline_col[1] = 0;
+    s_default_mtx = 0xFFFFFFFFu;
 }
 
 #define SETF(i, method, value)                                                                                      \
@@ -1212,8 +1284,6 @@ static uint32_t nv_prim(uint32_t gx) {
     }
 }
 
-static uint32_t s_attr_shadow[16], s_attr_off_shadow[16];
-static uint32_t s_default_mtx = 0xFFFFFFFFu;
 
 static void attr(int slot, int off, uint32_t type, uint32_t size, uint32_t stride) {
     uint32_t fmt = off < 0 ? 2u : type | size << 4 | stride << 8;
@@ -1248,8 +1318,14 @@ static void emit_vertex_arrays(const XgxLayout* l, const XgxState* st) {
         putf(NV097_SET_VERTEX_DATA4F_M + VPI_MTX * 16 + 12, 1);
         s_default_mtx = st->cur_posmtx;
     }
-    if (l->off_col[0] < 0) put1(NV097_SET_VERTEX_DATA4UB + VPI_COL0 * 4, 0xFFFFFFFFu);
-    if (l->off_col[1] < 0) put1(NV097_SET_VERTEX_DATA4UB + VPI_COL1 * 4, 0xFFFFFFFFu);
+    for (n = 0; n < 2; n++) {
+        if (l->off_col[n] >= 0) {
+            s_inline_col[n] = 0;   /* the array's last vertex will be left there */
+        } else if (!s_inline_col[n]) {
+            put1(NV097_SET_VERTEX_DATA4UB + (n ? VPI_COL1 : VPI_COL0) * 4, 0xFFFFFFFFu);
+            s_inline_col[n] = 1;
+        }
+    }
 }
 
 static uint8_t vp_attn(uint32_t attn_fn) {
@@ -1625,7 +1701,7 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     /* back to the back buffer and the game's state */
     put1(NV097_SET_STENCIL_TEST_ENABLE, 1);   /* as pbkit leaves it */
     pb_close();
-    pb_target_back_buffer();
+    ocx_pb_retarget_back_buffer();
     memset(s_fixed, 0xFF, sizeof s_fixed);
     memset(s_tex_shadow, 0xFF, sizeof s_tex_shadow);
     s_tex_prog = 0xFFFFFFFFu;
@@ -1766,7 +1842,9 @@ int xgx_init(void) {
         err = pb_init();
         if (!err) {
             s_ring = (uint8_t*)MmAllocateContiguousMemoryEx(RING_BYTES, 0, MAXRAM, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
-            if (pool_init(&s_tp, tex_pool_bytes) && s_ring) break;
+            while (s_ring && !pool_init(&s_tp, tex_pool_bytes) && tex_pool_bytes > TEX_POOL_MIN)
+                tex_pool_bytes -= 1024u * 1024;
+            if (s_tp.base && s_ring) break;
             pool_release(&s_tp);
             if (s_ring) MmFreeContiguousMemory(s_ring);
             s_ring = NULL;

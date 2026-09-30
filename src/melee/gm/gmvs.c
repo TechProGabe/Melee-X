@@ -3,6 +3,9 @@
 #include <Runtime/platform.h>
 
 #include <string.h>
+#ifdef TARGET_XBOX
+#include <dolphin/os.h> /* PORT: OSReport for the Xbox log lines below */
+#endif
 
 #include "forward.h"
 #include "gm_1884.h"
@@ -514,6 +517,10 @@ void fn_8016B7F8(int arg0)
 
 void fn_8016B88C(int arg0)
 {
+#ifdef TARGET_XBOX
+    /* PORT: the end-of-match banner finished (the results follow) */
+    OSReport("[GAME] end banner done (%d)\n", arg0);
+#endif
     Ground_801C1158();
     if (arg0 == 0) {
         grStadium_801D40C8();
@@ -1415,6 +1422,11 @@ void fn_8016CFE0(void)
     }
     if (tmp->state.match_result != OUTCOME_NONE) {
     block_51:
+#ifdef TARGET_XBOX
+        /* PORT: the match's end (TIME!, GAME!, no contest) in the Xbox log */
+        OSReport("[GAME] match ends: outcome %d (1 time, 2 KO, 3 teams, 7 no contest)\n",
+                 (int) tmp->state.match_result);
+#endif
         fn_8016C7F0();
         ifStatus_802F7034(fn_8016B88C);
         lbAudioAx_80024D50();

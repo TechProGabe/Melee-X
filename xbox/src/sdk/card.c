@@ -113,6 +113,8 @@ static int save_file(File* f) {
          fwrite(f->data, 1, (size_t)f->dir.length * BLOCK, fp) == (size_t)f->dir.length * BLOCK;
     xhw_flush(fp);
     fclose(fp);
+    xhw_logf("[CARD] %s %.32s (%u blocks)", ok ? "saved" : "FAILED to save", (const char*)f->dir.fileName,
+             (unsigned)f->dir.length);
     return ok;
 }
 
