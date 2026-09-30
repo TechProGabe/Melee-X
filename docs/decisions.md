@@ -135,6 +135,9 @@ marked `PORT:`:
   time in SSE under `TARGET_XBOX`, same operations in the same order per
   lane, so bit-identical (checked against the C on 5M random and special
   inputs); it was the hottest math routine in a match profile.
+- `src/melee/mp/mpisland.c` (`mpIsland_8005A728`, `mpIsland_8005B004`): the
+  1.5 KB `visited` arrays, which the code `memzero`s itself, are exempt from
+  `-ftrivial-auto-var-init=zero` (it zeroed them a second time per call).
 - `src/melee/lb/lb_00B0.c` (`memzero`): `memset` instead of the byte loop,
   which `-ffreestanding` keeps as written (~1% of a console match frame).
 - `src/melee/gm/gmscene.c` (`gm_801A4D34`): the render pass is bracketed

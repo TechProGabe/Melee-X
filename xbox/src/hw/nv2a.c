@@ -26,6 +26,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stddef.h>
 #include <string.h>
 
 #include "nv2a_rc.h"
@@ -730,10 +731,23 @@ void xgx_present(int black) {
  * ====================================================================== */
 typedef struct {
     VpKey key;
+    uint32_t hash;     /* vp_hash(&key): compared before the key */
     VpProgram prog;
     int slot;          /* start in program memory, -1: not resident */
     uint32_t used;
 } VpEntry;
+
+static uint32_t vp_hash(const VpKey* k) {
+    const uint8_t* p = (const uint8_t*)k;
+    uint32_t h = 2166136261u, i;
+    for (i = 0; i + 4 <= sizeof *k; i += 4) {
+        uint32_t w;
+        memcpy(&w, p + i, 4);
+        h = (h ^ w) * 16777619u;
+    }
+    for (; i < sizeof *k; i++) h = (h ^ p[i]) * 16777619u;
+    return h;
+}
 
 #define VP_CACHE 48
 static VpEntry* s_vp;
@@ -760,13 +774,15 @@ static void vp_upload(VpEntry* e) {
 
 static void vp_select(const VpKey* k) {
     int i, pick = -1;
+    uint32_t h = vp_hash(k);
     VpEntry* e;
-    if (s_vp_cur >= 0 && memcmp(&s_vp[s_vp_cur].key, k, sizeof *k) == 0 && s_vp[s_vp_cur].slot >= 0) {
+    if (s_vp_cur >= 0 && s_vp[s_vp_cur].hash == h && memcmp(&s_vp[s_vp_cur].key, k, sizeof *k) == 0 &&
+        s_vp[s_vp_cur].slot >= 0) {
         s_vp[s_vp_cur].used = s_frame;
         return;
     }
     for (i = 0; i < s_vp_count; i++)
-        if (memcmp(&s_vp[i].key, k, sizeof *k) == 0) { pick = i; break; }
+        if (s_vp[i].hash == h && memcmp(&s_vp[i].key, k, sizeof *k) == 0) { pick = i; break; }
     if (pick < 0) {
         if (s_vp_count < VP_CACHE) {
             pick = s_vp_count++;
@@ -781,6 +797,7 @@ static void vp_select(const VpKey* k) {
         }
         e = &s_vp[pick];
         e->key = *k;
+        e->hash = h;
         vp_generate(k, &e->prog);
         e->slot = -1;
     }
@@ -940,8 +957,14 @@ static void emit_vc(void) {
         while (bits) {
             int r = w * 32 + __builtin_ctz(bits);
             bits &= bits - 1;
-            if (r >= VPC_COUNT || memcmp(s_vc_shadow[r], s_vc[r], 16) == 0) continue;
-            memcpy(s_vc_shadow[r], s_vc[r], 16);
+            if (r >= VPC_COUNT) continue;
+            {   /* compared as words, inline: a 16-byte memcmp here was a call per row */
+                uint32_t sh[4], v[4];
+                memcpy(sh, s_vc_shadow[r], 16);
+                memcpy(v, s_vc[r], 16);
+                if (sh[0] == v[0] && sh[1] == v[1] && sh[2] == v[2] && sh[3] == v[3]) continue;
+                memcpy(s_vc_shadow[r], v, 16);
+            }
             if (run_start >= 0 && r - run_end <= 3) {
                 run_end = r + 1;
             } else {
@@ -980,14 +1003,19 @@ static uint32_t fnv(const void* p, size_t n) {
     return h;
 }
 
+/* the bytes of a config that matter: the header and its nstages stages
+ * (derive_units zeroes only those; the compiler reads no further) */
+static size_t rc_used(const RcCfg* cfg) { return offsetof(RcCfg, st) + cfg->nstages * sizeof(RcStage); }
+
 static const RcProg* rc_lookup(const RcCfg* cfg) {
     uint32_t h;
+    size_t n = rc_used(cfg);
     int k;
     /* most draws that get here set up the same TEV as the draw before */
-    if (s_rc_last >= 0 && memcmp(&s_rc[s_rc_last].cfg, cfg, sizeof *cfg) == 0) return &s_rc[s_rc_last].prog;
-    h = fnv(cfg, sizeof *cfg);
+    if (s_rc_last >= 0 && memcmp(&s_rc[s_rc_last].cfg, cfg, n) == 0) return &s_rc[s_rc_last].prog;
+    h = fnv(cfg, n);
     for (k = 0; k < s_rc_count; k++)
-        if (s_rc[k].hash == h && memcmp(&s_rc[k].cfg, cfg, sizeof *cfg) == 0) {
+        if (s_rc[k].hash == h && memcmp(&s_rc[k].cfg, cfg, n) == 0) {
             s_rc_last = k;
             return &s_rc[k].prog;
         }
@@ -1403,10 +1431,10 @@ static uint32_t s_d_spec_lights, s_d_layout = 0xFFFFFFFFu;
 /* texture units (one per distinct texcoord/texmap the TEV samples) and the combiner setup */
 static void derive_units(const XgxState* st) {
     RcCfg* rc = &s_d_rc;
-    int s, i, nunits = 0;
-    memset(rc, 0, sizeof *rc);
+    int s, i, nunits = 0, nstages = st->ntev > RC_MAX_TEV ? RC_MAX_TEV : st->ntev ? (int)st->ntev : 1;
+    memset(rc, 0, offsetof(RcCfg, st) + (size_t)nstages * sizeof(RcStage));   /* rc_used() */
     s_d_unit_miss = 0;
-    rc->nstages = (uint8_t)(st->ntev > RC_MAX_TEV ? RC_MAX_TEV : st->ntev ? st->ntev : 1);
+    rc->nstages = (uint8_t)nstages;
     for (s = 0; s < rc->nstages; s++) {
         const XgxTevStage* t = &st->tev[s];
         RcStage* r = &rc->st[s];

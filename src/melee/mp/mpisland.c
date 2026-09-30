@@ -66,7 +66,13 @@ void mpIsland_8005A728(void)
     int next;
     int hidden;
     mp_UnkStruct0* prev;
+#ifdef TARGET_XBOX
+    /* PORT: memzero'd before use below; spared -ftrivial-auto-var-init's
+     * zeroing too (1.5 KB, every call) */
+    u8 visited[0x600] __attribute__((uninitialized));
+#else
     u8 visited[0x600];
+#endif
     PAD_STACK(0x10);
 
     map = mpLib_8004D164();
@@ -431,7 +437,13 @@ void mpIsland_8005B004(mp_UnkStruct0** arg0, mp_UnkStruct0** arg1, int arg2,
     UNUSED u8 _q0[8];
     mp_UnkStruct0* cur;
     float z_val;
+#ifdef TARGET_XBOX
+    /* PORT: memzero'd before use below; spared -ftrivial-auto-var-init's
+     * zeroing too (1.5 KB, every call) */
+    u8 visited[0x600] __attribute__((uninitialized));
+#else
     u8 visited[0x600];
+#endif
     mp_UnkStruct0* next;
     mp_UnkStruct0* prev;
     mp_UnkStruct0* mpisp;

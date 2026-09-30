@@ -81,6 +81,11 @@ was a render pass of its own (~75 µs of emulation, ~90% of a match frame).
   nothing else changed then have no methods between them, which xemu joins
   into one draw and which saves the console the offset writes.
 
+Per-draw bookkeeping in the back end stays small: the vertex-program cache
+compares a key hash before the key, the combiner config is zeroed, hashed and
+compared only up to its used stages (`rc_used`), and dirty constant rows are
+compared as words inline.
+
 `[NV2A]` lines count draws by primitive and by what changed before each
 (`changed nothing`, `only a position matrix`, then per dirty group); the
 `[DLC]` line counts joined batches and names the calls that drew a waiting
