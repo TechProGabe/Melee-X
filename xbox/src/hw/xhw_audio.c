@@ -129,6 +129,31 @@ static void aci_run(int on) {
     ACI[0x17B] = on ? 1 : 0;
 }
 
+/* Polled, nobody clears the status bits or notices a halt. If the pump
+ * misses its deadline (NBUF - 1 buffers, ~150 ms) the bus master plays up
+ * to the last valid index and halts (DCH); moving LVI on doesn't restart it
+ * on the MCPX, and the audio stayed silent for the whole boot (v13, audio 0%
+ * in every [PERF] line: the ring never drained). Clear the sticky status,
+ * and restart a halted or stuck engine. */
+static unsigned s_aci_restarts, s_aci_stuck, s_aci_last_civ = 99;
+
+static void aci_check(unsigned civ) {
+    uint8_t sr = ACI[0x116], sr2 = ACI[0x176];
+    if (sr & 0x1C) ACI[0x116] = (uint8_t)(sr & 0x1C);   /* LVBCI BCIS FIFOE: write 1 to clear */
+    if (sr2 & 0x1C) ACI[0x176] = (uint8_t)(sr2 & 0x1C);
+    s_aci_stuck = civ == s_aci_last_civ ? s_aci_stuck + 1 : 0;
+    s_aci_last_civ = civ;
+    /* halted, or no buffer finished for ~100 ms (a buffer is ~21 ms) */
+    if ((sr & 1) || s_aci_stuck > 50) {
+        if (s_aci_restarts++ < 8)
+            xhw_logf("[AUDIO] AC97 %s: civ %u lvi %u sr %02x/%02x, restarting (%u)", sr & 1 ? "halted" : "stuck", civ,
+                     ACI[0x115] & 31u, sr, sr2, s_aci_restarts);
+        aci_run(0);
+        aci_run(1);
+        s_aci_stuck = 0;
+    }
+}
+
 /* ---- MCPX APU buffer voice (xemu) ---- */
 #ifndef XHW_AUDIO_APU
 #define XHW_AUDIO_APU 1
@@ -223,6 +248,7 @@ static void pump(void* arg) {
         } else {
             unsigned civ = ACI[0x114] & 31;
             unsigned ahead = ((s_queued & 31) - civ) & 31;
+            aci_check(civ);
             while (ahead < NBUF - 1) {
                 int16_t* b = s_outbuf[s_queued % NBUF];
                 fill_48k(b);

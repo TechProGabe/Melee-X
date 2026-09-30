@@ -310,6 +310,12 @@ static void drop_at(int i) {
 
 static void drop(Entry* e) { drop_at((int)(e - s_cache)); }
 
+void gx_tex_flush_all(void) {
+    int i;
+    for (i = s_count - 1; i >= 0; i--)
+        if (!s_cache[i].efb) drop_at(i);
+}
+
 /* Eviction victim: the least recently used entry no texture map holds, and
  * never one drawn this frame while an older one is left (evicting those
  * only makes the frame upload them again, or drop them). An EFB copy can't

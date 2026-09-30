@@ -306,12 +306,25 @@ static void irq_recover(void) {
     xhw_logf("[NV2A] GPU interrupt storm: interrupt re-enabled (faults %u)", (unsigned)s_gf_count);
 }
 
+/* pb_busy only compares the pusher's GET with PUT and reads PGRAPH's status:
+ * methods already fetched into PFIFO's CACHE1 but not yet handed to PGRAPH
+ * pass as idle whenever PGRAPH is between two of them. Callers free and
+ * rewrite memory the GPU reads (deferred textures and vertex buffers, the
+ * vertex ring at each frame) or writes (EFB copy targets) right after this,
+ * so idle also means CACHE1 empty and the pusher stopped, seen twice. */
+static int gpu_quiet(void) {
+    volatile const uint32_t* r = (volatile const uint32_t*)0xFD000000u;
+    return !pb_busy() && (r[0x3214 / 4] & 0x10) && !(r[0x3220 / 4] & 0x10) && !r[0x400700 / 4];
+}
+
+static int gpu_busy(void) { return !gpu_quiet() || !gpu_quiet(); }
+
 static void wait_idle(void) {
     uint64_t t0 = 0;
     int reported = 0, pf = xhw_perf_enter(XHW_PERF_GPU);
     s_st_waits++;
     pb_close();
-    while (pb_busy()) {
+    while (gpu_busy()) {
         irq_recover();
         if (!t0) t0 = xhw_time_ns();
         else if (!reported && xhw_time_ns() - t0 > 2000000000ull) {

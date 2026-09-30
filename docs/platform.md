@@ -173,7 +173,12 @@ right = RIGHT
 3. Output is 32 kHz stereo into a lock-free ring.
 4. A high-priority pump thread resamples to 48 kHz and feeds the AC97,
    which is polled rather than interrupt-driven (from OpenCrossing: nxdk's
-   IRQ path froze real hardware).
+   IRQ path froze real hardware). Polled, a pump that misses its deadline
+   (~150 ms) lets the bus master play to the last valid buffer and halt,
+   and moving that index on doesn't restart it on the MCPX: one v13 boot
+   was silent throughout (`audio 0%`, the ring never drained). The pump
+   clears the sticky status bits and restarts a halted or stuck engine,
+   logging `[AUDIO] AC97 halted/stuck ... restarting` (first eight).
 5. Under xemu (detected by CPUID) an MCPX APU voice is used instead.
 
 ## CARD (`card.c`)

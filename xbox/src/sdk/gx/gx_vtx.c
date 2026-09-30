@@ -1318,6 +1318,12 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
     return 1;
 }
 
+void gx_vtx_cache_flush(void) {
+    int i;
+    for (i = 0; i < DLC_MAX; i++)
+        if (s_dlc[i].dl) dlc_drop(i);
+}
+
 void gx_vtx_frame_end(void) {
     if (xgx_present_count() % XGX_STATS_EVERY == 0 && s_dlc_ready) {
         int i, vol = 0, dyn = 0;

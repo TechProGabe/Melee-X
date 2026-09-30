@@ -63,10 +63,16 @@ void xhw_pad_poll(void) {
     for (i = 0; i < n; i++) open_device(i);
 }
 
-/* BACK (unmapped by default): a screenshot of the next frame to E: */
+/* BACK (unmapped by default): a screenshot of the next frame to E:;
+ * Y pressed while BACK is held: flush the texture and display-list caches */
+static volatile int s_flush_req;
+int xhw_debug_flush_take(void) { return __atomic_exchange_n(&s_flush_req, 0, __ATOMIC_ACQ_REL); }
+
 static void shot_button(int port, uint32_t buttons) {
     static uint32_t s_prev[PORTS];
-    if ((buttons & ~s_prev[port]) & XHW_BTN_BACK) xgx_shot_next();
+    uint32_t pressed = buttons & ~s_prev[port];
+    if (pressed & XHW_BTN_BACK) xgx_shot_next();
+    if ((pressed & XHW_BTN_Y) && (buttons & XHW_BTN_BACK)) __atomic_store_n(&s_flush_req, 1, __ATOMIC_RELEASE);
     s_prev[port] = buttons;
 }
 

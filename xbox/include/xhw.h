@@ -127,6 +127,10 @@ enum {
 void xhw_pad_poll(void);                       /* once per PADRead */
 int xhw_pad_get(int port, xhw_pad* out);       /* port 0..3; returns connected */
 void xhw_pad_rumble(int port, uint16_t low, uint16_t high);
+/* BACK+Y: drop every cached texture and display list at the next frame end
+ * (a diagnostic: does a wrong surface come back right from fresh data?).
+ * Returns and clears the request. */
+int xhw_debug_flush_take(void);
 
 /* ---- audio: 32 kHz stereo s16 pushed by the AX mixer ---- */
 int xhw_audio_init(uint32_t rate);

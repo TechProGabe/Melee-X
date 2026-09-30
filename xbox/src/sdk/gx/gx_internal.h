@@ -41,6 +41,8 @@ uint32_t gx_tex_efb_texture(const void* dest);
 int gx_tex_make_room(uint32_t bytes);
 void gx_vtx_frame_end(void);
 void gx_tex_init(void);
+void gx_tex_flush_all(void);    /* drop every cached texture but EFB copies */
+void gx_vtx_cache_flush(void);  /* drop every cached display list */
 
 /* Big-endian readers for disc data (display lists, vertex arrays, textures). */
 static inline uint16_t gx_be16(const uint8_t* p) { return (uint16_t)(p[0] << 8 | p[1]); }

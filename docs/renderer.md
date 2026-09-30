@@ -103,6 +103,14 @@ immediate batch.
 `xgx.h` is compiled by both triples (game and nxdk), so its structs hold only
 32-bit scalars, floats and byte arrays: no bit-fields, no 64-bit members.
 
+The GPU counts as idle (`wait_idle`) only once the pusher has caught up,
+PFIFO's CACHE1 is empty, the pusher has stopped and PGRAPH is idle, seen
+twice in a row. pbkit's `pb_busy` checks the first and last only, so
+methods still in CACHE1 passed as done whenever PGRAPH was between two of
+them. Deferred frees, the vertex ring's restart at every frame and EFB
+copy targets all rely on this wait. xemu runs methods as they arrive and
+can't show the difference.
+
 The pushbuffer is 1 MB. pbkit's `pb_size` takes powers of two only and
 silently keeps its 512 KB default otherwise: the 1.5 MB asked for until
 v11 left `PB_GUARD` (restart at the head when a frame gets within 192 KB of

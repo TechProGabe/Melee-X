@@ -50,6 +50,11 @@ void GXCopyDisp(void* dest, GXBool clear) {
     xgx_present(xsdk_vi_black());
     gx_tex_frame_end();
     gx_vtx_frame_end();
+    if (xhw_debug_flush_take()) {
+        gx_tex_flush_all();
+        gx_vtx_cache_flush();
+        xhw_log("[DEBUG] texture and display-list caches flushed (BACK+Y)");
+    }
     if (clear) clear_rect(full, 1, 1);
 }
 
