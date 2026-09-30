@@ -17,8 +17,10 @@ You need your own Melee NTSC-U 1.02 image (`GALE01`, revision 2) as
 `.iso`, `.gcm` or `.ciso`. No game data belongs in this repository: the
 `.gitignore` blocks images, DOLs, BIOS files and saves.
 
-**On an Xbox:** copy `default.xbe` and the image into one folder, for
-example `E:\Games\Melee-X\`, and launch the XBE from your dashboard.
+**On an Xbox:** copy `default.xbe`, `default.tbn` (the dashboard icon, for
+XBMC-style dashboards; the XBE also carries it as `$$XTIMAGE`) and the image
+into one folder, for example `E:\Games\Melee-X\`, and launch the XBE from
+your dashboard.
 
 **In xemu:** make an XISO of a folder holding `default.xbe` and the image,
 using `extract-xiso -c <folder>`, and load it as the DVD. The image is
@@ -94,6 +96,42 @@ function's return address, or its caller's once it has made a call itself).
 (who copies), `[PROFC]` lines for every sample (the hottest call sites one
 level up). `prof_report.py` folds both into functions after the main table.
 
+### Performance runs in xemu
+
+The standard run is a 60-second 4-CPU timed match on Green Greens with
+screenshots mid-match, at TIME! and on the results screen
+(`~/xemu/mc/gl/autopad.txt` on the dev Mac):
+
+```
+env MELEE_BOOT_SCENE=vs
+env MELEE_DEBUG_VS_STAGE=17
+env MELEE_DEBUG_VS=cpu4
+env MELEE_DEBUG_VS_TIME=60
+env MELEE_SEED=1
+200 SHOT
+500 SHOT
+800 SHOT
+1200 SHOT
+```
+
+Build with `XBOX_CFLAGS=-DXHW_AUTOPAD=1` (add `-DXHW_PROF=1` for a profile),
+run `xemu_run.sh 330`, then read the `[PERF]` lines of the match and compare
+the screenshots with the last good run's. Frame timing, and so the frame a
+`SHOT` lands on, varies between runs, so compare what is drawn, not
+positions. Each `[FBDUMP]` stalls the game for seconds while it streams over
+COM1, and each profiler report briefly: the hitches in a watched run are
+those, and the `[PERF]` intervals that contain one are outliers.
+
+xemu is not a proxy for the console's GPU. Its OpenGL renderer runs every
+non-point draw through a geometry shader, and macOS's GL runs a geometry
+shader as a compute pass that ends the render pass, so each draw costs ~70 µs
+there whatever its size; the frame is then bound by `gpu` (the wait at
+present). Its CPU numbers are a rough proxy (TCG runs float code slowly, so
+float-heavy functions look hotter than on a Pentium III). To see where xemu
+itself spends its time, sample the host process during a match:
+`sample $(pgrep -x xemu) 5 -file xemu.txt` and read the `pfifo_thread` tree.
+The xemu source is in `~/xemu/xemu-src` (`hw/xbox/nv2a/pgraph/gl`).
+
 ## Logs
 
 Everything is written to `E:\UDATA\4d580001\` (the title ID is `4d580001`):
@@ -114,6 +152,13 @@ Lines worth reading first:
   ARAM has been committed so far. If free RAM runs low while the game is
   still loading, that is the 64 MB budget (`docs/architecture.md`).
 - `[DVD] GALE01 rev 2, N FST entries`: the image was accepted.
+- `[PERF]`: see "Measuring on the console". `ticks per render` near 5 means
+  the game can't keep up and is slowing down (5 is the cap).
+- `[NV2A] per N draws: ...`: what changed before each draw (nothing, only a
+  position matrix, then per dirty group) and draws by primitive; `[DLC]`
+  lines: cached, dynamic and volatile lists, joined batches, immediate-mode
+  batches and joins, the calls that drew a waiting batch, and the first
+  lists to go volatile with the reason.
 - `[NV2A] frame N: D draws (A approximated), tex pool K KB free (largest L
   KB)`: logged every 600 frames. A high `approximated` count means TEV
   setups the combiners only approximate; a tex pool near 0 means texture

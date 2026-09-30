@@ -39,6 +39,11 @@ MX_XEMU_ARGS="-config_path $HOME/xemu/mc/xemu.toml" \
 tools/xbox/fbdump_to_png.py $MX_RUN/serial.log out   # [FBDUMP] screenshots (-DXHW_AUTOPAD=1 + SHOT lines)
 ```
 
+Standard smoke/perf run: `XBOX_CFLAGS=-DXHW_AUTOPAD=1` build, `MX_STAGE_EXTRA=~/xemu/mc/gl`
+(60 s 4-CPU match, shots mid-match, at TIME! and on the results), `xemu_run.sh 330`;
+read `[PERF]`/`[NV2A]`/`[DLC]` and compare the shots with the last good run
+(docs/testing.md "Performance runs in xemu"). The performance plan is in docs/roadmap.md.
+
 Hardware: FTP `192.168.158.113` (`xbox`/`xbox`), deploy to `/F/Applications/Melee-X/`
 (`default.xbe` and `default.tbn`, the dashboard icon, next to the disc image), logs in `/E/UDATA/4d580001/` (`boot.log`,
 `crash.log`, `hang.log`). Keep each deployed build's `melee_x.map` in `~/xemu/hw/` so
