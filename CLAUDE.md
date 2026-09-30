@@ -25,6 +25,7 @@ XBOX_CFLAGS="-DXHW_PROF=1" tools/xbox/docker/build.sh   # extra platform flags (
 python3 tools/xbox/test_tex_convert.py            # host tests (tests/xbox/*.c)
 python3 tools/xbox/test_vp_encoder.py
 python3 tools/xbox/test_fog.py                    # GX fog math (nv2a_fog.c) vs GX's fog factor
+python3 tools/xbox/test_card_endian.py            # card files: field tables vs GmSaveData, BE <-> native
 python3 tools/lower/test_lower.py
 ```
 

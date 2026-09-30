@@ -62,6 +62,18 @@ a single-core console with interrupt handlers.
 - ARAM pages that hold bytes straight from the disc image stay on the disc
   (below).
 
+**Memory-card files are big-endian, as on the GameCube.** The port stores
+.gci files so that saves move to and from Dolphin and real cards, and that
+includes the contents: Melee's save data and name tags are converted at the
+card boundary (`xbox/src/sdk/card_endian.c`, called from `lbcardgame.c`)
+from field tables built with `offsetof`/`sizeof` of the game's structs, so
+a layout change stops the build or `test_card_endian.py` instead of
+mis-swapping. Writes go out from a big-endian copy, never by swapping the
+live buffer, because lbcardnew's write runs over several frames while the
+game keeps using its data. Saves written by earlier builds are
+little-endian; they are recognised on load by a plausibility vote over the
+fields and read as they are, and the next save converts them.
+
 **Our own memcpy, memmove, memset and memcmp** (`xbox/src/hw/xhw_string.c`).
 nxdk's pdclib implements them as byte loops, and on hardware they took about
 40% of a VS match's frame. The platform's versions move 32 bits at a time
@@ -202,6 +214,17 @@ marked `PORT:`:
   100% save ("Not Found Toy Model!(-15356)": a sort row that was never
   filled); `_Toy_8030663C` logs a `[TOY] sort:` line (trophies owned, rows
   each sort column got, trophy count, language) to find why.
+- `src/melee/lb/lbcardgame.c`: under `TARGET_XBOX` the save data and
+  name-tag banks go to the card big-endian, from a static copy
+  (`card_image`, `toCardOrder`), and are converted to native after a read
+  (`fromCardOrder`), both through `xbox/src/sdk/card_endian.c`; older
+  little-endian saves are recognised and read as they are
+  (`docs/platform.md`, CARD). `lb_803BAB60` (the new save's
+  `CardIconInfo`, read by HSD as bytes) is spelled as the GameCube's bytes:
+  as `u32`s it gave the Xbox's saves no banner or icon.
+- `src/melee/lb/lbsnap.c` (`lbSnap_8001DC0C`): under `TARGET_XBOX` the
+  snapshot header's `x14`, which `it_8026C47C` fills natively through a
+  plain pointer, is swapped to big-endian like the rest of the header.
 - `src/melee/ft/ftparts.c` (`ftParts_80074D7C`): under `TARGET_XBOX` a
   fighter-parts visibility group whose table or index list points outside
   MEM1/ARAM is skipped and logged once per fighter kind (`[WARN] ftParts:`).

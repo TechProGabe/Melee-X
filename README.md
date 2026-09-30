@@ -43,6 +43,7 @@ xbox/build.sh                     # -> build-xbox/xbe/default.xbe
 tools/lower/test_lower.py         # lowering oracle tests
 tools/xbox/test_vp_encoder.py     # vertex-program encoder vs nv2a-vsh
 tools/xbox/test_tex_convert.py    # native texture formats vs the GX decoder
+tools/xbox/test_card_endian.py    # memory-card files: big-endian on the card, native in memory
 ```
 
 On macOS, build in Docker instead and boot the result in xemu

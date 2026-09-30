@@ -66,6 +66,16 @@ typedef enum {
 #define GET_ICON_DATA(idx) (_p(icon_data)[idx])
 #endif
 
+#ifdef TARGET_XBOX
+/* PORT: HSD reads this as a CardIconInfo, byte by byte (banner format,
+ * icon formats, icon speeds). Written as u32s it only holds those bytes on
+ * a big-endian machine; on the Xbox it gave new saves no banner and no
+ * icon. These are the GameCube's bytes: RGB5A3 banner, one C8 icon, speed
+ * 3, as lbsnap.c spells out its own. */
+static struct {
+    u8 b[0x14];
+} lb_803BAB60 = { { 2, 0, 1, 0, 0, 0, 0, 0, 0, 0, 3 } };
+#else
 static struct {
     u32 x0, x4, x8;
     u32 pad[2];
@@ -74,6 +84,7 @@ static struct {
     0,
     0x300,
 };
+#endif
 
 static LbCardEntry manifest[] = {
     { 0, fileType_3, NULL },
@@ -87,6 +98,54 @@ static LbCardEntry manifest[] = {
     { sizeof(struct NameTagDataBank), fileType_NameTag, NULL },
     { -1 },
 };
+
+#ifdef TARGET_XBOX
+/* PORT: the card holds these files big-endian, as a GameCube card and
+ * Dolphin do; the game uses them native. A read is converted in place once
+ * it has finished (fromCardOrder). A create or write goes out from
+ * card_image, a big-endian copy taken when it is queued, through
+ * card_manifest: the write runs over the next frames while the game keeps
+ * using its own copy (xbox/src/sdk/card_endian.c). */
+int xsdk_card_from_card(int type, void* data, int index);
+void xsdk_card_to_card(int type, void* dst, const void* src);
+
+static struct GmCardData card_image;
+static LbCardEntry card_manifest[ARRAY_SIZE(manifest)];
+
+static LbCardEntry* toCardOrder(void)
+{
+    ssize_t i;
+
+    for (i = 0; i < (ssize_t) ARRAY_SIZE(manifest); i++) {
+        card_manifest[i] = manifest[i];
+    }
+    card_manifest[1].data = &card_image.save_data;
+    xsdk_card_to_card(fileType_SaveData, &card_image.save_data,
+                      manifest[1].data);
+    for (i = 0; i < GM_NAMETAG_BANK_COUNT; i++) {
+        card_manifest[2 + i].data = &card_image.nametag_banks[i];
+        xsdk_card_to_card(fileType_NameTag, &card_image.nametag_banks[i],
+                          manifest[2 + i].data);
+    }
+    return card_manifest;
+}
+
+/* After lb_8001BD34: each file whose read finished. */
+static void fromCardOrder(void)
+{
+    ssize_t i;
+
+    for (i = 1; manifest[i].file_size != -1; i++) {
+        s32 result = lb_8001B6E0(i);
+        if (result == LbCardResult_Ready || result == LbCardResult_2) {
+            xsdk_card_from_card(manifest[i].file_flags, manifest[i].data, i);
+        }
+    }
+}
+#define CARD_MANIFEST_OUT toCardOrder()
+#else
+#define CARD_MANIFEST_OUT manifest
+#endif
 
 void lb_8001C600(void)
 {
@@ -146,7 +205,8 @@ int lb_8001C8BC(void)
     }
     HSD_ASSERT(320, _p(enable));
 
-    return lb_8001BC18(0, filename, (void**) manifest, &lb_803BAB60,
+    /* PORT: CARD_MANIFEST_OUT, big-endian on TARGET_XBOX */
+    return lb_8001BC18(0, filename, (void**) CARD_MANIFEST_OUT, &lb_803BAB60,
                        lb_8001C658(), getCurrentIcon(), GET_ICON_DATA(3),
                        &_p(unk_status));
 }
@@ -193,6 +253,9 @@ lbCardResult lb_8001CBBC(void)
         return LbCardResult_Invalid;
     }
     result = lb_8001BD34(0, filename, manifest, &_p(unk_status));
+#ifdef TARGET_XBOX
+    fromCardOrder(); /* PORT: big-endian on the card */
+#endif
     if (result != LbCardResult_Ready && result != LbCardResult_2) {
         _p(card_status) = LbCardStatus_2;
     }
@@ -220,7 +283,8 @@ static lbCardResult dont_inline_helper(void)
     }
 
     icon = getCurrentIcon();
-    return lb_8001BE30(0, filename, manifest, lb_8001C658(), icon,
+    /* PORT: CARD_MANIFEST_OUT, big-endian on TARGET_XBOX */
+    return lb_8001BE30(0, filename, CARD_MANIFEST_OUT, lb_8001C658(), icon,
                        GET_ICON_DATA(3), &_p(unk_status), fn_8001CC30);
 }
 

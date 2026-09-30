@@ -7,11 +7,23 @@ tools/lower/test_lower.py        # disc_lower vs GCC scalar_storage_order (needs
 tools/xbox/test_vp_encoder.py    # vertex-program encoder vs nv2a-vsh (pip install nv2a-vsh)
 tools/xbox/test_tex_convert.py   # native texture formats vs the GX decoder
 tools/xbox/test_fog.py           # GX fog on the NV2A vs GX's fog factor (libogc registers, Dolphin's formula)
+tools/xbox/test_card_endian.py   # memory-card files: field tables vs the game's structs, big-endian <-> native
 ```
 
 CI (`.github/workflows/build.yml`, started by hand only: builds and tests
-run locally) runs all four after building `default.xbe`, and uploads the
+run locally) runs all five after building `default.xbe`, and uploads the
 XBE with its link map.
+
+`test_card_endian.py` compiles `xbox/src/sdk/card_endian.c` with the
+game's `<melee/gm/types.h>` on the host (LP64; the size asserts of unrelated
+disc structs that hold pointers are switched off for it). It checks that
+the field tables tile `GmSaveData` and `NameTagDataBank` byte for byte,
+that the `FighterData.x7C` bit-field widths match the declaration, that
+converting to the card and back is the identity, that a big-endian save
+and name-tag bank built by hand from `offsetof` read back with the right
+values and are written back byte for byte, and that a little-endian file
+(an older Melee-X save) is recognised and left alone. A table that doesn't
+add up to `sizeof` its struct also stops the Xbox build.
 
 ## Running it
 
