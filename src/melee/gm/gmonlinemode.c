@@ -813,6 +813,17 @@ void gm_Scene_OnlineLobby_OnFrame(void)
     int n;
     u64 input = gm_GetButtonsTriggered(pc_net_active() ? pc_net_local_player() : PAD_MAX_CONTROLLERS);
 
+#ifdef TARGET_XBOX
+    /* PORT: netplay isn't built on the Xbox (stubs.c reports it off), and
+     * the lobby formatted the stubs' NULL strings (v15 console crash in
+     * snprintf). Back to the menu, as B does. */
+    (void) input;
+    pc_lan_stop();
+    gm_ChangeGameModeAfterCurrentScene(GM_MENU);
+    gm_801A4B60();
+    return;
+#endif
+
     if (online_kind == ONLINE_KIND_PROFILE || internetLobby()) {
         memset(&view, 0, sizeof view);
         view.title = online_kind == ONLINE_KIND_PROFILE ? "PROFILE" :

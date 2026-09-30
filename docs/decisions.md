@@ -178,6 +178,10 @@ marked `PORT:`:
   list (`ftAnim_80070200` into `u.kb.x44`) are set up, as upstream doldecomp
   now does. The imported version left `x44` empty, and Kirby taking
   knockback with such an ability crashed in `ftAnim_80070458`.
+- `src/melee/gm/gmonlinemode.c` (`gm_Scene_OnlineLobby_OnFrame`): under
+  `TARGET_XBOX` the online/LAN lobby goes straight back to the menu.
+  Netplay isn't built, and the lobby formatted the stubs' NULL strings
+  (console crash in `snprintf` when LAN play was picked).
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after
@@ -194,26 +198,18 @@ To sync a newer melee-pc:
 
 ## Known risks
 
-- **Hardware coverage is thin.** It boots on a console and plays VS
-  matches; menus run at 60 fps.
-- **Performance.** On hardware a 4-player VS match started at 4.5 fps,
-  CPU-bound (the `[PERF]` and `[PROF]` lines, `docs/testing.md`). Faster libc
-  routines, cached display lists and dirty-driven draw state brought Green
-  Greens to 7 fps; the CPU readback of the four shadow maps was then about
-  half the frame, and the copies now run on the GPU (unmeasured on the
-  console yet).
-- **A freeze at TIME! on the console** (4-player Green Greens, results
-  never came; xemu reaches them). Not reproduced. The log now flushes
-  urgent lines at once and the rest within a second, logs scene and
-  match-end transitions with free memory, and the watchdog also reports a
-  game that keeps pacing retraces without drawing, writes its report into
-  `boot.log` itself, and logs a `[BEAT]` every 5 s. Fixed on the way: the
-  profiler thread did file I/O on a 16 KB stack (the kernel's file-system
-  path runs on it; now 64 KB, as the watchdog's); the flip and vblank waits
-  could spin forever if pbkit masked the GPU interrupt after an interrupt
-  storm (now timed, logged, and the interrupt is turned back on); each EFB
-  copy no longer costs four GPU-to-CPU interrupts to re-target the back
-  buffer.
+- **Hardware coverage.** 4-CPU VS matches on Pokémon Stadium (with
+  transformations), Fountain of Dreams and Green Greens, menus, saves and a
+  100% save file run on the console. Most other stages, single-player modes
+  and items have seen little play there. xemu differs from the console in
+  ways that hid real bugs this round (w-buffer, PFIFO timing, AC97): check
+  rendering on the console with BACK screenshots, not only in xemu.
+- **Performance.** Matches draw 13-30 fps on the console while the
+  simulation keeps 60 ticks (`docs/roadmap.md`).
+- **Rendering gaps**: no indirect texturing (water and reflections), no
+  fog, TEV swap tables only for the alpha broadcast; non-power-of-two
+  textures are resampled; the texture pool is short on busy stages.
+- **Netplay** is not built; the online/LAN lobby returns to the menu.
 - **The demand-commit fault handler** relies on the Xbox kernel sending
   kernel-mode access violations on reserved memory to the thread's SEH
   chain. That is how nxdk's `__try` works, but it hasn't been exercised.

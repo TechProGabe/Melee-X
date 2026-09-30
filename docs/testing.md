@@ -64,6 +64,24 @@ bugcheck code is on the stack (`0x7F, 8` is a double fault). A double fault
 arrives through a task gate, so the faulting EIP and ESP are in the TSS
 that the current TSS's link field names (read the GDT to find it).
 
+## The console loop
+
+What each hardware round looks like (the dev Mac keeps one folder per
+build in `~/xemu/hw/`):
+
+1. Build with `XBOX_CFLAGS=-DXHW_PROF=1`; copy `default.xbe`,
+   `default.tbn`, `TitleImage.xbx`, `TitleMeta.xbx` into
+   `~/xemu/hw/stage-vNN/` and `melee_x.map` to `~/xemu/hw/melee_x.vNN.map`.
+2. `~/xemu/hw/deploy-vNN.sh` uploads over FTP (the XBE and icon to
+   `/F/Applications/Melee-X/`, the dashboard files to `/E/UDATA/4d580001/`)
+   and re-downloads each file to compare.
+3. The user plays; BACK takes a screenshot of anything wrong.
+4. `~/xemu/hw/pull-logsNN.sh` fetches `boot.log`, `crash.log`, `hang.log`
+   and the `shotNN.bmp` files; symbolize with that build's map.
+
+Rendering that differs between xemu and the console has come from state
+xemu doesn't model (the w-buffer bit, PFIFO timing): trust the screenshot.
+
 ## Measuring on the console
 
 Every build logs a `[PERF]` line every 5 s (`xhw_perf.c`): fps and the
