@@ -213,6 +213,9 @@ static void fetch_indexed(const Slot* s, uint32_t idx, uint8_t* v) {
  * render pass of its own. */
 static uint32_t out_prim(uint32_t prim) { return prim == XGX_QUADS || prim == XGX_TRIFAN ? XGX_TRIANGLES : prim; }
 
+/* a joined draw stays within one of xgx_draw's 32768-vertex index windows */
+#define JOIN_MAX 0x8000u
+
 static uint32_t out_count(uint32_t prim, uint32_t n) {
     if (prim == XGX_QUADS) return n / 4 * 6;
     if (prim == XGX_TRIFAN) return n >= 3 ? (n - 2) * 3 : 0;
@@ -299,7 +302,8 @@ static void begin_batch(uint32_t prim, int vtxfmt, uint32_t n) {
     s = plan.layout.stride;
     s_st_imm_batches++;
     if (B.pending) {
-        if (prim == B.prim && n && memcmp(&plan.layout, &B.plan.layout, sizeof plan.layout) == 0 &&
+        if (prim == B.prim && n && out_count(prim, B.done + n) <= JOIN_MAX &&
+            memcmp(&plan.layout, &B.plan.layout, sizeof plan.layout) == 0 &&
             stage_reserve((B.done + n) * s)) {
             B.base = s_stage;
             B.plan = plan;   /* same layout; the slots may read other formats */
@@ -982,7 +986,8 @@ static int merge_plan(const DlBatch* in, int nb, DlBatch* out, uint8_t* first, u
     for (i = 0; i < nb; i++) {
         uint32_t prim = out_prim(in[i].prim), n = out_count(in[i].prim, in[i].count);
         if (!n) continue;
-        if (ng && joinable(&out[ng - 1], prim, &in[i].layout)) {
+        if (ng && joinable(&out[ng - 1], prim, &in[i].layout) &&
+            out[ng - 1].count + join_extra(prim, out[ng - 1].count) + n <= JOIN_MAX) {
             out[ng - 1].count += join_extra(prim, out[ng - 1].count) + n;
             continue;
         }

@@ -27,12 +27,10 @@ static u32 s_ciso_block;
 static u32* s_ciso_index;   /* block -> file offset, 0xFFFFFFFF = zero block */
 static u32 s_ciso_blocks;
 
-static int img_read_raw(u32 off, void* dst, u32 len) {
-    xhw_commit(dst, len);   /* the kernel writes it: a lazy MEM1 chunk must exist first */
-    return xhw_file_read(s_img, off, dst, len);
-}
+static int img_read_raw(u32 off, void* dst, u32 len) { return xhw_file_read(s_img, off, dst, len); }
 
-static int img_read(u32 off, void* dst, u32 len) {
+/* into memory that is committed already */
+static int img_read_committed(u32 off, void* dst, u32 len) {
     u8* d = (u8*)dst;
     int ok = 1;
     xhw_mutex_lock(s_img_lock);
@@ -52,6 +50,11 @@ static int img_read(u32 off, void* dst, u32 len) {
     }
     xhw_mutex_unlock(s_img_lock);
     return ok;
+}
+
+static int img_read(u32 off, void* dst, u32 len) {
+    xhw_commit(dst, len);   /* the kernel writes it: a lazy MEM1 chunk must exist first */
+    return img_read_committed(off, dst, len);
 }
 
 static int img_open(const char* path) {
@@ -203,6 +206,27 @@ typedef struct Req {
     DVDCBCallback bcb;
 } Req;
 
+/* The read whose completion callback is running (on the worker): lets
+ * ar.c leave ARAM copies of it on the disc (the devcom relay posts the
+ * relay buffer -> ARAM transfer from that callback). */
+static struct {
+    const u8* addr;
+    u32 len, image_off;
+} s_done_read;
+static u32 s_worker_tls;
+
+int xsdk_dvd_disc_source(const void* p, u32 len, u32* image_off) {
+    const u8* a = (const u8*)p;
+    if (!s_done_read.addr || !xhw_tls_get(s_worker_tls)) return 0;
+    if (a < s_done_read.addr || len > s_done_read.len || (u32)(a - s_done_read.addr) > s_done_read.len - len) return 0;
+    *image_off = s_done_read.image_off + (u32)(a - s_done_read.addr);
+    return 1;
+}
+
+/* ar.c fills ARAM chunks with it from inside their commit: committing here
+ * again would recurse */
+int xsdk_dvd_image_read(u32 image_off, void* dst, u32 len) { return img_read_committed(image_off, dst, len); }
+
 #define QUEUE 64
 static Req s_q[QUEUE];
 static volatile int s_qhead, s_qcount;
@@ -212,6 +236,7 @@ static volatile int s_inflight;
 
 static void worker(void* arg) {
     (void)arg;
+    xhw_tls_set(s_worker_tls, (void*)1);
     for (;;) {
         Req r;
         s32 res;
@@ -238,8 +263,14 @@ static void worker(void* arg) {
             s_qhead = (s_qhead + 1) % QUEUE;
             s_qcount--;
             xhw_mutex_unlock(s_qlock);
+            if (res > 0) {
+                s_done_read.addr = (const u8*)r.addr;
+                s_done_read.len = (u32)res;
+                s_done_read.image_off = r.fi ? r.fi->startAddr + (u32)r.offset : (u32)r.offset;
+            }
             if (r.fi && r.fcb) r.fcb(res, r.fi);
             else if (!r.fi && r.bcb) r.bcb(res, r.block);
+            s_done_read.addr = NULL;
             OSRestoreInterrupts(intr);
         }
         __atomic_sub_fetch(&s_inflight, 1, __ATOMIC_RELEASE);
@@ -393,5 +424,6 @@ void DVDInit(void) {
     started = 1;
     s_qlock = xhw_mutex_create();
     s_qevent = xhw_event_create();
+    s_worker_tls = xhw_tls_alloc();
     xhw_thread_start(worker, NULL, 1, 64 * 1024);
 }

@@ -67,8 +67,11 @@ resumes. Memory the kernel writes into (disc image reads) is committed
 first with `xhw_commit`, since a fault inside the file system never
 reaches that handler. So only the parts of MEM1 and ARAM the game really
 uses cost Xbox RAM. `boot.log`'s `[MEM]` lines and `crash.log` report how
-much is committed. If Melee fills both completely, disc-backed ARAM pages
-(as OpenCrossing does) are the next step.
+much is committed. Melee can touch more than the Xbox has (24 MB of MEM1
+and 16 MB of ARAM, with ~35 MB free after the NV2A is up), so ARAM pages
+that hold bytes straight from the disc image are left on the disc: their
+chunks are decommitted and read back from the image when needed (`ar.c`,
+docs/decisions.md).
 
 Textures are stored in formats the NV2A samples as is, whenever the size
 is a power of two:

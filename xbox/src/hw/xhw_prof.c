@@ -107,7 +107,9 @@ static int in_image(uint32_t a) { return a >= xhw_image_base + 0x1000 && a < xhw
  * E8 rel32, or FF /2 (call through a register or memory operand) */
 static int after_call(uint32_t ret) {
     const uint8_t* p = (const uint8_t*)ret;
-    if (!in_image(ret - 7)) return 0;
+    /* at DPC level: a page of the image that isn't mapped (its tail, past
+     * the last section) would bugcheck, not fault */
+    if (!in_image(ret - 7) || !MmIsAddressValid((PVOID)(ret - 7)) || !MmIsAddressValid((PVOID)(ret - 1))) return 0;
     if (p[-5] == 0xE8) return 1;
     if (p[-2] == 0xFF && (p[-1] & 0xF8) == 0xD0) return 1;                   /* call reg */
     if (p[-3] == 0xFF && ((p[-2] & 0xF8) == 0x50 || p[-2] == 0x14)) return 1; /* call [reg+d8], [sib] */

@@ -15,11 +15,16 @@ void xsdk_log_raw(const char* text);   /* log.c: no newline added */
 int xsdk_dvd_open(const char* path, char* why, size_t why_cap);
 void xsdk_dvd_deliver(void);
 void xsdk_dvd_free_dol(void);
+/* On the DVD worker, inside a read's completion callback: 1 if [p, p + len)
+ * holds bytes that read just brought from the disc image, and where from. */
+int xsdk_dvd_disc_source(const void* p, u32 len, u32* image_off);
+int xsdk_dvd_image_read(u32 image_off, void* dst, u32 len);   /* dst committed; 1 on success */
 
 /* ar.c */
 void xsdk_arq_deliver(void);
 void* xsdk_aram_base(void);
 u32 xsdk_aram_size(void);
+u32 xsdk_aram_disc_kb(void);   /* ARAM contents left on the disc image */
 
 /* vi.c: frame boundary */
 void xsdk_frame_boundary(void);

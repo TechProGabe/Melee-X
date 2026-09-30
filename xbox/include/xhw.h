@@ -80,6 +80,14 @@ void xhw_commit(const void* p, uint32_t bytes);
 /* Crash guard hook: commits the chunk at `addr`; 1 if it did. */
 int xhw_lazy_fault(uintptr_t addr);
 uint32_t xhw_lazy_committed_kb(void);
+/* Chunks of a lazy region whose data can live elsewhere (disc-backed ARAM):
+ * `fill` runs whenever a chunk gets committed (first touch, xhw_commit),
+ * after the commit and before the chunk counts as committed, and puts its
+ * data in. xhw_lazy_decommit gives a whole chunk's memory back. */
+#define XHW_LAZY_CHUNK (64u * 1024)
+void xhw_lazy_set_fill(const void* base, void (*fill)(void* chunk));
+int xhw_lazy_is_committed(const void* p);
+void xhw_lazy_decommit(void* chunk);
 uint32_t xhw_mem_free_kb(void);
 
 /* ---- files and paths ---- */

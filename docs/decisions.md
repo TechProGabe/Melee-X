@@ -59,7 +59,8 @@ a single-core console with interrupt handlers.
   that's riskier than committing only what the game touches.
 - 720p runs at 16-bit colour, as OpenCrossing measured it had to.
 - Textures use native NV2A formats.
-- If it still doesn't fit, the next step is disc-backed ARAM pages.
+- ARAM pages that hold bytes straight from the disc image stay on the disc
+  (below).
 
 **Our own memcpy, memmove, memset and memcmp** (`xbox/src/hw/xhw_string.c`).
 nxdk's pdclib implements them as byte loops, and on hardware they took about
@@ -69,6 +70,16 @@ and win the link over libpdclib.
 **Disc image reads go straight to the kernel** (`xhw_file_read`, used by
 `dvd.c`). pdclib's `fread` reads 1 KB per `ReadFile` and copies byte by
 byte; a load is now a few 1 MB reads into the destination.
+
+**Disc-backed ARAM pages** (`ar.c`). Melee preloads files into ARAM while
+the menus idle; with faster disc reads it filled MEM1 and ARAM to 31 MB
+committed by the first match on the console, 1.3 MB from out of memory.
+A copy into ARAM of bytes the DVD worker just read (devcom's relay buffer,
+posted from the read's callback) only records per 4 KB page where on the
+image they are. A 64 KB chunk whose pages are all on the disc is
+decommitted; ARAM -> MEM1 transfers read the image; a CPU touch (the audio
+mixer reads samples in ARAM) faults and the chunk is refilled from the
+image under the region's fill hook (`xhw_lazy_set_fill`).
 
 **Compiler builtins for memcpy & co.** (`xbox/include/xbuiltin.h`). Every
 unit is built `-ffreestanding` (nxdk-cc's flags, and the game's to match),

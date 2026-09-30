@@ -169,8 +169,9 @@ Lines worth reading first:
   evicting (drawn untextured). The first one of each interval has its own
   `[TEX] drop:` line.
 - `[SCENE] enter/leave: mode M state S scene K` and the `[MEM] scene` line
-  after it: every scene transition with free RAM, committed MEM1+ARAM, the
-  texture pool and the vertex cache. `[GAME] match ends: outcome N` is
+  after it: every scene transition with free RAM, committed MEM1+ARAM (and
+  how much of ARAM is only on the disc image, `ar.c`), the texture pool and
+  the vertex cache. `[GAME] match ends: outcome N` is
   TIME!/GAME!, `[GAME] end banner done` the moment the results take over.
 - `[BEAT] Ns: retrace R, presented P, free ...`: every 5 s from the
   watchdog thread. If the log ends with `[BEAT]` lines whose `retrace` still
@@ -212,6 +213,7 @@ report.
 | `-DXHW_CRASH_GUARD=0` | no SEH guard. Crashes become bugchecks, and demand-committed memory stops working, so debug only |
 | `-DXHW_AUDIO_APU=0` | never use the xemu APU fallback |
 | `-DXHW_AUTOPAD=1` | scripted input from `D:\autopad.txt`: `<frame> <buttons/SHOT> [for N]` per line (`xhw_autopad.c`). `env NAME=VALUE` lines feed `getenv`, which reaches melee-pc's test hooks (below) |
+| `-DXSDK_ARAM_VERIFY=1` | compares every ARAM copy left on the disc (`ar.c`) with the image; `[AR] verify:` lines |
 | `-DXHW_PROF=1` | sampling profiler: `[PROF]` lines every 20 s (`xhw_prof.c`, `tools/xbox/prof_report.py`) |
 | `-DXHW_PROF_SECS=<n>`, `-DXHW_PROF_TOP=<n>` | profiler report period (default 20 s); buckets and call sites per report (default 192) |
 | `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU instead of drawn by the GPU |

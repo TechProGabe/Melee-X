@@ -314,12 +314,13 @@ void* xhw_alloc_at(uintptr_t va, uint32_t bytes) {
 }
 
 /* ---- demand-committed regions (MEM1, ARAM) ---- */
-#define LAZY_CHUNK (64u * 1024)
+#define LAZY_CHUNK XHW_LAZY_CHUNK
 #define LAZY_MAX 4
 typedef struct {
     uintptr_t base;
     uint32_t size;
     volatile LONG* bits;   /* one bit per chunk */
+    void (*fill)(void* chunk);
 } Lazy;
 static Lazy s_lazy[LAZY_MAX];
 static volatile LONG s_lazy_n, s_lazy_chunks;
@@ -356,6 +357,7 @@ static int lazy_commit_chunk(Lazy* l, uint32_t chunk) {
     /* committing a committed page again is harmless, so racing threads are fine */
     st = NtAllocateVirtualMemory(&base, 0, &size, MEM_COMMIT, PAGE_READWRITE);
     if (!NT_SUCCESS(st)) return 0;
+    if (l->fill) l->fill(base);
     if (!(__atomic_fetch_or(w, bit, __ATOMIC_SEQ_CST) & bit)) InterlockedIncrement(&s_lazy_chunks);
     return 1;
 }
@@ -381,6 +383,36 @@ int xhw_lazy_fault(uintptr_t addr) {
     Lazy* l = lazy_find(addr);
     if (!l || KeGetCurrentIrql() >= DISPATCH_LEVEL) return 0;
     return lazy_commit_chunk(l, (uint32_t)((addr - l->base) / LAZY_CHUNK));
+}
+
+void xhw_lazy_set_fill(const void* base, void (*fill)(void* chunk)) {
+    Lazy* l = lazy_find((uintptr_t)base);
+    if (l) l->fill = fill;
+}
+
+int xhw_lazy_is_committed(const void* p) {
+    Lazy* l = lazy_find((uintptr_t)p);
+    uint32_t chunk;
+    if (!l) return 1;
+    chunk = (uint32_t)(((uintptr_t)p - l->base) / LAZY_CHUNK);
+    return (l->bits[chunk / 32] >> (chunk % 32)) & 1;
+}
+
+/* The bit goes first: a thread that touches the chunk from then on faults
+ * and has it filled again. */
+void xhw_lazy_decommit(void* chunk) {
+    Lazy* l = lazy_find((uintptr_t)chunk);
+    uint32_t c;
+    LONG bit;
+    PVOID base;
+    SIZE_T size = LAZY_CHUNK;
+    if (!l) return;
+    c = (uint32_t)(((uintptr_t)chunk - l->base) / LAZY_CHUNK);
+    bit = (LONG)(1u << (c % 32));
+    if (!(__atomic_fetch_and(&l->bits[c / 32], ~bit, __ATOMIC_SEQ_CST) & bit)) return;
+    InterlockedDecrement(&s_lazy_chunks);
+    base = (PVOID)(l->base + c * LAZY_CHUNK);
+    NtFreeVirtualMemory(&base, &size, MEM_DECOMMIT);
 }
 
 uint32_t xhw_lazy_committed_kb(void) { return (uint32_t)s_lazy_chunks * (LAZY_CHUNK / 1024); }

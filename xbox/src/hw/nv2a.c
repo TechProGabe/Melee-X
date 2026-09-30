@@ -1336,6 +1336,7 @@ static uint32_t nv_prim(uint32_t gx) {
 
 
 static const uint8_t* s_attr_base;   /* what the array offsets point at (xgx_draw) */
+#define VTX_WINDOW 0x8000u                 /* vertices per array-offset window (xgx_draw) */
 
 static void attr(int slot, int off, uint32_t type, uint32_t size, uint32_t stride) {
     uint32_t fmt = off < 0 ? 2u : type | size << 4 | stride << 8;
@@ -1556,7 +1557,11 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
      * a multiple of the stride): consecutive draws of one layout then send
      * no array offsets in between. xemu joins such back-to-back
      * BEGIN/DRAW_ARRAYS/END runs into one draw, and each xemu draw costs a
-     * geometry-shader pass that macOS's GL runs as a compute pass. */
+     * geometry-shader pass that macOS's GL runs as a compute pass.
+     * The console takes vertex indices up to 0xFFFF only (a DRAW_ARRAYS
+     * start past that raised a PGRAPH data error per draw, ~460 a frame,
+     * and froze it), so the arrays point at the start of the 32768-vertex
+     * window the draw starts in. */
     s_attr_base = s_draw_base;
     first = 0;
     {
@@ -1564,9 +1569,12 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
                                 : pool_owns(&s_vb, s_draw_base)                             ? s_vb.base
                                                                                             : NULL;
         uint32_t rel = region ? (uint32_t)(s_draw_base - region) : 0;
-        if (region && rel % layout->stride == 0 && rel / layout->stride + count < 0x1000000u) {
-            s_attr_base = region;
-            first = rel / layout->stride;
+        if (region && rel % layout->stride == 0) {
+            uint32_t idx = rel / layout->stride, win = idx & ~(VTX_WINDOW - 1);
+            if (idx - win + count <= 0x10000u) {
+                s_attr_base = region + win * layout->stride;
+                first = idx - win;
+            }
         }
     }
     emit_vertex_arrays(layout, st);

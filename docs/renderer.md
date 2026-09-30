@@ -80,11 +80,15 @@ was a render pass of its own (~75 µs of emulation, ~90% of a match frame).
   close an open batch: a finished one already holds its vertices.
 - Quads and fans are sent as triangle lists (`out_prim` in `gx_vtx.c`), and
   the EFB-copy quad as a strip.
-- Array offsets point at the start of the vertex ring or the vertex pool,
-  and each draw starts at its first vertex's index from there (both place
-  draws at a multiple of their stride). Consecutive draws of one layout with
-  nothing else changed then have no methods between them, which xemu joins
-  into one draw and which saves the console the offset writes.
+- Array offsets point at the start of the 32768-vertex window of the vertex
+  ring or the vertex pool that the draw starts in, and each draw starts at
+  its first vertex's index from there (both place draws at a multiple of
+  their stride). Consecutive draws of one layout with nothing else changed
+  then have no methods between them, which xemu joins into one draw and
+  which saves the console the offset writes. The windows are there because
+  the console takes vertex indices up to 0xFFFF only: a larger
+  `DRAW_ARRAYS` start raises a PGRAPH data error per draw (xemu doesn't
+  check), and joined draws stop at 32768 vertices (`JOIN_MAX`).
 
 Per-draw bookkeeping in the back end stays small: the vertex-program cache
 compares a key hash before the key, the combiner config is zeroed, hashed and

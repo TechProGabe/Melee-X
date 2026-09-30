@@ -79,7 +79,8 @@ unsigned xsdk_frame_count(void);
 void xsdk_scene_log(const char* what, int mode, int state, int scene) {
     xhw_logf("[SCENE] %s: mode %d state %d scene %d (retrace %u, presented %u)", what, mode, state, scene,
              xsdk_frame_count(), xgx_present_count());
-    xhw_logf("[MEM] scene %s: free %u KB, MEM1+ARAM %u KB, tex pool %u of %u KB free, vertex cache %u of %u KB free",
-             what, xhw_mem_free_kb(), xhw_lazy_committed_kb(), xgx_tex_pool_free_kb(), xgx_tex_pool_kb(),
-             xgx_vbuf_pool_free_kb(), xgx_vbuf_pool_kb());
+    xhw_logf("[MEM] scene %s: free %u KB, MEM1+ARAM %u KB (ARAM on disc %u KB), tex pool %u of %u KB free, "
+             "vertex cache %u of %u KB free",
+             what, xhw_mem_free_kb(), xhw_lazy_committed_kb(), xsdk_aram_disc_kb(), xgx_tex_pool_free_kb(),
+             xgx_tex_pool_kb(), xgx_vbuf_pool_free_kb(), xgx_vbuf_pool_kb());
 }
