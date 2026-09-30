@@ -96,6 +96,11 @@ void* xhw_dir_first(const char* pattern, xhw_dir_entry* out);
 int xhw_dir_next(void* handle, xhw_dir_entry* out);
 /* Flush a stdio FILE's data and the volume's directory entry to disk. */
 void xhw_flush(void* stdio_file);
+/* Read-only file with positioned reads straight into the caller's buffer
+ * (pdclib's fread goes 1 KB ReadFile at a time and copies byte by byte).
+ * xhw_file_read returns 1 if all `len` bytes were read. */
+void* xhw_file_open(const char* path);
+int xhw_file_read(void* file, uint32_t off, void* dst, uint32_t len);
 
 /* ---- controllers ---- */
 typedef struct xhw_pad {

@@ -20,7 +20,7 @@ static u32 be32(const u8* p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p
 /* ======================================================================
  * Image reader
  * ====================================================================== */
-static FILE* s_img;
+static void* s_img;   /* xhw_file_open */
 static xhw_mutex* s_img_lock;
 /* CISO: block map, present blocks stored in order after 0x8000 */
 static u32 s_ciso_block;
@@ -29,8 +29,7 @@ static u32 s_ciso_blocks;
 
 static int img_read_raw(u32 off, void* dst, u32 len) {
     xhw_commit(dst, len);   /* the kernel writes it: a lazy MEM1 chunk must exist first */
-    if (fseek(s_img, (long)off, SEEK_SET) != 0) return 0;
-    return fread(dst, 1, len, s_img) == len;
+    return xhw_file_read(s_img, off, dst, len);
 }
 
 static int img_read(u32 off, void* dst, u32 len) {
@@ -57,7 +56,7 @@ static int img_read(u32 off, void* dst, u32 len) {
 
 static int img_open(const char* path) {
     u8 hdr[8];
-    s_img = fopen(path, "rb");
+    s_img = xhw_file_open(path);
     if (!s_img) return 0;
     if (!s_img_lock) s_img_lock = xhw_mutex_create();
     if (!img_read_raw(0, hdr, sizeof hdr)) return 0;

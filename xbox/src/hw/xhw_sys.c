@@ -435,6 +435,27 @@ int xhw_dir_next(void* handle, xhw_dir_entry* out) {
     return 1;
 }
 
+void* xhw_file_open(const char* path) {
+    HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    return h == INVALID_HANDLE_VALUE ? NULL : (void*)h;
+}
+
+/* In 1 MB pieces, so other I/O on the disk (the log) gets turns. */
+int xhw_file_read(void* file, uint32_t off, void* dst, uint32_t len) {
+    uint8_t* d = (uint8_t*)dst;
+    LONG hi = 0;
+    if (SetFilePointer((HANDLE)file, (LONG)off, &hi, FILE_BEGIN) == INVALID_SET_FILE_POINTER &&
+        GetLastError() != NO_ERROR)
+        return 0;
+    while (len) {
+        DWORD want = len > (1u << 20) ? (1u << 20) : len, got = 0;
+        if (!ReadFile((HANDLE)file, d, want, &got, NULL) || got == 0) return 0;
+        d += got;
+        len -= got;
+    }
+    return 1;
+}
+
 /* pdclib's FILE starts with the kernel file handle (_PDCLIB_fd_t is void*). */
 void xhw_flush(void* stdio_file) {
     FILE* f = (FILE*)stdio_file;

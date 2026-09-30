@@ -22,6 +22,7 @@
  * game thread is stuck. */
 #include <windows.h>
 #include <xboxkrnl/xboxkrnl.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -125,6 +126,25 @@ static uint32_t caller_of(uint32_t esp) {
     return 0;
 }
 
+/* The report is written as one block: one log write and one flush. Line by
+ * line, each flushed (the log does that for the first 600 frames), it took
+ * ~10 s on the console and starved the disc image reads on the same disk:
+ * the character select load stalled long enough to trip the watchdog. */
+static char s_rep[16384];
+static int s_rlen;
+
+static void rep(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+static void rep(const char* fmt, ...) {
+    va_list ap;
+    int n;
+    if (s_rlen >= (int)sizeof s_rep - 1) return;
+    va_start(ap, fmt);
+    n = vsnprintf(s_rep + s_rlen, sizeof s_rep - (size_t)s_rlen, fmt, ap);
+    va_end(ap);
+    if (n > 0) s_rlen += n;
+    if (s_rlen > (int)sizeof s_rep - 1) s_rlen = (int)sizeof s_rep - 1;
+}
+
 static void report_callers(const char* tag, const char* what, CallerTable* t) {
     uint32_t i, k;
     CallerCount best[TOP];
@@ -135,13 +155,12 @@ static void report_callers(const char* tag, const char* what, CallerTable* t) {
         for (k = TOP - 1; k > 0 && best[k - 1].n < c.n; k--) best[k] = best[k - 1];
         best[k] = c;
     }
-    xhw_logf("%s %u samples %s, %u call sites, %u not placed", tag, t->samples, what, t->used, t->lost);
+    rep("%s %u samples %s, %u call sites, %u not placed\n", tag, t->samples, what, t->used, t->lost);
     for (k = 0; k < TOP && best[k].n; k += 6) {
-        char line[160];
-        int len = 0, j;
-        for (j = 0; j < 6 && k + j < TOP && best[k + j].n; j++)
-            len += snprintf(line + len, sizeof line - (size_t)len, " %08x:%u", best[k + j].addr, best[k + j].n);
-        xhw_logf("%s%s", tag, line);
+        int j;
+        rep("%s", tag);
+        for (j = 0; j < 6 && k + j < TOP && best[k + j].n; j++) rep(" %08x:%u", best[k + j].addr, best[k + j].n);
+        rep("\n");
     }
     memset(t, 0, sizeof *t);
 }
@@ -160,20 +179,23 @@ static void report(void) {
         best[k] = i;
         bestn[k] = c;
     }
-    xhw_logf("[PROF] %u samples: %u in image, %u outside, %u while waiting, %u unreadable", total, s_placed,
-             s_outside, s_waiting, s_noframe);
+    s_rlen = 0;
+    rep("[PROF] %u samples: %u in image, %u outside, %u while waiting, %u unreadable\n", total, s_placed,
+        s_outside, s_waiting, s_noframe);
     for (k = 0; k < TOP && bestn[k]; k += 6) {
-        char line[160];
-        int n = 0, j;
+        int j;
+        rep("[PROF]");
         for (j = 0; j < 6 && k + j < TOP && bestn[k + j]; j++)
-            n += snprintf(line + n, sizeof line - (size_t)n, " %08x:%u",
-                          xhw_image_base + (best[k + j] << BUCKET_SHIFT), bestn[k + j]);
-        xhw_logf("[PROF]%s", line);
+            rep(" %08x:%u", xhw_image_base + (best[k + j] << BUCKET_SHIFT), bestn[k + j]);
+        rep("\n");
     }
     memset(s_hist, 0, s_nbuckets * sizeof s_hist[0]);
     s_placed = s_outside = s_waiting = s_noframe = 0;
     report_callers("[PROFL]", "in memcpy/memset/memcmp/memmove, by caller", s_libc);
     report_callers("[PROFC]", "by caller (one frame up)", s_callers);
+    if (s_rlen && s_rep[s_rlen - 1] == '\n') s_rlen--;
+    s_rep[s_rlen] = '\0';
+    xhw_log(s_rep);
 }
 
 static DWORD WINAPI sampler(LPVOID arg) {

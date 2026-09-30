@@ -79,8 +79,10 @@ ticks per render as the frame rate rises.
 
 Built with `XBOX_CFLAGS=-DXHW_PROF=1`, a sampling profiler (`xhw_prof.c`)
 also records where the game thread is, about 1000 times a second, and logs
-the hottest code every 20 s as `[PROF]` lines. Fold them into functions with
-the link map of the same build:
+the hottest code every 20 s as `[PROF]` lines, written as one block (one
+disk flush: flushed line by line during a load, the report once starved the
+disc reads for ~10 s). Fold them into functions with the link map of the
+same build:
 
 ```sh
 tools/xbox/prof_report.py boot.log --map path/to/melee_x.map
@@ -178,7 +180,9 @@ Lines worth reading first:
   watchdog dumps every thread to `boot.log` and `hang.log` (the game thread
   marked, with the EIP it was interrupted at); after a minute it shows the
   dump on screen too. `frames stopped` (no retrace for 6 s) shows it at
-  once.
+  once. If the frames (or presents) come back, `[WDOG] frames again after
+  N s` is logged and the game gets the screen back: that was a long stall
+  (a load), not a hang.
 
 ## Crashes
 
@@ -239,8 +243,8 @@ env MELEE_DEBUG_VS_TIME=20     # a 20-second timed match: ends on TIME!
 ```
 
 `MELEE_SEED=<n>` fixes the attract demo's pick, and `MELEE_NO_ATTRACT=1`
-turns the attract loop off. Loading a match takes long enough in xemu that
-the watchdog reports "frames stopped" once; the run carries on.
+turns the attract loop off. If a load in xemu is slow enough to trip the
+watchdog ("frames stopped"), it logs `frames again` and the run carries on.
 
 ## First-boot checklist
 

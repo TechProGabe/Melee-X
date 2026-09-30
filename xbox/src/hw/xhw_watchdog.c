@@ -15,7 +15,8 @@
  * flushes them itself, waiting at most ~0.5 s for the log lock. Symbolize
  * with tools/xbox/sym.py. Each tick also flushes boot.log lines still
  * pending (xhw_log_sync), and every XHW_HEARTBEAT_SECS a [BEAT] line goes
- * to the log, so the last seconds before a freeze are on disk.
+ * to the log, so the last seconds before a freeze are on disk. A stall
+ * that ends (a long load) is logged and the game gets the screen back.
  * Kill switch: -DXHW_WATCHDOG=0. */
 #include <hal/debug.h>
 #include <pbkit/pbkit.h>
@@ -131,6 +132,8 @@ static void write_hang_log(void) {
     }
 }
 
+static int s_screen;   /* a report is on the screen */
+
 static void dump_all(const char* why, int screen) {
     PKTHREAD me = KeGetCurrentThread();
     PKPROCESS p = me->ApcState.Process;
@@ -169,6 +172,7 @@ static void dump_all(const char* why, int screen) {
     }
     /* screen next: the file I/O below can block if the hang involves the disk */
     pb_show_debug_screen();
+    s_screen = 1;
     debugClearScreen();
     debugPrint("Melee-X: %s at frame %u\n", why, xhw_frame_count());
     debugPrint("Log: " XHW_UDATA_DIR "hang.log + boot.log\n\n");
@@ -186,6 +190,15 @@ static void dump_all(const char* why, int screen) {
 }
 
 static volatile int s_disabled, s_busy;
+
+/* A stall that ends (a long load) gives the picture back to the game. */
+static void resumed(const char* what, unsigned secs) {
+    char line[120];
+    snprintf(line, sizeof line, "[WDOG] %s again after %u s", what, secs);
+    xhw_log_try(line);
+    if (s_screen && !s_disabled) pb_show_front_screen();
+    s_screen = 0;
+}
 
 void xhw_watchdog_busy(int on) { s_busy = on; }
 
@@ -223,6 +236,7 @@ static void watchdog_body(void* arg) {
         }
         /* presents stopped while the retrace count runs on */
         if (p != last_p || s_busy || f == last_pf) {
+            if (p != last_p && pfired) resumed("presents", pstill);
             if (p != last_p) pfired = 0;
             last_p = p;
             pstill = 0;
@@ -238,6 +252,7 @@ static void watchdog_body(void* arg) {
         }
         last_pf = f;
         if (f != last || s_busy) {
+            if (f != last && fired) resumed("frames", still ? still : secs);
             last = f;
             still = 0;
             fired = 0;

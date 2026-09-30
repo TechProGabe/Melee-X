@@ -66,6 +66,10 @@ nxdk's pdclib implements them as byte loops, and on hardware they took about
 40% of a VS match's frame. The platform's versions move 32 bits at a time
 and win the link over libpdclib.
 
+**Disc image reads go straight to the kernel** (`xhw_file_read`, used by
+`dvd.c`). pdclib's `fread` reads 1 KB per `ReadFile` and copies byte by
+byte; a load is now a few 1 MB reads into the destination.
+
 **Compiler builtins for memcpy & co.** (`xbox/include/xbuiltin.h`). Every
 unit is built `-ffreestanding` (nxdk-cc's flags, and the game's to match),
 which implies `-fno-builtin`: a `memcpy(v, out, 12)` was a real call and a
