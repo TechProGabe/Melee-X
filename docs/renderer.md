@@ -181,7 +181,18 @@ row2 = ZMAX * ((vf - vn) * P[2] + vf * P[3])
 ```
 
 where `vn`/`vf` are the viewport depth range and ZMAX is 2^24-1 (Z24) or
-65535 (Z16 at 720p). Rows 0 and 1 fold in the viewport scale and offset,
+65535 (Z16 at 720p).
+
+This is a z-buffer: CONTROL0's `Z_PERSPECTIVE_ENABLE` (w-buffering) must
+stay off. pbkit's `pb_target_back_buffer` turns it on ("We use W") each
+time it targets the back buffer, so `frame_open` sets CONTROL0 again right
+after. With the w-buffer the console took depth from the interpolated w
+and Pokémon Stadium's floor showed black bands that moved with the
+camera. With the z-buffer really in use, xemu showed the same bands: the
+floor's pixels got depth just outside the clip range and were culled
+(`ZMIN_MAX_CONTROL` CULL_NEAR_FAR). Depth is now clamped to the range
+(ZCLAMP_CLAMP), as the GameCube's 24-bit depth is; `-DXGX_DEPTH_CULL=1`
+restores culling. Geometry behind the eye is still clipped on w. Rows 0 and 1 fold in the viewport scale and offset,
 with y flipped.
 
 ### Culling

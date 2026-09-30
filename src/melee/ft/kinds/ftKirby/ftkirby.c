@@ -3610,6 +3610,15 @@ static inline void ftKb_LoadHatParts(Fighter_GObj* gobj, int arg1,
     ftKb_SpecialN_800EF0E4(gobj, arg1, part_dobj_indices);
     ftKb_SpecialN_800EF35C(gobj, arg1, part_dobj_indices);
     ftKb_SpecialN_800EF438(gobj, hat);
+    /* PORT: the part visibility and the costume texture list (u.kb.x44), as
+     * upstream doldecomp has them now. Without them x44 stayed empty, and
+     * knockback with a copy ability that adds parts (Falcon, Ganondorf, ...)
+     * animated its textures through NULL (v14 console crash). */
+    ftParts_8007487C((FtPartsDesc*) hat, &fp->u.kb.hat.x24, fp->costume_id,
+                     &fp->u.kb.hat.x14, &fp->u.kb.hat.x1C);
+    /* &hat->desc.vis_table (+8): disc_lower can't take a disc scalar's address */
+    ftAnim_80070200(fp, (ftData_x8_x8*) ((u8*) &hat->desc + 4), &fp->u.kb.x44,
+                    &fp->u.kb.hat.x14);
 }
 
 void ftKb_SpecialN_800F0FC0(Fighter_GObj* gobj)

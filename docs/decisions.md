@@ -111,7 +111,12 @@ traffic. The cost: 1.5x vertices for quads, 2-3 extra per stitched strip.
 adds a `$$XTIMAGE` section (128x128 DXT1 XPR0) after the link, and writes
 `default.tbn` for XBMC-style dashboards, from `xbox/assets/logo.png`, which
 `tools/xbox/make_logo.py` draws (original art). Runs on the host after the
-Docker build when Pillow is there.
+Docker build when Pillow is there. It also sets the certificate's title ID
+to 4D580001, the `E:\UDATA` folder the port saves to: cxbe leaves nxdk's
+FFFF0002, shared by every nxdk title, and the console's dashboard showed
+another homebrew's icon and name cached under that ID
+(`E:\UDATA\ffff0002\TitleImage.xbx`, `TitleMeta.xbx`). The script writes
+both files for 4D580001 next to `default.tbn`.
 
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
@@ -168,6 +173,11 @@ marked `PORT:`:
   block, unconditionally, so the first transformation relocated a
   half-read or already relocated archive and hung in
   `HSD_ArchiveLocateExtern`.
+- `src/melee/ft/kinds/ftKirby/ftkirby.c` (`ftKb_LoadHatParts`): the
+  copy ability's part visibility (`ftParts_8007487C`) and costume texture
+  list (`ftAnim_80070200` into `u.kb.x44`) are set up, as upstream doldecomp
+  now does. The imported version left `x44` empty, and Kirby taking
+  knockback with such an ability crashed in `ftAnim_80070458`.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after

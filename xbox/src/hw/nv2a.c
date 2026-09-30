@@ -662,11 +662,25 @@ void xgx_clear(const int32_t r[4], const uint8_t rgba[4], uint32_t z24, int colo
 
 static void state_reset_shadows(void);
 
+/* pbkit's pb_target_back_buffer (set_draw_buffer) writes CONTROL0 =
+ * 0x00110001, "We use W": Z_PERSPECTIVE_ENABLE, a w-buffer. The projection
+ * here is built for a z-buffer (docs/renderer.md "Depth"); with w the depth
+ * came from the interpolated eye distance instead, and Pokémon Stadium's
+ * floor and the dark layer just under it took turns in black bands across
+ * the arena. xemu (the build in use) ignores the bit. Set back after every
+ * retarget. */
+#define CONTROL0 NV097_SET_CONTROL0_TEXTURE_PERSPECTIVE_ENABLE
+
 static void frame_open(void) {
     if (s_frame_open) return;
     pb_reset();
     s_pb_base = pb_begin();
     pb_target_back_buffer();
+    {
+        uint32_t* p = pb_begin();
+        p = pb_push1(p, NV097_SET_CONTROL0, CONTROL0);
+        pb_end(p);
+    }
     s_ring_pos = 0;
     s_frame_open = 1;
     /* the bars outside the content rect, and a defined EFB */
@@ -1927,7 +1941,7 @@ void xgx_read_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, uint8_t*
  * ====================================================================== */
 static void setup_state(void) {
     uint32_t* p = pb_begin();
-    p = pb_push1(p, NV097_SET_CONTROL0, NV097_SET_CONTROL0_TEXTURE_PERSPECTIVE_ENABLE);
+    p = pb_push1(p, NV097_SET_CONTROL0, CONTROL0);
     p = pb_push1(p, NV097_SET_LIGHTING_ENABLE, 0);
     /* oD1 carries colour channel 1; without SPECULAR_ENABLE the NV2A replaces
      * it with (0,0,0,1) (OpenCrossing traps.md) */
@@ -1943,8 +1957,17 @@ static void setup_state(void) {
      * screen's panels, which are drawn with GX_CULL_BACK, vanish. */
     p = pb_push1(p, NV097_SET_FRONT_FACE, NV097_SET_FRONT_FACE_V_CW);
     p = pb_push1(p, NV097_SET_WINDOW_CLIP_TYPE, 0);
+    /* Depth outside [CLIP_MIN, CLIP_MAX] is clamped, as the GameCube's 24-bit
+     * depth is. Culling those pixels (CULL_NEAR_FAR) left black bands across
+     * Pokémon Stadium's floor once the z-buffer was really in use (see
+     * CONTROL0); -DXGX_DEPTH_CULL=1 brings culling back. Behind-the-eye
+     * geometry is still clipped by w. */
+#if defined(XGX_DEPTH_CULL) && XGX_DEPTH_CULL
     p = pb_push1(p, NV097_SET_ZMIN_MAX_CONTROL,
                  NV097_SET_ZMIN_MAX_CONTROL_CULL_NEAR_FAR | NV097_SET_ZMIN_MAX_CONTROL_ZCLAMP_CULL);
+#else
+    p = pb_push1(p, NV097_SET_ZMIN_MAX_CONTROL, NV097_SET_ZMIN_MAX_CONTROL_ZCLAMP_CLAMP);
+#endif
     p = pb_push1(p, NV097_SET_SHADER_CLIP_PLANE_MODE, 0);
     p = pb_push1(p, NV097_SET_TRANSFORM_EXECUTION_MODE,
                  NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM |

@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
-"""Give default.xbe a dashboard icon.
+r"""Give default.xbe a dashboard icon and Melee-X's own title ID.
 
   tools/xbox/xbe_title_image.py <default.xbe> <logo.png> [default.tbn]
+
+The certificate's title ID is set to 4D580001 ("MX" 0001, the E:\UDATA
+folder the port saves to). cxbe leaves nxdk's default FFFF0002, which every
+nxdk title shares: dashboards cache a title's icon and name by that ID
+(E:\UDATA\<id>\TitleImage.xbx / TitleMeta.xbx), and the console showed
+another homebrew's cached icon for Melee-X. TitleImage.xbx and
+TitleMeta.xbx for the new ID are written next to default.tbn, for the
+deploy to put in E:\UDATA\4d580001.
 
 Adds a $$XTIMAGE section (what the MS dashboard, UnleashX, XBMC and friends
 read) holding an XPR0 128x128 DXT1 texture with 1-bit alpha, and optionally
@@ -14,8 +22,12 @@ new one), its name and its shared-page refcounts are appended there without
 moving anything; the image data goes at the end of the file, mapped just
 past the last section and not preloaded.
 """
+import os
 import struct
 import sys
+
+TITLE_ID = 0x4D580001
+TITLE_NAME = "Melee-X"
 
 from PIL import Image
 
@@ -106,21 +118,37 @@ def add_section(xbe, name, payload):
     return bytes(d)
 
 
+def set_title_id(xbe, title_id):
+    d = bytearray(xbe)
+    base = struct.unpack_from("<I", d, 0x104)[0]
+    cert = struct.unpack_from("<I", d, 0x118)[0] - base
+    struct.pack_into("<I", d, cert + 8, title_id)
+    return bytes(d)
+
+
 def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)
     xbe_path, png = sys.argv[1], sys.argv[2]
     img = Image.open(png)
     xbe = open(xbe_path, "rb").read()
-    out = add_section(xbe, "$$XTIMAGE", xpr_dxt1(img))
+    xpr = xpr_dxt1(img)
+    out = add_section(xbe, "$$XTIMAGE", xpr)
     if out is None:
         print(f"{xbe_path}: $$XTIMAGE already present")
+        out = xbe
     else:
-        open(xbe_path, "wb").write(out)
         print(f"{xbe_path}: +$$XTIMAGE (128x128 DXT1)")
+    open(xbe_path, "wb").write(set_title_id(out, TITLE_ID))
+    print(f"{xbe_path}: title ID {TITLE_ID:08X}")
     if len(sys.argv) > 3:
         img.convert("RGBA").resize((256, 256), Image.LANCZOS).save(sys.argv[3], "PNG")
         print(f"wrote {sys.argv[3]}")
+        out_dir = os.path.dirname(os.path.abspath(sys.argv[3]))
+        open(os.path.join(out_dir, "TitleImage.xbx"), "wb").write(xpr)
+        # as the dashboard wrote it for the other title: ASCII, no BOM
+        open(os.path.join(out_dir, "TitleMeta.xbx"), "wb").write(f"TitleName={TITLE_NAME}".encode())
+        print(f"wrote TitleImage.xbx, TitleMeta.xbx in {out_dir}")
 
 
 if __name__ == "__main__":

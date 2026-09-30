@@ -20,7 +20,9 @@ You need your own Melee NTSC-U 1.02 image (`GALE01`, revision 2) as
 **On an Xbox:** copy `default.xbe`, `default.tbn` (the dashboard icon, for
 XBMC-style dashboards; the XBE also carries it as `$$XTIMAGE`) and the image
 into one folder, for example `E:\Games\Melee-X\`, and launch the XBE from
-your dashboard.
+your dashboard. Dashboards that cache icons by title ID (UnleashX) read
+`E:\UDATA\4d580001\TitleImage.xbx` and `TitleMeta.xbx`; the build writes
+both next to `default.xbe` to copy there.
 
 **In xemu:** make an XISO of a folder holding `default.xbe` and the image,
 using `extract-xiso -c <folder>`, and load it as the DVD. The image is
@@ -224,6 +226,7 @@ report.
 | `-DXHW_PROF=1` | sampling profiler: `[PROF]` lines every 20 s (`xhw_prof.c`, `tools/xbox/prof_report.py`) |
 | `-DXHW_PROF_SECS=<n>`, `-DXHW_PROF_TOP=<n>` | profiler report period (default 20 s); buckets and call sites per report (default 192) |
 | `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU instead of drawn by the GPU |
+| `-DXGX_DEPTH_CULL=1` | cull pixels whose depth falls outside the clip range instead of clamping it (the pre-v15 behaviour) |
 | `-DXGX_DEBUG_EFBLOG` | log the first 200 EFB copies (source rect, size, format) as `[EFB]` lines |
 | `-DXGX_DEBUG_TRACE` | log every draw (TEV stages, textures, texgens, blend) of the frame an autopad `SHOT` dumps, as `[DRAW]` lines |
 | `-DXGX_DEBUG_NOMIP` | bind only the base level of every texture |

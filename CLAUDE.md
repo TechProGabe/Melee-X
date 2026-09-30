@@ -45,7 +45,7 @@ read `[PERF]`/`[NV2A]`/`[DLC]` and compare the shots with the last good run
 (docs/testing.md "Performance runs in xemu"). The performance plan is in docs/roadmap.md.
 
 Hardware: FTP `192.168.158.113` (`xbox`/`xbox`), deploy to `/F/Applications/Melee-X/`
-(`default.xbe` and `default.tbn`, the dashboard icon, next to the disc image), logs in `/E/UDATA/4d580001/` (`boot.log`,
+(`default.xbe` and `default.tbn`, the dashboard icon, next to the disc image; `TitleImage.xbx` and `TitleMeta.xbx` to `/E/UDATA/4d580001/` for UnleashX's icon cache), logs in `/E/UDATA/4d580001/` (`boot.log`, `shotNN.bmp`,
 `crash.log`, `hang.log`). Keep each deployed build's `melee_x.map` in `~/xemu/hw/` so
 `tools/xbox/sym.py` and `tools/xbox/prof_report.py` can symbolize its logs.
 
