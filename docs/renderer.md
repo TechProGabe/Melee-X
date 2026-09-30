@@ -16,6 +16,7 @@ game -> GX calls -> gx_state.c   (XgxState, dirty bits)
                           |
                     nv2a.c       (state diff, pushbuffer, texture pool, vertex ring)
                     nv2a_vp.c    (vertex programs generated from the transform state)
+                    nv2a_vpmem.c (which programs are resident in program memory)
                     nv2a_rc.c    (TEV -> register combiners)
                     nv2a_fog.c   (GX fog -> vertex-program fog, final combiner)
 ```
@@ -146,7 +147,7 @@ the interval's peak and mid-frame restarts.
 ## Vertex programs (`nv2a_vp.c`)
 
 Each transform/lighting/texgen configuration (`VpKey`) gets a generated
-program, cached and kept resident. The instruction encoder matches
+program, cached by key (64 entries). The instruction encoder matches
 [nv2a-vsh](https://pypi.org/project/nv2a-vsh/) bit for bit
 (`tools/xbox/test_vp_encoder.py`). Details that took some work to get right:
 
@@ -177,6 +178,72 @@ matrix index as a float.
 Skinning: GX selects a position matrix per vertex (PNMTXIDX, 0..27 in steps
 of 3). The program loads it into `a0` and reads `c[A0+6]`, so a whole
 skinned mesh is one draw.
+
+### Shorter programs
+
+The generator writes one op per instruction over named temporaries;
+`vp_optimize` then shortens the program without changing any value in it.
+Every step keeps each value's operation and operands, so the results are
+the same bits:
+
+- a MOV to an output goes, and the ops that computed its source write the
+  output themselves (also the temporary if it is read again: a MAC op can
+  write both);
+- lanes nobody reads aren't written, and ops left writing nothing go;
+- MOVs of the same constant or input row into one destination merge;
+- the ops are scheduled again so an ILU op (RCP, RSQ, EXP, or a MOV) shares
+  an instruction with a MAC op, and temporaries are allocated again for
+  that order. The paired ILU op writes r1 (nv2a-vsh, xemu). Lanes built by
+  several ops and read together (RPOS, a texgen's source) stay in one
+  register. A register isn't written in an instruction of a pair that reads
+  it: xemu runs the MAC op before the ILU op.
+
+The generator itself also computes less: a channel whose colour and alpha
+halves have the same lights and functions lights all four lanes in one loop;
+the spot and specular vectors (1, cos, cos^2), (1, d, d^2) are built where
+the values land, the constant 1 set once per channel; a texgen from the
+position or normal reads the attribute directly (declared with 3 components,
+so w reads 1). And `VpKey.ang_one`/`dist_one` flag lights whose angle or
+distance attenuation rows are (1, 0, 0), as HSD sets them for infinite
+lights (both) and point lights (angle): in a spot channel that factor is
+1 + 0 cos + 0 cos^2 = 1 and rcp(1) = 1, so it and its product (x * 1 = x)
+are left out, 9 instructions per infinite light. `vp_canon` clears the key
+fields a program doesn't depend on (the second channel with one channel on,
+a disabled half's lighting, unused texgens and flags), so draws that differ
+only there share one program and don't switch.
+
+`tools/xbox/test_vp_opt.py` runs the programs of 200000 random keys, and the
+programs of the generator before all this (`tests/xbox/vp_ref.c`), through an
+interpreter of the encoded words, in the hardware's order and in xemu's, and
+requires the same bits in every output lane. Programs average 48 instructions
+there, 68 before; a lit and specular fighter program with two infinite lights,
+fog and a texture went from 96 to 54. Keys the old generator couldn't fit
+(more than 136 instructions: lights past the first two and spot attenuation
+dropped) are still approximated exactly as then (`legacy_len`), so the
+picture is unchanged; about a third of them would fit now.
+
+### Program memory
+
+The NV2A holds 136 instructions, and the programs a match frame selects are
+several times that, so some are loaded again every frame (through the
+pushbuffer: 16 bytes per instruction, bursts of 8). `nv2a_vpmem.c` decides
+where: the smallest free gap that fits, else the contiguous window whose
+programs are needed last. "Needed" is Belady's rule with the previous frame
+as the forecast: frames select their programs in nearly the same order, so a
+resident program's next use is where the previous frame selected it next
+(ties: least recently used, then fewest instructions overwritten). Before,
+program memory was packed from 0 and flushed whole when the next program
+didn't fit. Loads can overwrite any program, the current one included: the
+GPU runs the pushbuffer in order.
+
+`tools/xbox/vp_policy.py` replays select traces (`-DXGX_DEBUG_VPTRACE`, or a
+synthetic 4-CPU Fountain of Dreams frame) through that code and through
+flush-all, LRU and an offline Belady for comparison. On the synthetic frame
+(two infinite diffuse lights, one specular): 106 loads and 7200 instructions
+a frame before, 75 / 2830 with the shorter programs alone, 46 / 1730 with the
+residency policy too (LRU 57 / 2210; offline Belady 43). `[NV2A] per N
+frames: L vertex programs loaded (I instructions), S program switches`
+reports it on the console.
 
 ### Depth
 

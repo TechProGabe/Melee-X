@@ -5,13 +5,22 @@
 ```sh
 tools/lower/test_lower.py        # disc_lower vs GCC scalar_storage_order (needs GCC 12+)
 tools/xbox/test_vp_encoder.py    # vertex-program encoder vs nv2a-vsh (pip install nv2a-vsh)
+tools/xbox/test_vp_opt.py        # optimized vertex programs vs the pre-optimizer generator, random keys [n]
+tools/xbox/vp_policy.py --check  # program-memory residency (nv2a_vpmem.c) vs its model and flush/LRU
 tools/xbox/test_tex_convert.py   # native texture formats vs the GX decoder
 tools/xbox/test_fog.py           # GX fog on the NV2A vs GX's fog factor (libogc registers, Dolphin's formula)
 ```
 
 CI (`.github/workflows/build.yml`, started by hand only: builds and tests
-run locally) runs all four after building `default.xbe`, and uploads the
+run locally) runs them all after building `default.xbe`, and uploads the
 XBE with its link map.
+
+`tools/xbox/vp_policy.py [boot.log]` replays vertex-program selects (a
+`-DXGX_DEBUG_VPTRACE` log, or a synthetic 4-CPU Fountain of Dreams frame
+without one) through residency policies and prints loads and instructions
+per frame for the programs before and after the optimizer; `--keys` lists a
+frame's programs and their sizes, `--diffuse`/`--spec`/`--point` vary the
+synthetic stage's lights.
 
 ## Running it
 
@@ -190,6 +199,8 @@ Lines worth reading first:
   churn, and `pool allocations failed` that textures were dropped.
   `pushbuffer peak P of 1024 KB (R restarts)`: the fullest a frame got,
   and how often a frame had to wait for the GPU and restart at the head.
+- `[NV2A] per N frames: L vertex programs loaded (I instructions), S program
+  switches`: program-memory traffic (`docs/renderer.md` "Program memory").
 - `[TEX] ... fmt n/KB/pool KB`: the textures drawn in the last frame by GX
   format (hex): count, KB of GX data, KB they take in the pool. `[TEX] pool
   holds ...`: every cached texture and EFB copy in the pool, and how many
@@ -249,6 +260,7 @@ report.
 | `-DXGX_DEPTH_CULL=1` | cull pixels whose depth falls outside the clip range instead of clamping it (the pre-v15 behaviour) |
 | `-DXGX_DEBUG_EFBLOG` | log the first 200 EFB copies (source rect, size, format) as `[EFB]` lines |
 | `-DXGX_DEBUG_TRACE` | log every draw (TEV stages, textures, texgens, blend, fog) of the frame an autopad `SHOT` or a console BACK screenshot captures, as `[DRAW]` lines (~400 KB of log each) |
+| `-DXGX_DEBUG_VPTRACE[=<n>]` | log the vertex-program selects of two consecutive frames every n (default 600) as `[VPT]` lines: each program (key hash, instructions, key bytes), then the selects in order with `L` where one was loaded; replay with `tools/xbox/vp_policy.py boot.log` |
 | `-DXGX_DEBUG_NOMIP` | bind only the base level of every texture |
 | `-DXHW_FBDUMP_EVERY=<n>` | screenshot every n presented frames |
 | `-DXGX_STATS_EVERY=<n>` | `[NV2A]` / `[TEX]` stats period, in frames (default 600) |

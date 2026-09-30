@@ -47,6 +47,8 @@ jobs:
         run: |
           python3 tools/lower/test_lower.py
           python3 tools/xbox/test_vp_encoder.py
+          python3 tools/xbox/test_vp_opt.py
+          python3 tools/xbox/vp_policy.py --check
           python3 tools/xbox/test_tex_convert.py
           python3 tools/xbox/test_fog.py
 

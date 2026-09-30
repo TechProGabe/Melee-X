@@ -32,6 +32,7 @@
 #include "nv2a_fog.h"
 #include "nv2a_rc.h"
 #include "nv2a_vp.h"
+#include "nv2a_vpmem.h"
 #include "xgx.h"
 #include "xhw.h"
 #include "xhw_internal.h"
@@ -271,9 +272,9 @@ static void pb_close(void) {
 
 /* per-interval counters for the [NV2A] frame line */
 static uint32_t s_st_waits, s_st_efb, s_st_tex_kb, s_st_verts, s_st_tex_fail, s_st_pb_peak, s_st_pb_resets;
-static uint32_t s_st_vp_loads, s_st_vp_insns;   /* vertex programs sent to program memory */
 static uint32_t s_st_draws, s_st_dirty_none, s_st_dirty_mtx, s_st_dirty[13];
 static uint32_t s_st_prim[8];   /* by GX primitive, (prim >> 3) & 7 */
+static uint32_t s_st_vp_sel, s_st_vp_loads, s_st_vp_ins;   /* program switches, loads, instructions loaded */
 
 /* GPU faults, recorded by the patched pbkit (ocx_pb_gpu_fault below) */
 static volatile uint32_t s_gf_count, s_gf_storms, s_gf_last[5];
@@ -626,6 +627,7 @@ static volatile int s_fbdump_once;
 
 unsigned xgx_present_count(void) { return s_frame; }
 static void frame_open(void);
+static void vp_frame_end(void);
 
 static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int depth, uint32_t z24) {
     if (x < 0) { w += x; x = 0; }
@@ -760,19 +762,23 @@ void xgx_present(int black) {
     }
     xhw_perf_frame(s_draws, s_pf_verts);
     s_pf_verts = 0;
+    vp_frame_end();
     s_frame++;
     if (s_frame % XGX_STATS_EVERY == 0) {
         /* draws/approximated: the last frame; the rest summed over the interval */
         xhw_logf("[NV2A] frame %u: %u draws (%u approximated), tex pool %u KB free (largest %u KB) | per %u: %u idle "
                  "waits, %u EFB copies, %u KB textures, %u pool allocations failed, %u verts, pushbuffer peak %u of %u KB "
-                 "(%u restarts), %u vertex programs loaded (%u instructions)",
+                 "(%u restarts)",
                  s_frame, s_draws, s_approx, xgx_tex_pool_free_kb(), xgx_tex_pool_largest_kb(), XGX_STATS_EVERY,
                  s_st_waits, s_st_efb, s_st_tex_kb, s_st_tex_fail, s_st_verts, s_st_pb_peak / 1024, PB_BYTES / 1024,
-                 s_st_pb_resets, s_st_vp_loads, s_st_vp_insns);
+                 s_st_pb_resets);
         xhw_logf("[NV2A] per %u draws by primitive: quads %u, triangles %u, strips %u, fans %u, lines %u, line strips "
                  "%u, points %u", XGX_STATS_EVERY, s_st_prim[0], s_st_prim[2], s_st_prim[3], s_st_prim[4], s_st_prim[5],
                  s_st_prim[6], s_st_prim[7]);
         memset(s_st_prim, 0, sizeof s_st_prim);
+        xhw_logf("[NV2A] per %u frames: %u vertex programs loaded (%u instructions), %u program switches",
+                 XGX_STATS_EVERY, s_st_vp_loads, s_st_vp_ins, s_st_vp_sel);
+        s_st_vp_loads = s_st_vp_ins = s_st_vp_sel = 0;
         xhw_logf("[NV2A] per %u draws: %u changed nothing, %u only a position matrix | proj %u view %u posmtx %u texmtx "
                  "%u lights %u chans %u texgen %u tev %u tevreg %u pixel %u fog %u maps %u scissor %u",
                  s_st_draws, s_st_dirty_none, s_st_dirty_mtx, s_st_dirty[0], s_st_dirty[1], s_st_dirty[2], s_st_dirty[3],
@@ -781,7 +787,6 @@ void xgx_present(int black) {
         memset(s_st_dirty, 0, sizeof s_st_dirty);
         s_st_draws = s_st_dirty_none = s_st_dirty_mtx = 0;
         s_st_waits = s_st_efb = s_st_tex_kb = s_st_verts = s_st_tex_fail = s_st_pb_peak = s_st_pb_resets = 0;
-        s_st_vp_loads = s_st_vp_insns = 0;
     }
     s_draws = s_approx = 0;
     s_frame_open = 0;
@@ -790,13 +795,20 @@ void xgx_present(int black) {
 
 /* ======================================================================
  * Vertex programs: cache + resident program memory
+ *
+ * Generated programs are cached by key (VP_CACHE entries); which of them are
+ * in the NV2A's 136 instructions of program memory, and where a program is
+ * loaded when it isn't, is nv2a_vpmem.c's decision (Belady's rule with the
+ * previous frame as the forecast). A load is a few pushbuffer bursts of 8
+ * instructions; the GPU runs them in order with the draws, so any program
+ * may be overwritten, including the one the last draw used.
  * ====================================================================== */
 typedef struct {
     VpKey key;
     uint32_t hash;     /* vp_hash(&key): compared before the key */
     VpProgram prog;
-    int slot;          /* start in program memory, -1: not resident */
-    uint32_t used;
+    uint32_t used;     /* s_vp_now at its last select */
+    int valid;
 } VpEntry;
 
 static uint32_t vp_hash(const VpKey* k) {
@@ -811,66 +823,126 @@ static uint32_t vp_hash(const VpKey* k) {
     return h;
 }
 
-#define VP_CACHE 48
+#define VP_CACHE VPM_PROGS
 static VpEntry* s_vp;
-static int s_vp_count, s_vp_cur = -1;
-static int s_vp_mem_top;     /* program memory used by resident programs */
+static int s_vp_cur = -1;
+static uint32_t s_vp_now;
+static VpMem s_vpm;
 
-static void vp_upload(VpEntry* e) {
-    uint32_t i;
-    if (s_vp_mem_top + (int)e->prog.n > VP_MAX_INSNS) {
-        int k;
-        for (k = 0; k < s_vp_count; k++) s_vp[k].slot = -1;
-        s_vp_mem_top = 0;
+#ifdef XGX_DEBUG_VPTRACE
+/* -DXGX_DEBUG_VPTRACE[=n]: the program selects of two consecutive frames
+ * every n (default 600) as [VPT] lines, for tools/xbox/vp_policy.py:
+ *   [VPT] frame F: S selects, L loads (I instructions), K keys
+ *   [VPT] k ID HASH N KEYHEX     each program the frame selected (N instructions)
+ *   [VPT] s ID[L] ...            the selects in order, L where it was loaded
+ *   [VPT] end */
+#if XGX_DEBUG_VPTRACE > 1
+#define VPT_EVERY XGX_DEBUG_VPTRACE
+#else
+#define VPT_EVERY 600
+#endif
+#define VPT_SEL 2048
+#define VPT_KEYS 128
+static uint16_t s_vpt_sel[VPT_SEL];   /* key id | loaded << 15 */
+static VpKey s_vpt_key[VPT_KEYS];
+static uint32_t s_vpt_hash[VPT_KEYS], s_vpt_len[VPT_KEYS], s_vpt_loads, s_vpt_ins;
+static int s_vpt_n, s_vpt_nkeys;
+
+static int vpt_on(void) { return s_frame >= VPT_EVERY && s_frame % VPT_EVERY < 2; }
+
+static void vpt_record(const VpEntry* e, int loaded) {
+    int id;
+    if (!vpt_on()) return;
+    for (id = 0; id < s_vpt_nkeys; id++)
+        if (s_vpt_hash[id] == e->hash && !memcmp(&s_vpt_key[id], &e->key, sizeof e->key)) break;
+    if (id == s_vpt_nkeys && id < VPT_KEYS) {
+        s_vpt_key[id] = e->key;
+        s_vpt_hash[id] = e->hash;
+        s_vpt_len[id] = e->prog.n;
+        s_vpt_nkeys++;
     }
-    e->slot = s_vp_mem_top;
-    s_vp_mem_top += (int)e->prog.n;
-    s_st_vp_loads++;
-    s_st_vp_insns += e->prog.n;
-    put1(NV097_SET_TRANSFORM_PROGRAM_LOAD, (uint32_t)e->slot);
+    if (id >= VPT_KEYS || s_vpt_n >= VPT_SEL) return;
+    s_vpt_sel[s_vpt_n++] = (uint16_t)(id | loaded << 15);
+    if (loaded) s_vpt_loads++, s_vpt_ins += e->prog.n;
+}
+
+static void vpt_dump(void) {
+    char line[900];
+    int i, j, at;
+    if (!vpt_on()) return;
+    xhw_logf("[VPT] frame %u: %d selects, %u loads (%u instructions), %d keys", s_frame, s_vpt_n, s_vpt_loads,
+             s_vpt_ins, s_vpt_nkeys);
+    for (i = 0; i < s_vpt_nkeys; i++) {
+        at = 0;
+        for (j = 0; j < (int)sizeof(VpKey); j++) at += snprintf(line + at, 3, "%02x", ((const uint8_t*)&s_vpt_key[i])[j]);
+        xhw_logf("[VPT] k %d %08x %u %s", i, s_vpt_hash[i], s_vpt_len[i], line);
+    }
+    for (i = 0; i < s_vpt_n; i += 64) {
+        at = 0;
+        for (j = i; j < s_vpt_n && j < i + 64; j++)
+            at += snprintf(line + at, sizeof line - (size_t)at, " %u%s", s_vpt_sel[j] & 0x7FFFu,
+                           s_vpt_sel[j] >> 15 ? "L" : "");
+        xhw_logf("[VPT] s%s", line);
+    }
+    xhw_log("[VPT] end");
+    s_vpt_n = s_vpt_nkeys = 0;
+    s_vpt_loads = s_vpt_ins = 0;
+}
+#endif
+
+static void vp_upload(const VpEntry* e, int start) {
+    uint32_t i;
+    put1(NV097_SET_TRANSFORM_PROGRAM_LOAD, (uint32_t)start);
     for (i = 0; i < e->prog.n; i += 8) {
         uint32_t n = e->prog.n - i < 8 ? e->prog.n - i : 8;
         pb_push(P++, NV097_SET_TRANSFORM_PROGRAM, n * 4);
         memcpy(P, &e->prog.words[i * 4], n * 16);
         P += n * 4;
     }
+    s_st_vp_loads++;
+    s_st_vp_ins += e->prog.n;
 }
 
 static void vp_select(const VpKey* k) {
-    int i, pick = -1;
+    int i, pick = -1, start, loaded;
     uint32_t h = vp_hash(k);
     VpEntry* e;
-    if (s_vp_cur >= 0 && s_vp[s_vp_cur].hash == h && memcmp(&s_vp[s_vp_cur].key, k, sizeof *k) == 0 &&
-        s_vp[s_vp_cur].slot >= 0) {
-        s_vp[s_vp_cur].used = s_frame;
-        return;
-    }
-    for (i = 0; i < s_vp_count; i++)
-        if (s_vp[i].hash == h && memcmp(&s_vp[i].key, k, sizeof *k) == 0) { pick = i; break; }
+    if (s_vp_cur >= 0 && s_vp[s_vp_cur].hash == h && memcmp(&s_vp[s_vp_cur].key, k, sizeof *k) == 0) return;
+    s_vp_now++;
+    s_st_vp_sel++;
+    for (i = 0; i < VP_CACHE; i++)
+        if (s_vp[i].valid && s_vp[i].hash == h && memcmp(&s_vp[i].key, k, sizeof *k) == 0) { pick = i; break; }
     if (pick < 0) {
-        if (s_vp_count < VP_CACHE) {
-            pick = s_vp_count++;
-        } else {
-            pick = 0;
-            for (i = 1; i < s_vp_count; i++)
-                if (s_vp[i].used < s_vp[pick].used) pick = i;
-            if (s_vp[pick].slot >= 0) {   /* its memory can't be reused in place: flush all */
-                for (i = 0; i < s_vp_count; i++) s_vp[i].slot = -1;
-                s_vp_mem_top = 0;
+        /* a free entry, or the least recently used (its memory is freed) */
+        for (i = 0; i < VP_CACHE; i++)
+            if (!s_vp[i].valid || pick < 0 || s_vp[i].used < s_vp[pick].used) {
+                pick = i;
+                if (!s_vp[i].valid) break;
             }
-        }
         e = &s_vp[pick];
+        if (e->valid) vpm_drop(&s_vpm, pick);
         e->key = *k;
         e->hash = h;
+        e->valid = 1;
         vp_generate(k, &e->prog);
-        e->slot = -1;
     }
     e = &s_vp[pick];
-    if (e->slot < 0) vp_upload(e);
-    e->used = s_frame;
-    put1(NV097_SET_TRANSFORM_PROGRAM_START, (uint32_t)e->slot);
+    loaded = vpm_select(&s_vpm, pick, (int)e->prog.n, &start);
+    if (loaded) vp_upload(e, start);
+#ifdef XGX_DEBUG_VPTRACE
+    vpt_record(e, loaded);
+#endif
+    e->used = s_vp_now;
+    put1(NV097_SET_TRANSFORM_PROGRAM_START, (uint32_t)start);
     s_vp_cur = pick;
     if (e->prog.approximated) s_approx++;
+}
+
+static void vp_frame_end(void) {
+#ifdef XGX_DEBUG_VPTRACE
+    vpt_dump();
+#endif
+    vpm_frame(&s_vpm);
 }
 
 /* ======================================================================
@@ -1600,6 +1672,14 @@ static void derive_vk(const XgxState* st, const XgxLayout* layout) {
         vk->tex[i].normalize = (uint8_t)(tg->normalize != 0);
         if (tg->mtx < GX_TEXMTX0) s_d_tg_posmtx = 1;
     }
+    /* attenuation rows (build_lights) that make a spot light's factor 1:
+     * HSD's infinite lights (a and k (1, 0, 0)) and point lights (a) */
+    for (i = 0; i < XGX_MAX_LIGHTS && i < 8; i++) {
+        const XgxLight* l = &st->light[i];
+        if (l->a[0] == 1.0f && l->a[1] == 0.0f && l->a[2] == 0.0f) vk->ang_one |= (uint8_t)(1u << i);
+        if (l->k[0] == 1.0f && l->k[1] == 0.0f && l->k[2] == 0.0f) vk->dist_one |= (uint8_t)(1u << i);
+    }
+    vp_canon(vk);   /* configurations with the same program compare equal */
 }
 
 /* GX fog changed (or the GPU state was reset): the fog rows, the vertex
@@ -2061,6 +2141,7 @@ int xgx_init(void) {
     if (done) return 1;
     done = 1;
     s_vp = (VpEntry*)calloc(VP_CACHE, sizeof(VpEntry));
+    vpm_init(&s_vpm);
     s_rc = (RcEntry*)calloc(RC_CACHE, sizeof(RcEntry));
     for (;;) {
         vm = xhw_video();

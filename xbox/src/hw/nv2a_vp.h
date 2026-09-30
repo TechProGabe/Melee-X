@@ -52,6 +52,10 @@ typedef struct {
     VpTexGen tex[4];
     uint8_t copy;                 /* EFB copy pass (nv2a.c): position and texcoord 0 as given */
     uint8_t fog;                  /* VPF_*: GX fog amount -> oFog.x */
+    /* lights whose spot attenuation is the identity in a SPOT channel:
+     * angle a = (1, 0, 0) (infinite and point lights), distance k = (1, 0, 0)
+     * (infinite lights); their factor is then 1 exactly, so it is left out */
+    uint8_t ang_one, dist_one;
     uint8_t pad;
 } VpKey;
 
@@ -64,5 +68,9 @@ typedef struct {
 } VpProgram;
 
 void vp_generate(const VpKey* key, VpProgram* out);
+/* Clears the fields of a key its program doesn't depend on (the second
+ * channel's when there is one channel, a disabled half's lighting, ...), so
+ * configurations that differ only there share one program. */
+void vp_canon(VpKey* key);
 
 #endif

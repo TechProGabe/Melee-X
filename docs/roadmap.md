@@ -110,7 +110,12 @@ In order, measured against the console's `[PERF]`/`[PROF]` lines
    so the GPU sits idle during the next frame's simulation. Worth ~20% in
    xemu; on hardware the GPU wait was under 1 ms, so only once the CPU side
    is fast.
-5. Smaller: stagger the display-list content check (a sampled hash per list
+5. **Vertex-program loads** (done: `docs/renderer.md` "Program memory").
+   Next: capture a console trace (`-DXGX_DEBUG_VPTRACE`) and replay it with
+   `vp_policy.py`; if loads still matter, let a program that writes more
+   outputs serve draws that don't read them (fog off, fewer texture units,
+   COLOR1 unused), at some cost in vertex work.
+6. Smaller: stagger the display-list content check (a sampled hash per list
    per frame), `-ftrivial-auto-var-init-max-size` for large locals in hot
    code (after checking which rely on the zeroing).
 
