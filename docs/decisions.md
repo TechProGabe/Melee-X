@@ -72,6 +72,15 @@ which implies `-fno-builtin`: a `memcpy(v, out, 12)` was a real call and a
 `rep movsb`. The header, force-included after `<string.h>`, maps the four to
 `__builtin_*`, so constant sizes are inlined and the rest still calls
 `xhw_string.c`. On the console those calls were ~18% of a match frame.
+`sqrtf`/`sqrt` are inlined the same way (`sqrtss` / `fsqrt`, the instructions
+pdclib's out-of-line versions wrap, so results are unchanged).
+
+**Alarms at most every ~0.3 ms between frames** (`os.c` `deliver_pending`).
+The port delivers alarms (pad polling, card and DVD completions) when the
+game thread re-enables interrupts; HSD does that thousands of times a frame,
+and each time converted the time and walked the alarm list. Now an rdtsc
+check skips it within ~0.3 ms of the last run; the frame boundary still runs
+them every frame.
 
 **Fewer, bigger draws** (`gx_vtx.c`, `docs/renderer.md`). A display list's
 batches are merged into one draw (strips stitched with degenerate
@@ -122,6 +131,12 @@ marked `PORT:`:
   a console that freezes during a transition leaves the scene in `boot.log`.
 - `src/melee/gm/gmvs.c`: `[GAME]` log lines where a match ends (TIME!,
   GAME!, no contest) and where the end banner hands over to the results.
+- `extern/aurora/lib/dolphin/mtx/mtx.c` (`C_MTXConcat`): four columns at a
+  time in SSE under `TARGET_XBOX`, same operations in the same order per
+  lane, so bit-identical (checked against the C on 5M random and special
+  inputs); it was the hottest math routine in a match profile.
+- `src/melee/lb/lb_00B0.c` (`memzero`): `memset` instead of the byte loop,
+  which `-ffreestanding` keeps as written (~1% of a console match frame).
 - `src/melee/gm/gmscene.c` (`gm_801A4D34`): the render pass is bracketed
   with `xsdk_perf_render_begin/end` (`xbox/src/sdk/vi.c`), so `[PERF]`
   separates simulation ticks from rendering and counts ticks per render.

@@ -1487,10 +1487,10 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
 
     d = st->dirty | s_draw_force | (s_vc_valid ? 0 : XGX_DIRTY_ALL);
     {   /* what changed before each draw: what keeps draws from merging */
-        uint32_t k;
+        uint32_t bits = d & 0x1FFFu;
         if (!d) s_st_dirty_none++;
         else if (d == XGX_DIRTY_POSMTX) s_st_dirty_mtx++;
-        for (k = 0; k < 13; k++) s_st_dirty[k] += (d >> k) & 1;
+        for (; bits; bits &= bits - 1) s_st_dirty[__builtin_ctz(bits)]++;
     }
     s_draw_force = 0;
     lay = (layout->off_nrm >= 0) | (layout->off_col[0] >= 0) << 1 | (layout->off_col[1] >= 0) << 2;

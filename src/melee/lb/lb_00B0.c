@@ -394,10 +394,19 @@ void lb_8000C0E8(HSD_JObj* jobj, s32 i, DynamicModelDesc* arg2)
 
 void memzero(void* mem, ssize_t size)
 {
+#ifdef TARGET_XBOX
+    /* PORT: the platform's memset (32 bits at a time) instead of a byte
+     * loop: the port is built -ffreestanding, so clang keeps the loop as
+     * written, and on the console it was ~1% of a match frame. */
+    if (size > 0) {
+        memset(mem, 0, (size_t) size);
+    }
+#else
     u8* bytes = mem;
     while (size--) {
         *bytes++ = 0;
     }
+#endif
 }
 
 void lb_8000C1C0(HSD_JObj* jobj, HSD_JObj* constraint)

@@ -38,6 +38,28 @@ void C_MTXCopy(const Mtx src, Mtx dst) {
   }
 }
 
+#if defined(TARGET_XBOX) && defined(__SSE__)
+/* PORT: four columns at once in SSE. Each lane does what the C below does,
+ * in the same order: (a0*b0j + a1*b1j), then a2*b2j + that, then + 0 (lanes
+ * 0-2, which turns -0 into +0 as the C's `0 +` does) or + a3 (lane 3). So
+ * the results are bit-identical; HSD concatenates a matrix per joint per
+ * frame, and this was the port's hottest math routine. */
+typedef float mtx_v4 __attribute__((vector_size(16), aligned(4)));
+
+void C_MTXConcat(const Mtx a, const Mtx b, Mtx ab) {
+  const mtx_v4 b0 = *(const mtx_v4*)b[0], b1 = *(const mtx_v4*)b[1], b2 = *(const mtx_v4*)b[2];
+  mtx_v4 r[3];
+  int i;
+  for (i = 0; i < 3; i++) {
+    const mtx_v4 x = {a[i][0], a[i][0], a[i][0], a[i][0]}, y = {a[i][1], a[i][1], a[i][1], a[i][1]},
+                 z = {a[i][2], a[i][2], a[i][2], a[i][2]}, t = {0.0f, 0.0f, 0.0f, a[i][3]};
+    r[i] = (z * b2 + (x * b0 + y * b1)) + t;
+  }
+  *(mtx_v4*)ab[0] = r[0];
+  *(mtx_v4*)ab[1] = r[1];
+  *(mtx_v4*)ab[2] = r[2];
+}
+#else
 void C_MTXConcat(const Mtx a, const Mtx b, Mtx ab) {
   Mtx mTmp;
   MtxPtr m;
@@ -71,6 +93,7 @@ void C_MTXConcat(const Mtx a, const Mtx b, Mtx ab) {
     C_MTXCopy(mTmp, ab);
   }
 }
+#endif
 
 void C_MTXConcatArray(const Mtx a, const Mtx* srcBase, Mtx* dstBase, u32 count) {
   u32 i;

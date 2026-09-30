@@ -330,8 +330,18 @@ BOOL OSDisableInterrupts(void) {
     return d == 0;
 }
 
+/* HSD re-enables interrupts thousands of times a frame (allocations, object
+ * lists, audio); alarms are milliseconds apart. Checking at most every
+ * ~0.3 ms (rdtsc, 733 MHz) keeps the time conversions and the alarm walk out
+ * of those; the frame boundary still runs them every frame. */
+#define DELIVERY_TSC 250000u
+
 static void deliver_pending(void) {
+    static uint64_t last;
+    uint64_t now = xhw_perf_now();
+    if (now - last < DELIVERY_TSC) return;
     if (xsdk_is_game_thread() && !s_in_delivery) {
+        last = now;
         s_in_delivery = 1;
         xsdk_run_alarms();
         s_in_delivery = 0;
