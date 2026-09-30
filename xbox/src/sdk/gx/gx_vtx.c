@@ -742,6 +742,7 @@ typedef struct {
     const uint8_t* dl;
     uint32_t nbytes;
     uint32_t sig, hash;
+    uint32_t fkey;                 /* fmt_key(fmts) it was made under (part of the key) */
     uint32_t checked, last_used;
     uint8_t* mem;
     uint32_t mem_bytes;
@@ -864,10 +865,27 @@ static int dlc_evict_one(uint32_t frame, const DlEntry* keep) {
     return 1;
 }
 
+/* The vertex descriptor and the formats a list uses are part of an entry's
+ * key: HSD draws some lists under different formats (small lists shared by
+ * models whose positions are quantized differently, the shadow pass's
+ * descriptor), and one entry per list flipping between them rebuilt on every
+ * call until it went volatile (~100 lists, decoded on every call). */
+static uint32_t fmt_key(uint32_t fmts) {
+    uint32_t h = fnv(2166136261u, g_gx.desc, sizeof g_gx.desc), f;
+    for (f = 0; f < 8; f++)
+        if (fmts & (1u << f)) h = fnv(h, g_gx.vat[f], sizeof g_gx.vat[f]);
+    return h;
+}
+
 static DlEntry* dlc_find(const uint8_t* dl, uint32_t nbytes) {
+    uint32_t mask = 0x100, key = 0;   /* fmt_key of the last mask asked for */
     int i;
-    for (i = s_dlc_bucket[dl_bucket(dl)]; i >= 0; i = s_dlc[i].next)
-        if (s_dlc[i].dl == dl && s_dlc[i].nbytes == nbytes) return &s_dlc[i];
+    for (i = s_dlc_bucket[dl_bucket(dl)]; i >= 0; i = s_dlc[i].next) {
+        DlEntry* e = &s_dlc[i];
+        if (e->dl != dl || e->nbytes != nbytes) continue;
+        if (e->fmts != mask) key = fmt_key(mask = e->fmts);
+        if (e->fkey == key) return e;
+    }
     return NULL;
 }
 
@@ -1056,6 +1074,7 @@ static int dlc_build(DlEntry* e, uint32_t frame) {
             e->nrange++;
         }
     e->sig = vtx_sig(fmts, 1);
+    e->fkey = fmt_key(fmts);
     e->hash = content_hash(e);
     e->checked = frame;
     s_st_dl_builds++;
@@ -1157,6 +1176,7 @@ static int dyn_build(DlEntry* e, uint32_t frame) {
             x->hash = dyn_array_hash(x, x->base);
         }
     d->sig = vtx_sig(fmts, 0);
+    e->fkey = fmt_key(fmts);
     d->dl_hash = sample_hash(2166136261u, e->dl, e->nbytes);
     e->dyn = d;
     e->fmts = fmts;
@@ -1183,14 +1203,25 @@ static void dyn_fetch(DynList* d, uint8_t attr, const uint8_t* base) {
     s_st_dyn_fetch++;
 }
 
+/* the first lists to go volatile, and why, for tuning the cache */
+static void log_volatile(const DlEntry* e, const char* why) {
+    static int logged;
+    if (logged++ >= 24) return;
+    xhw_logf("[DLC] volatile: list %08x (%u bytes, formats %02x, %u rebuilds): %s", (unsigned)(uintptr_t)e->dl,
+             e->nbytes, e->fmts, e->rebuilds, why);
+}
+
 /* 1: drawn from the dynamic template */
 static int dyn_call(DlEntry* e, uint32_t frame) {
     DynList* d = e->dyn;
     int i;
-    if (d->sig != vtx_sig(e->fmts, 0) ||
+    int sig_changed = d->sig != vtx_sig(e->fmts, 0);
+    if (sig_changed ||
         (e->checked != frame && (e->checked = frame, d->dl_hash != sample_hash(2166136261u, e->dl, e->nbytes)))) {
         dyn_free(e);
         if (++e->rebuilds >= DLC_VOLATILE * 4 || !dyn_build(e, frame)) {
+            log_volatile(e, e->rebuilds >= DLC_VOLATILE * 4 ? (sig_changed ? "formats changed" : "contents changed")
+                                                            : "over the dynamic budget");
             e->is_volatile = 1;
             return 0;
         }
@@ -1251,6 +1282,7 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
         dlc_release(e);   /* changed: rebuild below */
         if (++e->rebuilds >= DLC_VOLATILE) {
             if (dyn_build(e, frame)) return dyn_call(e, frame);
+            log_volatile(e, "no dynamic form");
             e->is_volatile = 1;
             return 0;
         }
@@ -1263,6 +1295,7 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
         memset(e, 0, sizeof *e);
         e->dl = dl;
         e->nbytes = nbytes;
+        e->fkey = fmt_key(0);   /* until a build knows the formats */
         e->next = s_dlc_bucket[dl_bucket(dl)];
         s_dlc_bucket[dl_bucket(dl)] = idx;
         s_dlc_n++;

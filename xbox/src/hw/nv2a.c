@@ -117,8 +117,9 @@ static int map_y(float y) { return s_cy + (int)floorf(y * (float)s_ch / XGX_EFB_
 #endif
 /* cached display lists (gx_vtx.c); the results screen (6500 draws) filled
  * 2 MB and rebuilt lists every frame */
-#define VB_POOL_480 (3072u * 1024)
-#define VB_POOL_720 (2048u * 1024)
+#define VB_POOL_480 (4096u * 1024)
+#define VB_POOL_720 (3072u * 1024)
+#define VB_POOL_MIN (2048u * 1024)
 #define PB_BYTES (1536u * 1024)
 #define POOL_ALIGN 128
 #define POOL_BIG (256 * 1024)
@@ -1932,7 +1933,8 @@ int xgx_init(void) {
         xhw_video_fallback_480();
     }
     /* optional: without it display lists are decoded every call */
-    if (!pool_init(&s_vb, vb_pool_bytes)) xhw_logf("[NV2A] no memory for the %u KB vertex cache", vb_pool_bytes / 1024);
+    while (!pool_init(&s_vb, vb_pool_bytes) && vb_pool_bytes > VB_POOL_MIN) vb_pool_bytes -= 1024u * 1024;
+    if (!s_vb.base) xhw_logf("[NV2A] no memory for the %u KB vertex cache", vb_pool_bytes / 1024);
     pb_show_front_screen();
     s_fbw = (int)pb_back_buffer_width();
     s_fbh = (int)pb_back_buffer_height();

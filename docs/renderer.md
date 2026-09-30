@@ -40,8 +40,13 @@ memcpy, memmove, memset and memcmp are compiler builtins everywhere
 real call. That was ~18% of a match frame on the console.
 
 Display lists are cached (`gx_vtx.c`, up to 2048 lists): the first call
-decodes the list into a vertex buffer from its own pool (3 MB at 480, 2 MB
-at 720p; the results screen filled 2 MB) and later calls replay the draws. An entry is checked against the
+decodes the list into a vertex buffer from its own pool (4 MB at 480, 3 MB
+at 720p; with every list cached, a 4-CPU match fills 3 MB) and later calls replay the draws. Entries are keyed by the
+list's address and size and by the vertex descriptor and the formats (VAT)
+the list uses: HSD draws some small lists under different formats (shared
+by models quantized differently), and one entry per list flipped between
+them until ~100 lists were decoded on every call. Now a 4-CPU match keeps
+~1400 lists cached, none volatile. An entry is checked against the
 vertex descriptor, formats and arrays on every call, and against a sampled
 hash of the list and of the array ranges it indexed once a frame. A list
 whose arrays keep changing (skinned and morphed models, whose positions and
