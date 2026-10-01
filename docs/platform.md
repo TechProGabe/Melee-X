@@ -191,6 +191,66 @@ right = RIGHT
 - Every call completes immediately; callbacks are deferred to the game
   thread.
 
+### Byte order of Melee's files (`card_endian.c`)
+
+`card.c` stores what HSD's card layer hands it, and HSD moves bytes. On a
+GameCube card and in Dolphin, Melee's files hold its structs big-endian,
+so the port converts at the boundary, in `src/melee/lb/lbcardgame.c`
+(`PORT:`, under `TARGET_XBOX`):
+
+| file (manifest slot) | struct | conversion |
+|---|---|---|
+| save data (1) | `GmSaveData`, 0x1790 bytes | field table |
+| name tags (2-8) | `struct NameTagDataBank` x7, 0x1F2C bytes each | field table |
+| header | comment (bytes), banner and icon (image bytes from `LbMcGame.dat`), `CardIconInfo` (bytes) | none; `lb_803BAB60` is now the GameCube's bytes, see below |
+| snapshots (`lbsnap.c`) | header `Unk80433380_0` + JPEG | the header is a `DISC_STRUCT` (big-endian in memory) except `x14`, now swapped when it is filled; the JPEG is a byte stream |
+
+- **Read** (`lb_8001CBBC`): once `lb_8001BD34` returns, each file whose read
+  finished (`lb_8001B6E0` gives 0 or 2) is converted in place with
+  `xsdk_card_from_card`. HSD has already checked the block checksums on the
+  card's bytes by then.
+- **Create and write** (`lb_8001C8BC`, `lb_8001CC84`): the manifest handed
+  to lbcardnew points at `card_image`, a static big-endian copy of the save
+  data and name tags (60 KB) taken when the operation is queued. The write
+  runs over the following frames and verifies against its source, and the
+  game keeps using (and changing) its own native copy meanwhile, so the
+  live buffer is never swapped in place. HSD computes the block checksums
+  from `card_image`, the same bytes a GameCube writes.
+- **Field tables**: one row per member, in order, with the compiler's
+  padding and the `u8` members as rows of their own; `u16`/`u32`/`s32`/
+  `s64`/`u64` members and arrays are byte-reversed, nested structs
+  (`GmStats`, `GamePrefs`, `FighterData[25]`, the `gmm_retval_*` structs,
+  `NameTagData[19]`) have tables of their own. `FighterData.x7C` opens with
+  a `u16` of bit-fields, which MWCC allocates from the top bit and the game
+  triple from the bottom, so that unit is repacked field by field.
+  `FighterData.x7A` is an `UnkFlagStruct`, a `DISC_STRUCT`, already in
+  GameCube bit order. Neither struct has a float. The unnamed ranges
+  (`padding_x1A70`, `padding_x1C88`, `padding_trophy_flags`, the `pad_*`
+  and `padding*` members) are left as bytes; no code names them.
+- **Older Melee-X saves** were written little-endian. Each file read is
+  classified by a vote: every counter or record whose two readings differ
+  votes for the one that is smaller (a small value read backwards is huge:
+  `0x0225` <-> `0x2502`), and every `trophy_flags` entry
+  (`0x8000 | 0x4000 | count`) for the reading with bits 8-13 clear; bit
+  sets and bytes don't vote. Little-endian wins only with more votes, and
+  the file is then left as it is, which is native already. The boot log
+  says what was decided per file: `[CARD] save data big-endian (votes be
+  N, le M)` or `[CARD] converted save data: little-endian (...)`. The
+  game's next save writes it big-endian; nothing is rewritten at load.
+- **Mixed files**: a Dolphin save that an older build loaded and saved
+  again is big-endian except for the fields the game rewrote. The majority
+  wins, and `[CARD] ... looks mixed` is logged when the minority is at
+  least 4 votes and an eighth of the total; the rewritten fields stay wrong
+  (a counter, the play time); reimport the original .gci if it matters.
+- **Icon**: `lb_803BAB60`, the `CardIconInfo` new saves are created with,
+  was declared as `u32`s holding the GameCube's bytes. On the Xbox that
+  read as "no banner, no icon", so saves created before this fix have a
+  comment-only header. They load and save normally (the header layout comes
+  from the directory entry); a save created now has the banner and icon.
+- Why `TARGET_XBOX`, not `TARGET_PC`: melee-pc's card backend (aurora) is
+  not part of this port and its users' saves are native-order files; the
+  .gci compatibility with Dolphin and real cards is this port's promise.
+
 ## Not built
 
 melee-pc's netplay, ranked, LAN, Slippi replays, launcher, updater,

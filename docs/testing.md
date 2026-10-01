@@ -9,6 +9,7 @@ tools/xbox/test_vp_opt.py        # optimized vertex programs vs the pre-optimize
 tools/xbox/vp_policy.py --check  # program-memory residency (nv2a_vpmem.c) vs its model and flush/LRU
 tools/xbox/test_tex_convert.py   # native texture formats vs the GX decoder
 tools/xbox/test_fog.py           # GX fog on the NV2A vs GX's fog factor (libogc registers, Dolphin's formula)
+tools/xbox/test_card_endian.py   # memory-card files: field tables vs the game's structs, big-endian <-> native
 ```
 
 CI (`.github/workflows/build.yml`, started by hand only: builds and tests
@@ -21,6 +22,17 @@ without one) through residency policies and prints loads and instructions
 per frame for the programs before and after the optimizer; `--keys` lists a
 frame's programs and their sizes, `--diffuse`/`--spec`/`--point` vary the
 synthetic stage's lights.
+
+`test_card_endian.py` compiles `xbox/src/sdk/card_endian.c` with the
+game's `<melee/gm/types.h>` on the host (LP64; the size asserts of unrelated
+disc structs that hold pointers are switched off for it). It checks that
+the field tables tile `GmSaveData` and `NameTagDataBank` byte for byte,
+that the `FighterData.x7C` bit-field widths match the declaration, that
+converting to the card and back is the identity, that a big-endian save
+and name-tag bank built by hand from `offsetof` read back with the right
+values and are written back byte for byte, and that a little-endian file
+(an older Melee-X save) is recognised and left alone. A table that doesn't
+add up to `sizeof` its struct also stops the Xbox build.
 
 ## Running it
 

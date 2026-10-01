@@ -349,6 +349,15 @@ int lbSnap_8001DC0C(u8* image)
     _p(snap)->height = 480;
     _p(snap)->stkind = gm_GetStKind();
     it_8026C47C(&_p(snap)->x14);
+#ifdef TARGET_XBOX
+    /* PORT: the rest of the snapshot header is a DISC_STRUCT (big-endian in
+     * memory), but it_8026C47C fills x14 through a plain pointer, natively.
+     * Big-endian, as a GameCube writes it; nothing reads it back. */
+    for (i = 0; i < sizeof(_p(snap)->x14) / sizeof(s32); i++) {
+        ((u32*) &_p(snap)->x14)[i] =
+            __builtin_bswap32(((u32*) &_p(snap)->x14)[i]);
+    }
+#endif
     _p(snap)->x34 = ft_GetFtKindMask();
     _p(snap)->x8 = 3;
     hsd_803B5C2C(_p(snap)->x8);
