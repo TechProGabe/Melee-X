@@ -650,6 +650,18 @@ static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int d
         p = pb_push1(p, NV097_CLEAR_SURFACE, NV097_CLEAR_SURFACE_Z | NV097_CLEAR_SURFACE_STENCIL);
         pb_end(p);
     }
+    /* The next draws wait for the clear. HSD's shadow maps are drawn one
+     * after another in one 256x256 corner: copy, clear, then the next
+     * map's white background quad. On the console the clear still ran
+     * while that quad's first triangle was drawn, and black cut into it
+     * (the copies had black wedges above the quad's diagonal); the stage
+     * surfaces that multiply the map in flashed black near the fighters.
+     * xemu runs it in order. */
+    {
+        uint32_t* p = pb_begin();
+        p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
+        pb_end(p);
+    }
 }
 
 void xgx_clear(const int32_t r[4], const uint8_t rgba[4], uint32_t z24, int color, int alpha, int depth) {
@@ -711,8 +723,12 @@ static void pb_budget(void) {
 #define XHW_FBDUMP_EVERY 0   /* [FBDUMP] screenshot every N presents (xhw_fbdump.c) */
 #endif
 void xgx_fbdump_next(void) { s_fbdump_once = 1; }
-static volatile int s_shot_once;
-void xgx_shot_next(void) { s_shot_once = 1; }
+/* BACK asks for a screenshot (s_shot_req, from the pad code at any point of
+ * a frame); the next frame is the one taken (s_shot_once from its start), so
+ * a -DXGX_DEBUG_TRACE trace and the EFB-copy dumps cover all of it. */
+static volatile int s_shot_req;
+static int s_shot_once;
+void xgx_shot_next(void) { s_shot_req = 1; }
 
 void xgx_present(int black) {
     frame_open();
@@ -726,6 +742,10 @@ void xgx_present(int black) {
     if (s_shot_once) {
         s_shot_once = 0;
         xhw_fbdump_file(pb_back_buffer(), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());
+    }
+    if (s_shot_req) {
+        s_shot_req = 0;
+        s_shot_once = 1;
     }
     release_deferred();
     if (s_gf_count != s_gf_logged) {
@@ -2002,6 +2022,11 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     put1(NV097_SET_STENCIL_TEST_ENABLE, 1);   /* as pbkit leaves it */
     pb_close();
     ocx_pb_retarget_back_buffer();
+    {   /* the back buffer is the target before the next clear or draw starts */
+        uint32_t* p = pb_begin();
+        p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
+        pb_end(p);
+    }
     memset(s_fixed, 0xFF, sizeof s_fixed);
     memset(s_tex_shadow, 0xFF, sizeof s_tex_shadow);
     s_tex_prog = 0xFFFFFFFFu;
@@ -2033,6 +2058,21 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
 #endif
     pw = copy_dim(dst_w);
     ph = copy_dim(dst_h);
+#ifdef XGX_DEBUG_TRACE
+    /* the frame a BACK screenshot captures: each EFB copy's source as a BMP
+     * too (up to 8), logged between the draws that made it and use it */
+    if (s_shot_once) {
+        static uint32_t* dbg;
+        static uint32_t dbg_frame = 0xFFFFFFFFu, dbg_n;
+        if (dbg_frame != s_frame) dbg_frame = s_frame, dbg_n = 0;
+        if (dbg_n++ < 8 && (dbg || (dbg = (uint32_t*)malloc(1024 * 1024 * 4)))) {
+            xhw_logf("[DRAW] efb copy after #%u: src %d,%d %dx%d -> %ux%u mode %d", s_draws, (int)src[0], (int)src[1],
+                     (int)src[2], (int)src[3], pw, ph, mode);
+            read_rect(src, pw, ph, dbg);
+            xhw_fbdump_file(dbg, (int)pw, (int)ph, 32, (int)pw * 4);
+        }
+    }
+#endif
     reusable = reuse && reuse < MAX_TEX && s_tex[reuse].used && s_tex[reuse].w == pw && s_tex[reuse].h == ph &&
                s_tex[reuse].levels == 1 && s_tex[reuse].nvfmt == nv_format(XGX_TEX_ARGB8);
 #if XGX_EFB_GPU_COPY

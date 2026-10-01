@@ -2,6 +2,7 @@
 #ifndef XSDK_H
 #define XSDK_H
 #include <dolphin/card.h>
+#include <stdarg.h>
 #include <stddef.h>
 
 /* os.c */
@@ -10,6 +11,8 @@ void xsdk_run_alarms(void);
 void xsdk_fill_disc_id(const void* header32);
 void xsdk_card_dispatch(CARDCallback callback, s32 chan, s32 result);
 void xsdk_log_raw(const char* text);   /* log.c: no newline added */
+int xsdk_vsnprintf(char* out, size_t cap, const char* fmt, va_list ap);   /* log.c: vsnprintf with %f/%e/%g */
+int xsdk_snprintf(char* out, size_t cap, const char* fmt, ...);
 
 /* dvd.c */
 int xsdk_dvd_open(const char* path, char* why, size_t why_cap);

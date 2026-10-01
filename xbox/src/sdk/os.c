@@ -653,7 +653,7 @@ void OSReport(const char* msg, ...) {
 
 void OSVReport(const char* msg, va_list ap) {
     char buf[512];
-    vsnprintf(buf, sizeof buf, msg, ap);
+    xsdk_vsnprintf(buf, sizeof buf, msg, ap);
     xsdk_log_raw(buf);
 }
 
@@ -662,7 +662,7 @@ void OSPanic(const char* file, int line, const char* msg, ...) {
     char where[640];
     va_list ap;
     va_start(ap, msg);
-    vsnprintf(buf, sizeof buf, msg, ap);
+    xsdk_vsnprintf(buf, sizeof buf, msg, ap);
     va_end(ap);
     snprintf(where, sizeof where, "%s:%d: %s", file, line, buf);
     xhw_fatal("OSPanic", where);
@@ -678,7 +678,7 @@ void pc_log_line(const char* fmt, ...) {
     char buf[512];
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(buf, sizeof buf, fmt, ap);
+    xsdk_vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
     xhw_log(buf);
 }

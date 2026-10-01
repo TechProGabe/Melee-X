@@ -25,6 +25,15 @@ code. It:
 - routes the printf family to `xsdk_*` (the log), unless
   `XSDK_NO_STDIO_RENAME` is defined.
 
+nxdk's pdclib printf has no floating point: it skips `%f`/`%e`/`%g`
+without taking the double, and every later argument is read 4 bytes off
+(an `OSReport` with `%f` before `%s` crashed the console). `log.c`'s
+`xsdk_vsnprintf` formats the float conversions itself and hands each other
+conversion to pdclib with its own argument; `OSReport`, `OSPanic`,
+`pc_log_line` and the renamed printf family go through it. The game's own
+`sprintf`/`snprintf` calls still use pdclib (a `%f` there prints nothing:
+the trophy display's debug coordinates).
+
 ## Boot
 
 `xhw_main.c` runs these steps:

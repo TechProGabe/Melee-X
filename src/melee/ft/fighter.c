@@ -2877,6 +2877,42 @@ void Fighter_procCollResolve(Fighter_GObj* gobj)
             fp->dmg.x189C_unk_num_frames = 0.0f;
             Fighter_UnkTakeDamage_8006CC30(fp, fp->dmg.x1838_percentTemp);
             ftCo_Damage_CalcKnockback(fp);
+#ifdef TARGET_XBOX
+            /* PORT: on Corneria every fighter was at 90% by "Go!" and was
+             * launched to a KO on its first landing on the Great Fox
+             * (console only). Log the first hits that didn't come from a
+             * fighter, and any with extreme knockback, and what dealt them. */
+            if (fp->dmg.x18A4_knockbackMagnitude > 200.0f ||
+                (fp->dmg.x1868_source != NULL &&
+                 fp->dmg.x1868_source->classifier != HSD_GOBJ_CLASS_FIGHTER) ||
+                (fp->dmg.x1868_source == NULL && fp->dmg.kb_applied >= 5.0f))
+            {
+                static int logged;
+                if (logged++ < 32) {
+                    HSD_GObj* src = fp->dmg.x1868_source;
+                    if (src != NULL && src->classifier == HSD_GOBJ_CLASS_ITEM) {
+                        Item* ip = HSD_GObjGetUserData(src);
+                        HitCapsule* h = &ip->x5D4_hitboxes[0].hit;
+                        OSReport("[WARN] hit by item kind %d at %d,%d: hitbox 0 "
+                                 "state %d damage %d scale x100 %d\n",
+                                 (int) ip->kind, (int) ip->pos.x, (int) ip->pos.y,
+                                 (int) h->state, (int) h->damage,
+                                 (int) (h->scale * 100.0f));
+                    }
+                    /* integers only: nxdk's printf has no %f */
+                    OSReport("[WARN] hit: kind %d at %d,%d %s, "
+                             "damage %d percent %d kb %d angle %d "
+                             "element %u, source class %d ply %d\n",
+                             fp->kind, (int) fp->cur_pos.x, (int) fp->cur_pos.y,
+                             fp->ground_or_air == GA_Air ? "air" : "ground",
+                             (int) fp->dmg.kb_applied, (int) fp->dmg.x1830_percent,
+                             (int) fp->dmg.x18A4_knockbackMagnitude,
+                             fp->dmg.x1848_kb_angle, fp->dmg.x1860_element,
+                             src != NULL ? (int) src->classifier : -1,
+                             fp->dmg.x18c4_source_ply);
+                }
+            }
+#endif
             ftKb_SpecialN_800F5BA4(fp);
 
             if (fp->take_dmg_2_cb) {

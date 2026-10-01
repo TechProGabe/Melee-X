@@ -245,6 +245,13 @@ marked `PORT:`:
   MEM1/ARAM is skipped and logged once per fighter kind (`[WARN] ftParts:`).
   A 4-player Fountain of Dreams match (Pichu, Game & Watch, Ness, Kirby)
   crashed there reading 0x07080900.
+- `src/melee/ft/fighter.c` (knockback): under `TARGET_XBOX` the first 32
+  hits that didn't come from a fighter (or had no source) or whose
+  knockback magnitude exceeds 200 are logged (`[WARN] hit:` with the
+  fighter, position, damage, angle, element and the source's GObj class and
+  player; `[WARN] hit by item kind` for items). On Corneria every fighter
+  was at 90% by "Go!" and was launched to a KO on its first landing on the
+  Great Fox, on the console only.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after

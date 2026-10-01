@@ -36,49 +36,65 @@
 - [x] console screenshots (BACK -> `shotNN.bmp`) and a cache-flush diagnostic (BACK+Y)
 - [ ] release packaging
 
-## Where it stands (2026-09-30, build v16)
+## Where it stands (2026-09-30, build v25)
 
 On the console (`-DXHW_PROF=1` builds, `[PERF]` lines): menus and
 character select run at 60 fps. A 4-CPU match keeps the simulation at 60
-ticks a second and draws 25-30 fps on Pokémon Stadium and 13-15 fps on
-Fountain of Dreams (its reflections: more EFB copies and draws); Stadium
-started this round at 4 fps with a freeze. Two-round sessions end stable.
+ticks a second and draws ~28 fps on Pokémon Stadium and ~23-28 fps on
+Fountain of Dreams (15 before its 104 KB stage list could be cached:
+`DLC_MAX_BATCH` was 64, now 4096 with scratch that grows). Fog, shorter
+vertex programs with a forecast residency policy, and big-endian memory
+card files (GameCube/Dolphin saves load; all characters unlocked with the
+user's 100% save) are in.
 
-Fixed on the console this round (details in `renderer.md`,
-`platform.md` and `decisions.md`):
+Found and fixed on the console in v17-v25 (details in `renderer.md`,
+`platform.md`, `decisions.md`):
 
-- pushbuffer overrun: pbkit silently kept 512 KB for a non-power-of-two
-  size, frames ran past it (GPU fault, freeze when Stadium's screen came on);
-- depth: pbkit re-enabled the w-buffer every frame, and with the z-buffer
-  out-of-range depth was culled (black bands over Stadium's floor); now a
-  z-buffer with depth clamped as on the GameCube;
-- `wait_idle` counted methods still in PFIFO's CACHE1 as done;
-- texture pool pressure: EFB copies at the nearest power of two, C4/C8 as
-  palette textures, P8 palettes re-sent for every new texture;
-- AC97 bus master halted for a whole boot (silent): halt/stall recovery;
-- imported-code bugs: Stadium transformations (bad kind, double parse and
-  hang), Kirby copy abilities with parts (crash on knockback), the online
-  lobby on a build without netplay (crash);
-- the dashboard showed another nxdk title's icon (shared title ID).
+- Fountain of Dreams decoded its stage list every frame (more than 64
+  draws in one list): ~25% of the CPU;
+- texture and display-list content hashes: four FNV chains (same words);
+- nxdk's pdclib printf has no `%f`: a `%f` followed by `%s` crashed (my
+  own log did, in sudden death); `xsdk_vsnprintf` formats floats;
+- black flashes on surfaces near fighters (Fountain's corner and
+  platforms, Corneria's nameplate, Stadium's floor): the four shadow maps
+  are drawn in one corner, copied and cleared one after another, and the
+  next map's white background quad lost its first triangle to the clear
+  (BACK on a `-DXGX_DEBUG_TRACE` build writes the EFB copies: black wedges
+  above the quad's diagonal). v23 waits for idle after every clear and
+  after the copy's retarget; **v24 still showed black on the console**:
+  check the v25 BACK dumps (`[DRAW] efb copy` lines) before trying more.
+- trophy gallery: the save's trophy count was byte-swapped (see the memory
+  card PR); the user's console save had been rewritten by older builds and
+  was replaced with the Dolphin original (`~/Downloads/...35037.gci`).
 
 ## Next
 
-1. **Texture accuracy.** Fountain of Dreams' water and other reflections
-   need indirect texturing (the NV2A's texture-shader bump modes may do
-   it); TEV swap tables beyond the alpha broadcast. Fog is new: compare
-   stage backgrounds, the title screen and the Classic/All-Star intros
-   with Dolphin (`docs/renderer.md` lists where Melee uses it). Item crates
-   still show the background through their dark gaps. Short black flashes
-   remain on Stadium's floor. For each, take a console screenshot (BACK)
-   and compare with xemu at the same scene (`docs/testing.md`).
-2. **Texture pool pressure** on Stadium: 10-65 failed allocations and
-   ~500 uploads per 10 s. Non-power-of-two C8 textures still expand to
-   A8R8G8B8 at the next power of two (1.5 of Stadium's 6 MB). Candidates:
-   NV2A linear (rect) textures at their real size (texcoords scaled in the
-   vertex program; GX allows only clamp for NPOT), P8 for NPOT by nearest
-   resampling, or a larger pool now that disc-backed ARAM frees RAM.
-3. **One `[NV2A] GPU stalled` in menus** (v12, recovered on its own).
-4. **Performance**, as planned below.
+1. **Corneria: every fighter is KO'd at the start.** `[WARN] hit` lines
+   (v24): item kind 160 (0xA0, the first stage-item slot: a Great Fox gun,
+   `grcorneria.c` `left_cannon`/`right_cannon`), owned by the stage (ply
+   6), fire, hits all four fighters at their spawn points (y 290-330, 150
+   units apart) for +30% twice, then they are launched. The guns go live
+   on the first frame (`x110 == 0` in `grCorneria_801E1348` state 0) as on
+   the GameCube, so the hitbox's size or position is wrong here: v25 logs
+   the item's position, hitbox state, damage and scale.
+2. **Black shadow-map wedges** (above): confirm with the v25 dumps whether
+   the copies are still bad; if so, try a flush between the clear and the
+   next draw that the NV2A honours (`NV097_SET_ZSTENCIL`/surface flushes,
+   or clearing with a drawn quad instead of `CLEAR_SURFACE`), and compare
+   with what xemu's `pgraph` does for clears.
+3. **Kirby's copy hats**: `ftParts: kind 4 costume 0: visibility table 3
+   points at 0` (also Samus, Mewtwo); Kirby with Pikachu's ability showed
+   black shapes on the hat. The guard skips the table; find why the table
+   pointer is 0 (`ftKb_LoadHatParts`, `ftParts_8007487C`).
+4. **Trophy Collection** (mode 13) crashed in `tyDisplay_Scene_OnEnter`
+   with the bad save; retest with the restored save.
+5. **Intro movie (THP) plays choppily** on the console.
+6. **Texture accuracy**: indirect texturing (Fountain's water), TEV swap
+   tables, item crates, fog checks against Dolphin.
+7. **Texture pool pressure** on Stadium (NPOT C8 as ARGB8).
+8. **Performance**, as planned below: on the console the simulation is
+   ~4 ms a tick, display lists 4-5 ms and draw submission 6-9 ms a frame;
+   ~50 vertex-program loads a frame remain.
 
 ## Performance plan
 
