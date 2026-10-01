@@ -69,6 +69,14 @@ Found and fixed on the console in v17-v25 (details in `renderer.md`,
 
 ## Next
 
+v31 round (in progress): fixed in xemu: Kirby's grey Falcon helmet during
+Falcon Punch (`HSD_TExpSetReg` konst halves), black capsules (same), crate
+fronts (bump texgen + emboss pair), CMPR transparent texels (DXT3);
+off-screen rigid DObjs culled (Mute City 5.6 -> 15.5 fps in xemu). To do
+before the v31 hardware build: an on-screen FPS counter, toggled in
+`settings.ini` (default on for local hardware test builds; an options-menu
+toggle later); Fountain of Dreams indirect texturing if it fits.
+
 v29 on the console (2026-10-01, `~/xemu/hw/logs29`, map `melee_x.v29.map`):
 a 5-minute Pokémon Stadium run was stable (no GPU stall). Jungle Japes hung
 on entry after four matches: `Can't load SFX file; bank(id=2) buffer
