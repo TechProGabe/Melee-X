@@ -924,7 +924,7 @@ void xgx_shot_next(void) { s_shot_req = 1; }
 
 /* On-screen frame rate (settings.ini [video] fps): frames presented over
  * the last half second, drawn by the CPU into the back buffer once the GPU
- * is idle, after the screenshot dumps (they stay clean). 5x7 digits at 2x
+ * is idle, before the screenshot dumps (shots show it). Yellow 5x7 digits at 2x
  * on a black box, inside the TV-safe area. */
 static int s_fps_on;
 static uint32_t s_fps_val, s_fps_frames;
@@ -977,6 +977,7 @@ void xgx_present(int black) {
     if (black) clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 0, 0);
     pb_budget();   /* the frame's pushbuffer peak */
     wait_idle();
+    if (s_fps_on && !black) fps_overlay();
     if (s_fbdump_once || (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0)) {
         s_fbdump_once = 0;
         xhw_fbdump(pb_back_buffer(), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());
@@ -985,7 +986,6 @@ void xgx_present(int black) {
         s_shot_once = 0;
         xhw_fbdump_file(pb_back_buffer(), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());
     }
-    if (s_fps_on && !black) fps_overlay();
     if (s_shot_req) {
         s_shot_req = 0;
         s_shot_once = 1;
