@@ -97,8 +97,12 @@ released on leaving). Open, in order:
    method/data (v28 added) plus the surface and clip registers. Ship the
    next test build without `-DXGX_DEBUG_TRACE` unless BACK dumps are needed.
 2. **Kirby's copy hats**: right most of the time, but the hat's texture
-   sometimes disappears (v28 shots; check 13, 25, 47, 77 in logs28 and ask
-   the user which one). Suspects: the texture-revalidation stagger (a hat
+   sometimes disappears. logs28 `shot31.bmp` (Fountain, ~1:19 left): the
+   blue Kirby's Captain Falcon helmet is flat grey-white (untextured look)
+   while Falcon's own helmet beside it is red and yellow. Its `[DRAW]` trace
+   was lost (boot.log hit the cap at shot30). Falcon's hat is a parts hat
+   (`ftKb_LoadHatParts`, which loads part visibility and the hat's costume
+   texture list into `u.kb.x44`). Suspects: the texture-revalidation stagger (a hat
    texture loaded where another one lived, same pointer/size/format, served
    stale for up to 3 frames: try `TEX_STABLE` off), the hat's costume
    texture list (`u.kb.x44`, `ftAnim_80070200`, TObj image switching), or a
