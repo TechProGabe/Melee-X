@@ -69,34 +69,52 @@ Found and fixed on the console in v17-v25 (details in `renderer.md`,
 
 ## Next
 
-v27 on the console (2026-10-01): Corneria fixed, Fountain's black shadow
-wedges and flashes fixed, frame rate "much better", rumble works (it was off
-in Melee's Options; 25% weaker now), intro movie better but still choppy.
-New: **no audio at all** (AC97 running but CIV stuck at 0 from boot, the
-first time in any log), and once a **GPU stall** after ~5 minutes (PGRAPH
-error source 0x20, LIMIT_ZETA, then `pgraph 18000001`, black screen with the
-watchdog's report). v28 has:
+v28 on the console (2026-10-01, logs in `~/xemu/hw/logs28`, map
+`melee_x.v28.map`): intro movie perfect, audio back (no cold reset was
+needed: the AC97 started after its usual first restart), frame rate "great"
+(4-player Fountain ~30 fps: render 14.5 ms, sim 3.8 ms a tick x 2, draw 6.5,
+dlist 2.6; menus 55-60), no stage texture problems, Corneria fixed, rumble
+strength right, Trophy Collection smooth (`[TEX] overflow pool 6144 KB`,
+released on leaving). Open, in order:
 
-1. **Audio**: AC-link cold reset after three restarts without a finished
-   buffer (`[AUDIO] AC97 cold reset`). Check audio from boot, and for those
-   lines in boot.log.
-2. **GPU stall (LIMIT_ZETA)**: not understood yet. v28's stall line adds the
-   trapped method and data; the BACK dump no longer keeps a 4 MB buffer
-   (v27 ran at ~2 MB free after the first BACK). If it happens again, pull
-   boot.log at once.
-3. **Intro movie**: non-power-of-two textures are linear now, no
-   resampling; the planes cost ~2-3 ms in xemu (was 17-22). Check
-   smoothness; the JPEG decode (~18 ms a frame on the console) is next if
-   it still stutters.
-4. **Kirby's copy hats**, **Trophy Collection**: not checked in v27.
-5. **Rumble**: 75% of the motor at `rumble = 100`; a strength option goes
-   in the settings menu (Future features).
-6. **Texture accuracy**: indirect texturing (Fountain's water), TEV swap
-   tables, item crates, fog checks against Dolphin.
-7. **Performance**, as planned below: on the console the simulation is
-   ~4 ms a tick, the render pass (HSD walking the scene, GX setters) up to
-   17 ms a frame on Stadium, display lists 4-5 ms, draw submission 6-9 ms;
-   ~50 vertex-program loads a frame remain.
+1. **GPU hang on Pokémon Stadium** (~500 s into the session, VS match):
+   the game thread spins in `xgx_present` -> `wait_idle` -> `pb_busy`, and
+   the retrace stopped too (`[WDOG] frames stopped`, hang.log). No `[NV2A]
+   GPU stalled` line survived: boot.log had hit its 2 MB cap at ~145 s
+   (the `-DXGX_DEBUG_TRACE` `[DRAW]` dumps fill it). v27 had the same kind
+   of stop once (PGRAPH error source 0x20, LIMIT_ZETA, then `pgraph
+   18000001`). Neither appears in any log before v26, so suspect what v26
+   changed on the GPU side: `BREAK_VERTEX_BUFFER_CACHE` at every batch
+   start, vertex-pool buffers freed at once on eviction
+   (`xgx_vbuf_free_now`), kicks every 32 KB. One theory: a draw reading
+   garbage vertices (huge or NaN positions) makes the rasterizer run past
+   the depth surface (LIMIT_ZETA). Plan: (a) keep boot.log usable: send
+   `[DRAW]` trace lines to a separate trace.log, raise or ring-buffer the
+   boot.log cap; (b) build switches to undo each v26 GPU change
+   (`-DXGX_VB_CACHE_BREAK=0`, `-DXGX_VBUF_FREE_NOW=0`, `-DXGX_PB_KICK=4096`)
+   so the console can bisect; (c) a debug check that every position in a
+   built display list is finite; (d) on a stall, log PGRAPH's trapped
+   method/data (v28 added) plus the surface and clip registers. Ship the
+   next test build without `-DXGX_DEBUG_TRACE` unless BACK dumps are needed.
+2. **Kirby's copy hats**: right most of the time, but the hat's texture
+   sometimes disappears (v28 shots; check 13, 25, 47, 77 in logs28 and ask
+   the user which one). Suspects: the texture-revalidation stagger (a hat
+   texture loaded where another one lived, same pointer/size/format, served
+   stale for up to 3 frames: try `TEX_STABLE` off), the hat's costume
+   texture list (`u.kb.x44`, `ftAnim_80070200`, TObj image switching), or a
+   dropped texture (`[TEX] drop`). A BACK trace with the hat missing shows
+   the hat's draws and whether their texture is bound (`tex 0x0`).
+3. **Capsule item ("pill canister") texture looks off**: get a BACK shot
+   and its `[DRAW]` lines; check its TEV setup (swap tables, approximated
+   stages), texture format and the new linear (non-power-of-two) path.
+4. **Fountain of Dreams' reflection** is blocky: indirect texturing isn't
+   implemented (the 80x60 -> 64x64 scene copy is drawn straight).
+5. **Texture accuracy**: indirect texturing, TEV swap tables, item crates,
+   fog checks against Dolphin.
+6. **Performance**: 4-player matches ~30 fps on the console; per frame the
+   render pass (HSD scene walk, GX setters) is ~14.5 ms, the simulation
+   ~3.8 ms a tick (2 ticks a render at 30 fps), draw submission ~6.5 ms,
+   display lists ~2.6 ms. Plan below.
 
 ## Performance plan
 
