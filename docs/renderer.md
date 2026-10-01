@@ -113,6 +113,12 @@ was a render pass of its own (~75 µs of emulation, ~90% of a match frame).
   quad lost its first triangle (black wedges above its diagonal, black
   flashes on the stage surfaces near fighters that multiply the maps in).
   xemu has no such cache and drew them right.
+- Build switches undo these v26 GPU-side changes one at a time, to bisect
+  the console's GPU stalls (Pokémon Stadium, v27/v28): `-DXGX_PB_KICK=4096`,
+  `-DXGX_VB_CACHE_BREAK=0`, `-DXGX_VBUF_FREE_NOW=0`. A stall report
+  (`[NV2A] GPU stalled`) also logs PGRAPH's interrupt, trap, surface, clear,
+  window-clip and raster registers; `-DXGX_CHECK_VERTS` logs display lists
+  with non-finite or huge positions.
 - Array offsets point at the start of the 32768-vertex window of the vertex
   ring or the vertex pool that the draw starts in, and each draw starts at
   its first vertex's index from there (both place draws at a multiple of

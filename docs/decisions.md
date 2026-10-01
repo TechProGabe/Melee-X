@@ -178,6 +178,13 @@ nothing when the matrix is the same; kicks every 32 KB. Non-power-of-two
 intensity textures stay AY8/A8Y8.
 The cost: up to 8 MB more RAM while the overflow pool exists, and a list
 or texture rewritten in place may draw stale for up to three frames.
+`-DXGX_PB_KICK`, `-DXGX_VB_CACHE_BREAK=0` and `-DXGX_VBUF_FREE_NOW=0` undo
+the GPU-side changes one at a time, to bisect the console's GPU stalls.
+
+**Logs that survive a long session.** `boot.log` keeps the first 4 MB, then
+the log alternates between `boot2.log` and `boot3.log` (2 MB each), and
+`[DRAW]` trace lines go to `trace.log`: v28's trace filled the old 2 MB cap
+at ~145 s and its GPU hang at ~500 s left no stall report.
 
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.

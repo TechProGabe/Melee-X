@@ -118,7 +118,7 @@ build in `~/xemu/hw/`):
    `/F/Applications/Melee-X/`, the dashboard files to `/E/UDATA/4d580001/`)
    and re-downloads each file to compare.
 3. The user plays; BACK takes a screenshot of anything wrong.
-4. `~/xemu/hw/pull-logsNN.sh` fetches `boot.log`, `crash.log`, `hang.log`
+4. `~/xemu/hw/pull-logsNN.sh` fetches `boot.log` (and `boot2.log`, `boot3.log`, `trace.log`), `crash.log`, `hang.log`
    and the `shotNN.bmp` files; symbolize with that build's map.
 
 Rendering that differs between xemu and the console has come from state
@@ -202,7 +202,8 @@ Everything is written to `E:\UDATA\4d580001\` (the title ID is `4d580001`):
 
 | file | contents |
 |---|---|
-| `boot.log` | the log (first 2 MB). Every line is flushed to disk during the first 600 frames; after that urgent lines (`[SCENE]` `[GAME]` `[MEM]` `[CARD]` `[WDOG]` `[NV2A] GPU`/`flip` `[TEX] drop` `[FATAL]` `[CRASH]` `[BOOT]` `[WARN]`) at once and the rest within a second (the watchdog thread flushes what is pending every second). Tags: `[BOOT]` `[MEM]` `[OS]` `[DVD]` `[NV2A]` `[PAD]` `[AUDIO]` `[CARD]` `[SCENE]` `[GAME]` `[BEAT]` |
+| `boot.log` | the log's first 4 MB; after that it goes on in `boot2.log` and `boot3.log` in turn, each restarted at 2 MB, so the newest 2-4 MB before a late hang survive (all three are deleted at boot). Every line is flushed to disk during the first 600 frames; after that urgent lines (`[SCENE]` `[GAME]` `[MEM]` `[CARD]` `[WDOG]` `[NV2A] GPU`/`flip` `[TEX] drop` `[FATAL]` `[CRASH]` `[BOOT]` `[WARN]`) at once and the rest within a second (the watchdog thread flushes what is pending every second). Tags: `[BOOT]` `[MEM]` `[OS]` `[DVD]` `[NV2A]` `[PAD]` `[AUDIO]` `[CARD]` `[SCENE]` `[GAME]` `[BEAT]` |
+| `trace.log` | the `[DRAW]` lines of a `-DXGX_DEBUG_TRACE` build (COM1 still gets them), restarted at 64 MB |
 | `hang.log` | written by the watchdog: the log tail and a dump of every thread (also appended to `boot.log`) |
 | `crash.log` | written on a CPU exception: the last log lines, the fault, registers, XBE addresses found on the stack |
 | `shot00.bmp` .. `shot99.bmp` | screenshots: BACK on any controller (unmapped by default in `settings.ini`) writes the next frame as a 24-bit BMP and logs `[SHOT] wrote ...`; numbering restarts at 00 each boot. An autopad `BACK` line does the same in xemu. Y pressed while BACK is held drops every cached texture and display list at the frame end (`[DEBUG] ... caches flushed`): a surface that comes back right afterwards had its cached copy corrupted |
@@ -290,7 +291,11 @@ report.
 | `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU instead of drawn by the GPU |
 | `-DXGX_DEPTH_CULL=1` | cull pixels whose depth falls outside the clip range instead of clamping it (the pre-v15 behaviour) |
 | `-DXGX_DEBUG_EFBLOG` | log the first 200 EFB copies (source rect, size, format) as `[EFB]` lines |
-| `-DXGX_DEBUG_TRACE` | log every draw (TEV stages, textures, texgens, blend, fog) of the frame an autopad `SHOT` or a console BACK screenshot captures, as `[DRAW]` lines (~400 KB of log each); on a BACK frame each EFB copy's source is also written as a `shotNN.bmp` (up to 8, announced by a `[DRAW] efb copy` line), and with `-DXHW_AUTOPAD=1` also streamed as `[FBDUMP]` (an autopad `BACK` in xemu, whose HDD is out of reach) |
+| `-DXGX_DEBUG_TRACE` | log every draw (TEV stages, textures, texgens, blend, fog) of the frame an autopad `SHOT` or a console BACK screenshot captures, as `[DRAW]` lines (~400 KB each, in `trace.log`, not `boot.log`); on a BACK frame each EFB copy's source is also written as a `shotNN.bmp` (up to 8, announced by a `[DRAW] efb copy` line), and with `-DXHW_AUTOPAD=1` also streamed as `[FBDUMP]` (an autopad `BACK` in xemu, whose HDD is out of reach) |
+| `-DXGX_CHECK_VERTS` | check every position a display-list build decodes (model space): one at 2^20 or more, infinite or NaN is logged as `[WARN] dlist` (first 32) |
+| `-DXGX_PB_KICK=<words>` | pushbuffer words per kick (default 8192; v25 and before 4096) |
+| `-DXGX_VB_CACHE_BREAK=0` | no `BREAK_VERTEX_BUFFER_CACHE` at each batch start (v26 added it) |
+| `-DXGX_VBUF_FREE_NOW=0` | evicted display-list vertex buffers go through the deferred free like the rest (v26 freed them at once) |
 | `-DXGX_DEBUG_VPTRACE[=<n>]` | log the vertex-program selects of two consecutive frames every n (default 600) as `[VPT]` lines: each program (key hash, instructions, key bytes), then the selects in order with `L` where one was loaded; replay with `tools/xbox/vp_policy.py boot.log` |
 | `-DXGX_DEBUG_NOMIP` | bind only the base level of every texture |
 | `-DXHW_FBDUMP_EVERY=<n>` | screenshot every n presented frames |

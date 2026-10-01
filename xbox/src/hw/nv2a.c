@@ -305,8 +305,22 @@ static uint32_t* s_pb_mark;
 static uint32_t* s_pb_base;
 /* words per kick: each one runs pbkit's pb_start, which flushes the NV2A's
  * write-combine cache and spins until it's done (pb_cache_flush, ~2% of the
- * console's CPU in a match at 4096) */
-#define PB_KICK 8192
+ * console's CPU in a match at 4096). -DXGX_PB_KICK=4096 restores v25's. */
+#ifndef XGX_PB_KICK
+#define XGX_PB_KICK 8192
+#endif
+#define PB_KICK XGX_PB_KICK
+/* -DXGX_VB_CACHE_BREAK=0 drops the vertex cache break at each batch start
+ * (pb_open), -DXGX_VBUF_FREE_NOW=0 sends evicted display-list buffers
+ * through the deferred free like any other (xgx_vbuf_free_now): with
+ * XGX_PB_KICK they undo v26's GPU-side changes one at a time, to bisect the
+ * console's GPU stalls (docs/roadmap.md "Next"). */
+#ifndef XGX_VB_CACHE_BREAK
+#define XGX_VB_CACHE_BREAK 1
+#endif
+#ifndef XGX_VBUF_FREE_NOW
+#define XGX_VBUF_FREE_NOW 1
+#endif
 #define PB_GUARD (PB_BYTES - 192 * 1024)
 #define PCRTC_START_REG (*(volatile uint32_t*)0xFD600800)
 
@@ -327,7 +341,7 @@ static void pb_open(void) {
      * triangle (black wedges above the diagonal, flashing black on the
      * surfaces near fighters). Every batch after a kick starts by dropping
      * that cache (xemu has none). */
-    put1(NV097_BREAK_VERTEX_BUFFER_CACHE, 0);
+    if (XGX_VB_CACHE_BREAK) put1(NV097_BREAK_VERTEX_BUFFER_CACHE, 0);
 }
 
 static void pb_close(void) {
@@ -349,6 +363,8 @@ static volatile uint32_t s_gf_count, s_gf_storms, s_gf_last[5];
  * thread here with nothing in the log: after 2 s, report once where the
  * FIFO stopped. The push buffer is contiguous memory, mapped at
  * 0x80000000 | physical, and DMA_GET is its physical address. */
+static uint32_t s_frame, s_draws;   /* defined with the frame state below */
+
 static void report_gpu_stall(void) {
     uint32_t get = *(volatile uint32_t*)(0xFD000000u + 0x3244), put = *(volatile uint32_t*)(0xFD000000u + 0x3240);
     const uint32_t* w = (const uint32_t*)(0x80000000u | (get & 0x03FFFFFFu));
@@ -362,6 +378,13 @@ static void report_gpu_stall(void) {
              w[-2], w[-1]);
     xhw_logf("[NV2A]  at get:    %08x %08x %08x %08x %08x %08x %08x %08x", w[0], w[1], w[2], w[3], w[4], w[5], w[6],
              w[7]);
+    {   /* PGRAPH: trap (what it was doing), surface, clip and raster state */
+        volatile const uint32_t* g = (volatile const uint32_t*)0xFD400000u;
+        xhw_logf("[NV2A]  pgraph intr %08x nsource %08x trapped %08x data %08x surface %08x | clear %08x %08x "
+                 "window %08x %08x | raster %08x control0 %08x | frame %u draws %u efb %u",
+                 g[0x100 / 4], g[0x108 / 4], g[0x704 / 4], g[0x708 / 4], g[0x710 / 4], g[0x1864 / 4], g[0x1868 / 4],
+                 g[0x1A44 / 4], g[0x1A64 / 4], g[0x1990 / 4], g[0x194C / 4], s_frame, s_draws, s_st_efb);
+    }
 }
 
 /* Set by the patched pbkit when an interrupt storm made it leave the GPU
@@ -1700,7 +1723,8 @@ void xgx_vbuf_free(void* p) {
  * costs (Pokémon Stadium: ~4 extra a frame, each one stopping the CPU until
  * the GPU has drawn everything queued). */
 void xgx_vbuf_free_now(void* p) {
-    if (p) pool_free(&s_vb, p);
+    if (p && XGX_VBUF_FREE_NOW) pool_free(&s_vb, p);
+    else if (p) defer_free(p);
 }
 
 void xgx_vtx_use(const void* verts) { s_draw_base = (const uint8_t*)verts; }

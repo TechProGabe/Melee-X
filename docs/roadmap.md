@@ -96,6 +96,19 @@ released on leaving). Open, in order:
    built display list is finite; (d) on a stall, log PGRAPH's trapped
    method/data (v28 added) plus the surface and clip registers. Ship the
    next test build without `-DXGX_DEBUG_TRACE` unless BACK dumps are needed.
+   **Done for v29** (one bundled console round): (a) `[DRAW]` lines go to
+   `trace.log` (64 MB, restarted), `boot.log` keeps 4 MB and continues in
+   `boot2.log`/`boot3.log` (2 MB each, alternating); (b)
+   `-DXGX_PB_KICK`, `-DXGX_VB_CACHE_BREAK=0`, `-DXGX_VBUF_FREE_NOW=0`
+   (not used in v29: bisect only if the stall comes back); (c)
+   `-DXGX_CHECK_VERTS` (`[WARN] dlist`); (d) the stall report adds PGRAPH
+   intr/nsource/trap/surface/clear/window-clip/raster. v29 is built with
+   `-DXHW_PROF=1 -DXGX_DEBUG_TRACE -DXGX_CHECK_VERTS`, so BACK on the grey
+   Kirby hat and the capsule gives their `[DRAW]` traces in the same round.
+   Checked meanwhile: `xgx_vbuf_free_now` only frees lists not drawn since
+   the last `xgx_present` (which waits for idle), and the EFB copy's zeta
+   extent (pitch pw*4 x ph <= 1 MB) stays inside the 640x480x4 depth
+   surface, so neither explains LIMIT_ZETA on its own.
 2. **Kirby's copy hats**: right most of the time, but the hat's texture
    sometimes disappears. logs28 `shot31.bmp` (Fountain, ~1:19 left): the
    blue Kirby's Captain Falcon helmet is flat grey-white (untextured look)
@@ -109,7 +122,11 @@ released on leaving). Open, in order:
    v19 (b7e3ec2): compare with upstream doldecomp, check the hat's texture
    list for Kirby's costume, and test the other parts hats (Ganondorf,
    Yoshi, Jigglypuff, Dr. Mario). Reproduce in xemu if a debug VS can give
-   Kirby Falcon's ability. Other suspects: the texture-revalidation stagger (a hat
+   Kirby Falcon's ability. Checked against the DOL (0x800F0FC0): the game
+   passes the hat itself as the FtPartsDesc, hat+8 to ftAnim_80070200 and
+   Kirby's costume_id, exactly as the PORT code does, so the data setup is
+   right; both grey hats were on non-default Kirby costumes (blue, yellow).
+   Other suspects: the texture-revalidation stagger (a hat
    texture loaded where another one lived, same pointer/size/format, served
    stale for up to 3 frames: try `TEX_STABLE` off), the hat's costume
    texture list (`u.kb.x44`, `ftAnim_80070200`, TObj image switching), or a

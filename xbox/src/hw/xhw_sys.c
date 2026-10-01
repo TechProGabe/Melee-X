@@ -66,7 +66,18 @@ static HANDLE s_bootlog = INVALID_HANDLE_VALUE;
 static unsigned s_bootlog_bytes;
 static int s_bootlog_dirty;       /* written since the last flush */
 static uint64_t s_bootlog_flushed;
-#define BOOTLOG_MAX (2 * 1024 * 1024)
+static int s_bootlog_part;        /* 0 boot.log, then 2 boot2.log, 3 boot3.log, 2, ... */
+static HANDLE s_tracelog = INVALID_HANDLE_VALUE;
+static unsigned s_tracelog_bytes;
+static int s_tracelog_dirty;
+/* boot.log keeps the first BOOTLOG_MAX bytes (boot, the first scenes); after
+ * that the log goes on in boot2.log and boot3.log in turn, each restarted at
+ * BOOTLOG_PART bytes, so the newest 2-4 MB before a late hang survive. */
+#define BOOTLOG_MAX (4 * 1024 * 1024)
+#define BOOTLOG_PART (2 * 1024 * 1024)
+/* [DRAW] lines (-DXGX_DEBUG_TRACE, a few hundred KB a BACK press) go to
+ * trace.log instead, restarted when it reaches TRACELOG_MAX. */
+#define TRACELOG_MAX (64 * 1024 * 1024)
 
 void xhw_flush_handle(HANDLE h) {
     IO_STATUS_BLOCK iosb;
@@ -77,6 +88,44 @@ void xhw_log_open_file(void) {
     char path[MAX_PATH];
     snprintf(path, sizeof path, "%sboot.log", xhw_save_dir());
     s_bootlog = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    /* the previous session's continuation files would read as this one's */
+    snprintf(path, sizeof path, "%sboot2.log", xhw_save_dir());
+    DeleteFileA(path);
+    snprintf(path, sizeof path, "%sboot3.log", xhw_save_dir());
+    DeleteFileA(path);
+    snprintf(path, sizeof path, "%strace.log", xhw_save_dir());
+    DeleteFileA(path);
+}
+
+/* Under the log lock: boot.log (or the current part) is full, go on in the
+ * next part. */
+static void bootlog_next_part(void) {
+    char path[MAX_PATH];
+    xhw_flush_handle(s_bootlog);
+    CloseHandle(s_bootlog);
+    s_bootlog_part = s_bootlog_part == 2 ? 3 : 2;
+    snprintf(path, sizeof path, "%sboot%d.log", xhw_save_dir(), s_bootlog_part);
+    s_bootlog = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    s_bootlog_bytes = 0;
+}
+
+static void tracelog_write_locked(const char* s, size_t n) {
+    DWORD w;
+    if (s_tracelog == INVALID_HANDLE_VALUE) {
+        char path[MAX_PATH];
+        if (s_bootlog == INVALID_HANDLE_VALUE) return;   /* no save folder yet */
+        snprintf(path, sizeof path, "%strace.log", xhw_save_dir());
+        s_tracelog = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (s_tracelog == INVALID_HANDLE_VALUE) return;
+    }
+    if (s_tracelog_bytes + n > TRACELOG_MAX) {
+        SetFilePointer(s_tracelog, 0, NULL, FILE_BEGIN);
+        SetEndOfFile(s_tracelog);
+        s_tracelog_bytes = 0;
+    }
+    WriteFile(s_tracelog, s, (DWORD)n, &w, NULL);
+    s_tracelog_bytes += (unsigned)n;
+    s_tracelog_dirty = 1;
 }
 
 /* Lines that must be on disk before anything else happens: a hang right
@@ -94,6 +143,10 @@ static int log_line_urgent(const char* s, size_t n) {
 }
 
 static void log_flush_locked(void) {
+    if (s_tracelog_dirty) {   /* trace lines come in bursts (one frame's draws); the 1 Hz sync lands them */
+        xhw_flush_handle(s_tracelog);
+        s_tracelog_dirty = 0;
+    }
     if (s_bootlog == INVALID_HANDLE_VALUE || !s_bootlog_dirty) return;
     xhw_flush_handle(s_bootlog);
     s_bootlog_dirty = 0;
@@ -102,12 +155,21 @@ static void log_flush_locked(void) {
 
 static int s_log_no_com1;   /* set under the lock: the text already went to COM1 */
 
+static int s_log_trace;   /* set under the lock: the current line is a [DRAW] line */
+
 static void log_write_locked(const char* s, size_t n) {
     size_t i;
+    if (s_log_trace) {   /* COM1 and trace.log only: keep boot.log and the report tail readable */
+        if (!s_log_no_com1) com1_write(s, n);
+        tracelog_write_locked(s, n);
+        return;
+    }
     for (i = 0; i < n; i++) s_tail[(s_tail_pos + i) % TAIL_SIZE] = s[i];
     s_tail_pos += (unsigned)n;
     if (!s_log_no_com1) com1_write(s, n);
-    if (s_bootlog != INVALID_HANDLE_VALUE && s_bootlog_bytes < BOOTLOG_MAX) {
+    if (s_bootlog != INVALID_HANDLE_VALUE && s_bootlog_bytes >= (s_bootlog_part ? BOOTLOG_PART : BOOTLOG_MAX))
+        bootlog_next_part();
+    if (s_bootlog != INVALID_HANDLE_VALUE) {
         DWORD w;
         WriteFile(s_bootlog, s, (DWORD)n, &w, NULL);
         s_bootlog_bytes += (unsigned)n;
@@ -162,8 +224,10 @@ int xhw_log_try_file(const char* text) { return log_try(text, 0); }
 static void log_write(const char* s, size_t n, int newline) {
     log_lock_init();
     EnterCriticalSection(&s_log_cs);
+    s_log_trace = n >= 6 && memcmp(s, "[DRAW]", 6) == 0;
     log_write_locked(s, n);
     if (newline && (n == 0 || s[n - 1] != '\n')) log_write_locked("\n", 1);
+    s_log_trace = 0;
     LeaveCriticalSection(&s_log_cs);
 }
 

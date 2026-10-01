@@ -1104,6 +1104,33 @@ static void merge_copy(const DlBatch* in, int nb, const uint8_t* src, const DlBa
     for (g = 0; g < ng; g++) merge_copy_group(in, first[g], g + 1 < ng ? first[g + 1] : nb, src, dst + out[g].offset);
 }
 
+#ifdef XGX_CHECK_VERTS
+/* -DXGX_CHECK_VERTS: every position a list build decodes must be finite and
+ * within reach of the scene. A huge or NaN one makes the rasterizer walk far
+ * outside the surface, the suspect for the console's GPU stalls (PGRAPH
+ * LIMIT_ZETA); the first ones found are logged with the list. Model space,
+ * before the matrices: what HSD handed over, not what the GPU computed. */
+static void check_verts(const DlEntry* e, const DlBatch* b, int nb, const uint8_t* v) {
+    static uint32_t s_logged;
+    int i;
+    for (i = 0; i < nb && s_logged < 32; i++) {
+        uint32_t k;
+        if (b[i].layout.off_pos < 0) continue;
+        for (k = 0; k < b[i].count; k++) {
+            /* exponent bits: 2^20 and up, infinities and NaNs (no float
+             * compares, which fast-math may assume finite) */
+            const uint32_t* p = (const uint32_t*)(v + b[i].offset + k * b[i].layout.stride + b[i].layout.off_pos);
+            if (((p[0] >> 23) & 0xFF) < 127 + 20 && ((p[1] >> 23) & 0xFF) < 127 + 20 && ((p[2] >> 23) & 0xFF) < 127 + 20)
+                continue;
+            xhw_logf("[WARN] dlist %p (%u bytes) draw %d/%d vertex %u/%u: position %08x %08x %08x", (const void*)e->dl,
+                     e->nbytes, i, nb, k, b[i].count, p[0], p[1], p[2]);
+            s_logged++;
+            break;
+        }
+    }
+}
+#endif
+
 /* decode the whole list into one buffer; 0 when it can't be cached */
 static int dlc_build(DlEntry* e, uint32_t frame) {
     static IdxRange r;
@@ -1127,6 +1154,9 @@ static int dlc_build(DlEntry* e, uint32_t frame) {
     }
     range_reset(&r);
     dl_decode_all(e->dl, e->nbytes, batch, nb, tmp, &r, NULL, NULL);
+#ifdef XGX_CHECK_VERTS
+    check_verts(e, batch, nb, tmp);
+#endif
     ng = merge_plan(batch, nb, merged, first, &mtotal);
     for (i = 0; i < ng; i++) mtotal += merged[i].layout.stride;   /* room to align each draw, below */
     e->mem = mtotal ? (uint8_t*)xgx_vbuf_alloc(mtotal) : NULL;
