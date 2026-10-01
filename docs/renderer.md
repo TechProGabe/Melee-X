@@ -440,6 +440,10 @@ Dolphin:
   palette is always loaded again (xemu reads palettes at each draw).
   `docs/architecture.md` has the table and `tools/xbox/test_tex_convert.py`
   the checks.
+- Bump texgens (`GX_TG_BUMPn`, HSD's emboss) are drawn as their source
+  coordinate (no binormal/tangent offset), and the emboss stage pair
+  "prev + h(tc)*ras, prev - h(bump)*ras" is dropped since it cancels; the
+  combiners would clamp the sum at 1 first (the crates' fronts).
 - CMPR textures with a transparent texel (a three-colour block using index
   3) go to DXT3 instead: GX decodes that index as the average colour with
   alpha 0, DXT1 as black. The software decoder matches GX now too.

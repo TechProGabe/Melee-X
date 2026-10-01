@@ -2568,10 +2568,11 @@ void ftKb_Init_OnDeath(HSD_GObj* gobj)
 #ifdef TARGET_PC
     /* PORT: MELEE_DEBUG_KIRBY_HAT=<FighterKind>: Kirby spawns with that
      * fighter's copy ability (its hat), so a scripted run can reach a hat's
-     * draws (2 = Captain Falcon's helmet; the fighter must be in the match,
-     * which loads its hat). */
+     * draws (2 = Captain Falcon's helmet). */
     if (getenv("MELEE_DEBUG_KIRBY_HAT") != NULL) {
-        ftKb_SpecialN_800F1BAC(gobj, atoi(getenv("MELEE_DEBUG_KIRBY_HAT")), 0);
+        int kind = atoi(getenv("MELEE_DEBUG_KIRBY_HAT"));
+        ftKb_SpecialN_800EED50(kind, 0);   /* the hat's archive, if not loaded yet */
+        ftKb_SpecialN_800F1BAC(gobj, kind, 0);
     }
 #endif
 }

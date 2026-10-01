@@ -47,7 +47,8 @@ enum { GX_BM_NONE, GX_BM_BLEND, GX_BM_LOGIC, GX_BM_SUBTRACT };
 enum { GX_AOP_AND, GX_AOP_OR, GX_AOP_XOR, GX_AOP_XNOR };
 enum { GX_NEVER, GX_LESS, GX_EQUAL, GX_LEQUAL, GX_GREATER, GX_NEQUAL, GX_GEQUAL, GX_ALWAYS };
 enum { GX_CLAMP, GX_REPEAT, GX_MIRROR };
-enum { GX_TG_MTX3x4 = 0, GX_TG_MTX2x4 = 1 };
+enum { GX_TG_MTX3x4 = 0, GX_TG_MTX2x4 = 1, GX_TG_BUMP0 = 2, GX_TG_BUMP7 = 9 };
+enum { GX_TG_TEXCOORD0 = 12, GX_TG_TEXCOORD6 = 18 };
 enum { GX_AF_SPEC = 0, GX_AF_SPOT = 1, GX_AF_NONE = 2 };
 enum { GX_COLOR0A0 = 4, GX_COLOR1A1 = 5 };
 #define GX_TEXMTX0 30
@@ -1799,13 +1800,57 @@ static uint8_t vp_attn(uint32_t attn_fn) {
 }
 
 #ifdef XGX_DEBUG_TRACE
+static uint32_t rgb565_to_888(uint16_t v) {
+    uint32_t r = v >> 11 & 31, g = v >> 5 & 63, b = v & 31;
+    return (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
+}
+
+/* autopad "env XGX_SKIP=<first>-<last>": the traced frame leaves those
+ * draws out, so a shot shows which pixels they make */
+static int trace_skip(uint32_t draw) {
+    static int lo = -2, hi = -1;
+    if (lo == -2) {
+        const char* e = getenv("XGX_SKIP");
+        lo = hi = -1;
+        if (e) {
+            lo = atoi(e);
+            hi = strchr(e, '-') ? atoi(strchr(e, '-') + 1) : lo;
+        }
+    }
+    return (int)draw >= lo && (int)draw <= hi;
+}
+
 /* -DXGX_DEBUG_TRACE: log every draw of the frame an autopad SHOT dumps */
-static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int approx) {
+static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int approx, const XgxLayout* l) {
     uint32_t s, i;
     xhw_logf("[DRAW] #%u prim %u n %u tev %u ind %u texgen %u approx %d blend %u %u %u alpha %u/%u %u %u/%u z %u/%u/%u",
              s_draws, prim, count, st->ntev, st->nind, st->ntexgen, approx, st->blend_type, st->blend_src,
              st->blend_dst, st->alpha_comp0, st->alpha_ref0, st->alpha_op, st->alpha_comp1, st->alpha_ref1,
              st->z_enable, st->z_func, st->z_update);
+    if (l->off_pos >= 0 && !st->proj_ortho) {
+        /* screen box (EFB pixels) of the draw's vertices, to find a draw in a shot */
+        float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+        uint32_t v;
+        for (v = 0; v < count; v++) {
+            const uint8_t* vx = s_draw_base + v * l->stride;
+            const float* p = (const float*)(vx + l->off_pos);
+            uint32_t row = l->off_mtx >= 0 ? (uint32_t)*(const float*)(vx + l->off_mtx) : st->cur_posmtx;
+            const float(*m)[4] = st->posmtx[(row / 3) % XGX_NUM_POSMTX];
+            float e[4], c[4];
+            int r;
+            for (r = 0; r < 3; r++) e[r] = m[r][0] * p[0] + m[r][1] * p[1] + m[r][2] * p[2] + m[r][3];
+            e[3] = 1;
+            for (r = 0; r < 4; r++) c[r] = st->proj[r][0] * e[0] + st->proj[r][1] * e[1] + st->proj[r][2] * e[2] + st->proj[r][3] * e[3];
+            if (c[3] <= 0.001f) continue;
+            c[0] = st->viewport[0] + st->viewport[2] * 0.5f * (1 + c[0] / c[3]);
+            c[1] = st->viewport[1] + st->viewport[3] * 0.5f * (1 - c[1] / c[3]);
+            if (c[0] < x0) x0 = c[0];
+            if (c[0] > x1) x1 = c[0];
+            if (c[1] < y0) y0 = c[1];
+            if (c[1] > y1) y1 = c[1];
+        }
+        if (x0 <= x1) xhw_logf("[DRAW]  screen %d,%d - %d,%d", (int)x0, (int)y0, (int)x1, (int)y1);
+    }
     for (s = 0; s < st->ntev && s < XGX_MAX_TEV; s++) {
         const XgxTevStage* t = &st->tev[s];
         const XgxMap* m = t->texmap < XGX_MAX_MAPS ? &st->map[t->texmap] : NULL;
@@ -1816,6 +1861,20 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
                  t->ain[1], t->ain[2], t->ain[3], t->aop, t->kcsel, t->kasel, t->cout, t->aout, t->ind_stage,
                  t->ind_format, t->ind_mtx, t->ind_add_prev, x ? x->w : 0, x ? x->h : 0, x ? x->nvfmt : 0,
                  x ? x->levels : 0);
+        if (x && x->mem && (x->nvfmt == nv_format(XGX_TEX_DXT1) || x->nvfmt == nv_format(XGX_TEX_DXT3))) {
+            /* level 0's colour endpoints: average and the centre block's */
+            uint32_t bs = x->nvfmt == nv_format(XGX_TEX_DXT1) ? 8 : 16, nb = ((x->w + 3) / 4) * ((x->h + 3) / 4), b,
+                     sum[3] = { 0, 0, 0 }, mid = (x->h / 8) * ((x->w + 3) / 4) + x->w / 8;
+            const uint8_t* p = (const uint8_t*)x->mem + (bs - 8);
+            for (b = 0; b < nb; b++, p += bs) {
+                uint32_t c = rgb565_to_888((uint16_t)(p[0] | p[1] << 8));
+                sum[0] += c >> 16 & 255; sum[1] += c >> 8 & 255; sum[2] += c & 255;
+            }
+            p = (const uint8_t*)x->mem + mid * bs + (bs - 8);
+            xhw_logf("[DRAW]  s%u texels: average c0 %02x%02x%02x, centre block c0 %06x c1 %06x idx %02x%02x%02x%02x", s,
+                     sum[0] / nb, sum[1] / nb, sum[2] / nb, rgb565_to_888((uint16_t)(p[0] | p[1] << 8)),
+                     rgb565_to_888((uint16_t)(p[2] | p[3] << 8)), p[4], p[5], p[6], p[7]);
+        }
     }
     xhw_logf("[DRAW]  k %02x%02x%02x%02x %02x%02x%02x%02x swap %u%u%u%u %u%u%u%u stage swap %u/%u", st->konst[0][0],
              st->konst[0][1], st->konst[0][2], st->konst[0][3], st->konst[1][0], st->konst[1][1], st->konst[1][2],
@@ -1836,6 +1895,19 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
     for (i = 0; i < st->ntexgen && i < XGX_MAX_TEXGEN; i++)
         xhw_logf("[DRAW]  tg%u type %u src %u mtx %u norm %u pt %u", i, st->texgen[i].type, st->texgen[i].src,
                  st->texgen[i].mtx, st->texgen[i].normalize, st->texgen[i].pt_mtx);
+    for (i = 0; i < st->ntexgen && i < XGX_MAX_TEXGEN; i++) {
+        float m[3][4], pt[3][4];
+        int r;
+        if (st->texgen[i].mtx == GX_IDENTITY && st->texgen[i].pt_mtx == GX_PTIDENTITY) continue;
+        texgen_src_mtx(st, st->texgen[i].mtx, m);
+        if (st->texgen[i].pt_mtx >= GX_PTTEXMTX0 && st->texgen[i].pt_mtx < GX_PTIDENTITY)
+            memcpy(pt, st->ptmtx[(st->texgen[i].pt_mtx - GX_PTTEXMTX0) / 3], 48);
+        else memset(pt, 0, 48);
+        for (r = 0; r < 3; r++)   /* x1000 */
+            xhw_logf("[DRAW]  tg%u row%d mtx %d %d %d %d pt %d %d %d %d", i, r, (int)(m[r][0] * 1000),
+                     (int)(m[r][1] * 1000), (int)(m[r][2] * 1000), (int)(m[r][3] * 1000), (int)(pt[r][0] * 1000),
+                     (int)(pt[r][1] * 1000), (int)(pt[r][2] * 1000), (int)(pt[r][3] * 1000));
+    }
     if (st->fog_type & 7)
         xhw_logf("[DRAW]  fog type %u start %d end %d near %d far %d colour %02x%02x%02x", st->fog_type,
                  (int)st->fog_start, (int)st->fog_end, (int)st->fog_near, (int)st->fog_far, st->fog_color[0],
@@ -1864,8 +1936,22 @@ static void derive_units(const XgxState* st) {
     RcCfg* rc = &s_d_rc;
     int s, i, nunits = 0, nstages = st->ntev > RC_MAX_TEV ? RC_MAX_TEV : st->ntev ? (int)st->ntev : 1;
     memset(rc, 0, offsetof(RcCfg, st) + (size_t)nstages * sizeof(RcStage));   /* rc_used() */
+    uint8_t emboss = 0;
     s_d_unit_miss = 0;
     rc->nstages = (uint8_t)nstages;
+    /* HSD's emboss bump: "prev + height(tc) * ras" then "prev - height(bump
+     * of tc) * ras". The bump texgen is drawn as tc itself (unit_texgen), so
+     * the pair cancels; drop it rather than let the combiners clamp the sum
+     * at 1 before the subtraction (an inverted crate front). */
+    for (s = 0; s + 1 < rc->nstages; s++) {
+        const XgxTevStage *a = &st->tev[s], *b = &st->tev[s + 1];
+        const XgxTexGen* bg = b->texcoord < XGX_MAX_TEXGEN ? &st->texgen[b->texcoord] : NULL;
+        if (a->cin[0] == 15 && a->cin[1] == 8 && a->cin[2] == 10 && a->cin[3] == 0 && a->cop == 0 &&
+            b->cin[0] == 15 && b->cin[1] == 8 && b->cin[2] == 10 && b->cin[3] == 0 && b->cop == 1 &&
+            a->texmap == b->texmap && bg && bg->type >= GX_TG_BUMP0 && bg->type <= GX_TG_BUMP7 &&
+            bg->src == GX_TG_TEXCOORD0 + a->texcoord)
+            emboss |= (uint8_t)(3u << s);
+    }
     for (s = 0; s < rc->nstages; s++) {
         const XgxTevStage* t = &st->tev[s];
         RcStage* r = &rc->st[s];
@@ -1873,6 +1959,11 @@ static void derive_units(const XgxState* st) {
         for (i = 0; i < 4; i++) {
             r->cin[i] = (uint8_t)t->cin[i];
             r->ain[i] = (uint8_t)t->ain[i];
+        }
+        if (emboss >> s & 1) {   /* colour: d = CPREV; the alpha half samples no texture either */
+            r->cin[0] = r->cin[1] = r->cin[2] = 15;
+            r->cin[3] = 0;
+            r->unit = -1;
         }
         r->cop = (uint8_t)t->cop; r->aop = (uint8_t)t->aop;
         r->cbias = (uint8_t)t->cbias; r->cscale = (uint8_t)t->cscale;
@@ -1883,7 +1974,8 @@ static void derive_units(const XgxState* st) {
         r->ras = t->chan == GX_COLOR0A0 ? 0 : t->chan == GX_COLOR1A1 ? 1 : 2;
         r->tex_alpha_bcast = st->swap[t->tex_swap & 3][0] == 3 && st->swap[t->tex_swap & 3][1] == 3;
         r->ras_alpha_bcast = st->swap[t->ras_swap & 3][0] == 3 && st->swap[t->ras_swap & 3][1] == 3;
-        if (t->texmap != GX_NULL && t->texmap < XGX_MAX_MAPS && t->texcoord != GX_NULL && st->map[t->texmap].tex) {
+        if (!(emboss >> s & 1) && t->texmap != GX_NULL && t->texmap < XGX_MAX_MAPS && t->texcoord != GX_NULL &&
+            st->map[t->texmap].tex) {
             for (i = 0; i < nunits; i++)
                 if (s_d_unit_map[i] == (int)t->texmap && s_d_unit_tc[i] == (int)t->texcoord) { u = i; break; }
             if (u < 0 && nunits < 4) {
@@ -1899,6 +1991,22 @@ static void derive_units(const XgxState* st) {
     }
     s_d_nunits = nunits;
     s_d_rp = rc_lookup(rc);
+}
+
+/* The texgen behind texture coordinate tc. A bump texgen (GX_TG_BUMPn, the
+ * emboss half of HSD's bump mapping) is an earlier coordinate shifted
+ * toward light n along the binormal and tangent; without those it is drawn
+ * as that coordinate itself, so the "+ height(tc) - height(bump)" stage
+ * pair cancels instead of subtracting one texel's height everywhere (the
+ * crates' black stripes). */
+static const XgxTexGen* unit_texgen(const XgxState* st, uint32_t tc) {
+    const XgxTexGen* tg = &st->texgen[tc < XGX_MAX_TEXGEN ? tc : 0];
+    if (tg->type >= GX_TG_BUMP0 && tg->type <= GX_TG_BUMP7 && tg->src >= GX_TG_TEXCOORD0 &&
+        tg->src <= GX_TG_TEXCOORD6 && tg->src - GX_TG_TEXCOORD0 < tc) {
+        const XgxTexGen* base = &st->texgen[tg->src - GX_TG_TEXCOORD0];
+        if (base->type == GX_TG_MTX3x4 || base->type == GX_TG_MTX2x4) return base;
+    }
+    return tg;
 }
 
 static void derive_vk(const XgxState* st, const XgxLayout* layout) {
@@ -1925,7 +2033,7 @@ static void derive_vk(const XgxState* st, const XgxLayout* layout) {
     vk->fog = fog_kind(st->fog_type);
     vk->ntex = (uint8_t)s_d_nunits;
     for (i = 0; i < s_d_nunits; i++) {
-        const XgxTexGen* tg = &st->texgen[s_d_unit_tc[i] < XGX_MAX_TEXGEN ? s_d_unit_tc[i] : 0];
+        const XgxTexGen* tg = unit_texgen(st, (uint32_t)s_d_unit_tc[i]);
         vk->tex[i].src = (uint8_t)tg->src;
         vk->tex[i].proj = tg->type == GX_TG_MTX3x4;
         vk->tex[i].normalize = (uint8_t)(tg->normalize != 0);
@@ -2005,11 +2113,11 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     if (s_vp_cur < 0) vp_select(&s_d_vk);
     s_approx += (uint32_t)s_d_unit_miss + (s_d_rp->approximated ? 1u : 0u);
 #ifdef XGX_DEBUG_TRACE
-    if (s_fbdump_once || s_shot_once) trace_draw(prim, count, st, s_d_rp->approximated);   /* autopad SHOT or BACK */
+    if (s_fbdump_once || s_shot_once) trace_draw(prim, count, st, s_d_rp->approximated, layout);   /* autopad SHOT or BACK */
 #endif
     if ((d & DIRTY_TG) || (s_d_tg_posmtx && (d & XGX_DIRTY_POSMTX)))
         for (i = 0; i < s_d_nunits; i++)
-            build_texgen(st, i, &st->texgen[s_d_unit_tc[i] < XGX_MAX_TEXGEN ? s_d_unit_tc[i] : 0]);
+            build_texgen(st, i, unit_texgen(st, (uint32_t)s_d_unit_tc[i]));
 
     /* constants */
     if (d & (XGX_DIRTY_PROJ | XGX_DIRTY_VIEWPORT)) build_proj(st);
@@ -2049,6 +2157,10 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         }
     }
     emit_vertex_arrays(layout, st);
+#ifdef XGX_DEBUG_TRACE
+    if ((s_fbdump_once || s_shot_once) && trace_skip(s_draws)) count = 0;
+    if (count)
+#endif
     put1(NV097_SET_BEGIN_END, nv_prim(prim));
     while (count > 0) {
         uint32_t batch = count > 256 * 64 ? 256 * 64 : count, k, words = 0;
@@ -2062,6 +2174,9 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         first += batch;
         count -= batch;
     }
+#ifdef XGX_DEBUG_TRACE
+    if (!(s_fbdump_once || s_shot_once) || !trace_skip(s_draws))
+#endif
     put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
     if (P - s_pb_mark >= PB_KICK) pb_close();
     s_draws++;

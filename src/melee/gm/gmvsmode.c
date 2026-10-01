@@ -209,9 +209,10 @@ void onEnterDebugVs(GameModeState* state)
             start->players[i].slot_type = Gm_PKind_Cpu;
         }
     }
-    /* PORT: MELEE_DEBUG_VS_CHARS=<ckind>[:<color>],...: up to four CPUs of
-     * the given kinds and costumes (4:2,0 = a yellow Kirby and Captain
-     * Falcon), so a run can reach one fighter's draws (Kirby's hats). */
+    /* PORT: MELEE_DEBUG_VS_CHARS=<ckind>[:<color>][h],...: up to four CPUs
+     * of the given kinds and costumes (4:2,0 = a yellow Kirby and Captain
+     * Falcon; h: a human player instead), so a run can reach one fighter's
+     * draws (Kirby's hats). */
     if (getenv("MELEE_DEBUG_VS_CHARS") != NULL) {
         const char* s = getenv("MELEE_DEBUG_VS_CHARS");
         for (i = 0; i < 4; i++) {
@@ -224,6 +225,10 @@ void onEnterDebugVs(GameModeState* state)
                 start->players[i].color = (u8) strtol(s + 1, (char**) &s, 10);
             }
             start->players[i].slot_type = Gm_PKind_Cpu;
+            if (*s == 'h') {   /* played by port i (autopad drives port 1) */
+                start->players[i].slot_type = Gm_PKind_Human;
+                s++;
+            }
             if (*s == ',') {
                 s++;
             }

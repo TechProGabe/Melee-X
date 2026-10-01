@@ -308,11 +308,19 @@ marked `PORT:`:
   player; `[WARN] hit by item kind` for items). On Corneria every fighter
   was at 90% by "Go!" and was launched to a KO on its first landing on the
   Great Fox, on the console only.
+- `src/sysdolphin/baselib/texp.c` (`HSD_TExpSetReg`): `reg[8]` is static
+  (starting white). An RGB-only or alpha-only constant keeps the other half
+  of the register from `reg[]`, which HSD never initializes: on the
+  GameCube the stack still held the previous call's values, while our
+  zero-initialized locals (`-ftrivial-auto-var-init=zero`) made it 0. That
+  blacked out material colours (the capsule) and dropped textures blended
+  in by a konst alpha (Kirby's Falcon helmet during Falcon Punch, whose K1
+  RGB is the glow and K1 alpha the texture blend).
 - `src/melee/gm/gmvsmode.c` (`onEnterDebugVs`): `MELEE_DEBUG_VS_CHARS`
-  (fighter kinds and costumes) and `MELEE_DEBUG_VS_ITEMS` (item mask, top
+  (fighter kinds, costumes, human or CPU) and `MELEE_DEBUG_VS_ITEMS` (item mask, top
   frequency) for scripted xemu runs; `src/melee/ft/kinds/ftKirby/ftkirby.c`
-  (`ftKb_Init_OnDeath`): `MELEE_DEBUG_KIRBY_HAT` spawns Kirby with a copy
-  ability. All under `TARGET_PC`, inert without the variables.
+  (`ftKb_Init_OnDeath`): `MELEE_DEBUG_KIRBY_HAT` loads that hat's archive
+  and spawns Kirby with the copy ability. All under `TARGET_PC`, inert without the variables.
 - `src/melee/lb/lbaudio_ax.c` (`lbAudioAx_80027648`): when a needed SSM
   failed to load (bank 2 "buffer overflow") and nothing is pending, bank 2
   is reloaded from empty once, then the missing SSMs are dropped, instead

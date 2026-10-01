@@ -1051,7 +1051,20 @@ static GXTevRegID id2[3] = { GX_TEVREG0, GX_TEVREG1, GX_TEVREG2 };
 void HSD_TExpSetReg(HSD_TExp* texp)
 {
     int i;
+#ifdef TARGET_PC
+    /* PORT: an RGB-only constant keeps the register's alpha from reg[],
+     * which the GameCube never initialized: its stack still held the
+     * previous call's values. Zero-initialized locals made it 0, so a
+     * texture blended in by a konst alpha (Kirby's Falcon helmet, whose K1
+     * alpha is the blend and K1 RGB the Falcon Punch glow) vanished. Keep
+     * the previous call's registers, as the console did. */
+    static GXColor reg[8] = {
+        { 255, 255, 255, 255 }, { 255, 255, 255, 255 }, { 255, 255, 255, 255 }, { 255, 255, 255, 255 },
+        { 255, 255, 255, 255 }, { 255, 255, 255, 255 }, { 255, 255, 255, 255 }, { 255, 255, 255, 255 },
+    };
+#else
     GXColor reg[8];
+#endif
     u32 changed;
     HSD_TECnst* clist;
 
