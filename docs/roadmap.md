@@ -36,7 +36,7 @@
 - [x] console screenshots (BACK -> `shotNN.bmp`) and a cache-flush diagnostic (BACK+Y)
 - [ ] release packaging
 
-## Where it stands (2026-09-30, build v25)
+## Where it stands (2026-09-30, build v25, tested)
 
 On the console (`-DXHW_PROF=1` builds, `[PERF]` lines): menus and
 character select run at 60 fps. A 4-CPU match keeps the simulation at 60
@@ -69,25 +69,31 @@ Found and fixed on the console in v17-v25 (details in `renderer.md`,
 
 ## Next
 
-1. **Corneria: every fighter is KO'd at the start.** `[WARN] hit` lines
-   (v24): item kind 160 (0xA0, the first stage-item slot: a Great Fox gun,
-   `grcorneria.c` `left_cannon`/`right_cannon`), owned by the stage (ply
-   6), fire, hits all four fighters at their spawn points (y 290-330, 150
-   units apart) for +30% twice, then they are launched. The guns go live
-   on the first frame (`x110 == 0` in `grCorneria_801E1348` state 0) as on
-   the GameCube, so the hitbox's size or position is wrong here: v25 logs
-   the item's position, hitbox state, damage and scale.
-2. **Black shadow-map wedges** (above): confirm with the v25 dumps whether
-   the copies are still bad; if so, try a flush between the clear and the
-   next draw that the NV2A honours (`NV097_SET_ZSTENCIL`/surface flushes,
-   or clearing with a drawn quad instead of `CLEAR_SURFACE`), and compare
-   with what xemu's `pgraph` does for clears.
+1. **Corneria: every fighter is KO'd at the start.** v25 found it: the
+   Great Fox gun (item 0xA0, stage-owned, fire, `grcorneria.c`
+   `left_cannon`/`right_cannon`, made by `grMaterial_801C8CFC`) has
+   `x5D4_hitboxes[0].hit.scale` = garbage (`scale x100 -2147483648`: NaN,
+   infinite or huge), while its damage (30) and position (-108,240) are
+   right. A hitbox that big hits all four fighters wherever they are. Find
+   where the stage item's hitbox scale is loaded (the stage item's
+   attributes or hitbox descriptor from disc, likely a field read without
+   the big-endian conversion or a wrong struct offset) and fix it.
+2. **Black shadow-map wedges, not fixed by WAIT_FOR_IDLE** (v25 dumps: 25
+   of 33 maps lost the background quad's first triangle). The first maps of
+   a session were clean; the wedges start once the stage's other EFB copy
+   (an 80x60 scene copy to 64x64, filtered, `efb_copy_gpu`) has run, so
+   suspect GPU state that copy leaves behind (texture unit 0's linear/rect
+   setup, filter, window clip, surface or combiner state) rather than a
+   race. Try in xemu with an autopad `BACK` late in a Fountain match (the
+   dumps work there too); then re-send or reset that state after
+   `efb_copy_gpu`.
 3. **Kirby's copy hats**: `ftParts: kind 4 costume 0: visibility table 3
    points at 0` (also Samus, Mewtwo); Kirby with Pikachu's ability showed
    black shapes on the hat. The guard skips the table; find why the table
    pointer is 0 (`ftKb_LoadHatParts`, `ftParts_8007487C`).
-4. **Trophy Collection** (mode 13) crashed in `tyDisplay_Scene_OnEnter`
-   with the bad save; retest with the restored save.
+4. **Trophy Collection runs at ~1.4 fps** (`tex 649 ms` a frame: every
+   trophy at once overflows the texture pool and textures re-upload every
+   frame). The gallery and collection work with the restored save.
 5. **Intro movie (THP) plays choppily** on the console.
 6. **Texture accuracy**: indirect texturing (Fountain's water), TEV swap
    tables, item crates, fog checks against Dolphin.
