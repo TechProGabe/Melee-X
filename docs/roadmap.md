@@ -69,6 +69,22 @@ Found and fixed on the console in v17-v25 (details in `renderer.md`,
 
 ## Next
 
+v29 on the console (2026-10-01, `~/xemu/hw/logs29`, map `melee_x.v29.map`):
+a 5-minute Pokémon Stadium run was stable (no GPU stall). Jungle Japes hung
+on entry after four matches: `Can't load SFX file; bank(id=2) buffer
+overflow`, then `onEnterVs` -> `lbAudioAx_80027648` waited forever for the
+SSM (fixed in v30: reload bank 2, else drop it; the overflow itself, the
+game's SSM accounting vs the bank's fill pointer, is still unexplained: look
+for the v30 `[WARN] SFX bank 2 load failed` line). Shots: shot20 = Kirby's
+grey Falcon helmet (trace section 3 of `trace.log`), shot61 = the capsule
+drawn near black (section 9; draws #372/#501: texgen NRM x TEXMTX0,
+normalized, post PTTEXMTX0 -> env map 64x64 DXT1, TEV konst x ras x tex),
+shot66/shot81 = crates with dark, black-striped faces. The Falcon helmet
+is an ordinary hat (`ftKb_LoadHat`): the parts hats are DK, Jigglypuff,
+Mewtwo, Falco and G&W (our `hats[k]` is upstream's `copies[k + 1]`), so
+the costume matanim idea doesn't apply. Mute City runs at a lower frame
+rate than the other stages.
+
 v28 on the console (2026-10-01, logs in `~/xemu/hw/logs28`, map
 `melee_x.v28.map`): intro movie perfect, audio back (no cold reset was
 needed: the AC97 started after its usual first restart), frame rate "great"

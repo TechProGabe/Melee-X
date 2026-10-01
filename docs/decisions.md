@@ -308,6 +308,10 @@ marked `PORT:`:
   player; `[WARN] hit by item kind` for items). On Corneria every fighter
   was at 90% by "Go!" and was launched to a KO on its first landing on the
   Great Fox, on the console only.
+- `src/melee/lb/lbaudio_ax.c` (`lbAudioAx_80027648`): when a needed SSM
+  failed to load (bank 2 "buffer overflow") and nothing is pending, bank 2
+  is reloaded from empty once, then the missing SSMs are dropped, instead
+  of waiting forever (v29: hang entering Jungle Japes after four matches).
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after

@@ -2231,8 +2231,41 @@ static int fn_80027488(void)
 
 void lbAudioAx_80027648(void)
 {
+#ifdef TARGET_PC
+    int resets = 0;
+#endif
     while (fn_80027488() == 1) {
         HSD_SynthSFXWaitForLoadCompletion(lb_800195D0);
+#ifdef TARGET_PC
+        /* PORT: with nothing pending, a needed SSM still missing means its
+         * load failed (HSD_SynthSFXHeaderLoadCallback: "bank(id=2) buffer
+         * overflow"), and this loop would spin forever: the console hung
+         * entering Jungle Japes after four matches (v29). Retail asserts
+         * there instead. Reload bank 2 from empty once, as fn_800269AC
+         * does; if that fails too, go on without the missing sounds. */
+        if (HSD_SynthSFXGetPendingLoadCount() == 0 && fn_80027488() == 1) {
+            int i;
+            OSReport("[WARN] SFX bank 2 load failed (size %d, loaded %d, needed %d): %s\n", lbl_804D6444,
+                     lbl_804D6448, lbl_804D6450, resets ? "skipping it" : "reloading the bank");
+            if (resets++ == 0) {
+                HSD_SynthSFXUnloadBank(2);
+                for (i = 0; i < 55; i++) {
+                    if (s32_arr_803BB5D0[i][1] != 5) {
+                        lbl_80433984[i] = -1;
+                        lbl_80433A64[i] = -1;
+                    }
+                }
+                fn_800268B4();
+                lbAudioAx_80027168_inline_2();
+            } else {
+                for (i = 0; i < 55; i++) {
+                    if (lbl_804338A4[i] == 1 && lbl_80433984[i] == -1) {
+                        lbl_804338A4[i] = -1;
+                    }
+                }
+            }
+        }
+#endif
     }
 }
 
