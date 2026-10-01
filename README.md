@@ -9,14 +9,19 @@ draws with its NV2A GPU.
 - Needs your own Melee disc image: NTSC-U 1.02 (`GALE01`, revision 2). No
   game data is in this repository or in any build.
 
-> **Status: runs in xemu, untested on hardware.** In xemu it boots to the
-> "TechProGabe Presents..." card and then the intro movie. The title screen
-> and the attract-demo VS matches follow; they are slow there (about 5 fps,
-> because xemu emulates the CPU). Known problems: an occasional hang when
-> the texture pool fills, and Mute City's road renders wrong. See
-> [docs/roadmap.md](docs/roadmap.md), and
-> [docs/testing.md](docs/testing.md) for how to try it and what logs to
-> send.
+> **Status: plays on a real Xbox.** Menus run at 60 fps. 4-player matches
+> run the game itself at full speed (60 ticks a second) and draw 25-30 fps
+> on most stages (Pokémon Stadium ~28, Fountain of Dreams ~28 since the
+> display-list cache took its stage model). Saves, audio, rumble, fog and the
+> dashboard icon work, and GameCube/Dolphin saves load (the save data is
+> converted between the card's big-endian layout and the Xbox's).
+>
+> Known problems: fighters take damage during Corneria's countdown and are
+> launched on the first landing; textures are not all accurate yet
+> (indirect texturing for reflections and water, TEV swap tables); netplay
+> is not built. [docs/roadmap.md](docs/roadmap.md) has the details and the
+> plan; [docs/testing.md](docs/testing.md) says how to test and which logs
+> to send.
 
 ## How it is put together
 
@@ -42,9 +47,15 @@ tools/xbox/setup.sh               # once: LLVM 21, nxdk, disc_lower
 xbox/build.sh                     # -> build-xbox/xbe/default.xbe
 tools/lower/test_lower.py         # lowering oracle tests
 tools/xbox/test_vp_encoder.py     # vertex-program encoder vs nv2a-vsh
+tools/xbox/test_vp_opt.py         # optimized vertex programs vs the reference generator
+tools/xbox/vp_policy.py --check   # vertex-program residency policy
 tools/xbox/test_tex_convert.py    # native texture formats vs the GX decoder
+tools/xbox/test_fog.py            # GX fog on the NV2A vs GX's fog factor
 tools/xbox/test_card_endian.py    # memory-card files: big-endian on the card, native in memory
 ```
+
+Builds and tests run locally; the GitHub workflow runs only when started by
+hand.
 
 On macOS, build in Docker instead and boot the result in xemu
 ([docs/testing.md](docs/testing.md)):
@@ -55,9 +66,13 @@ tools/xbox/docker/build.sh
 MX_ISO=/path/to/your/melee.iso tools/xbox/xemu_run.sh 120
 ```
 
-To play: copy `default.xbe` into a folder on the Xbox HDD (e.g.
-`E:\Games\Melee-X\`) together with your own `GALE01` disc image (`.iso`,
-`.gcm` or `.ciso`, any name), and launch it from your dashboard.
+To play: copy `default.xbe` and `default.tbn` (the dashboard icon) into a
+folder on the Xbox HDD (e.g. `F:\Applications\Melee-X\`) together with
+your own `GALE01` disc image (`.iso`, `.gcm` or `.ciso`, any name), and
+launch it from your dashboard. Saves, settings and logs go to
+`E:\UDATA\4d580001\` (`boot.log`, `crash.log`; BACK on a controller writes
+a screenshot there). To bring a save from Dolphin or a GameCube card, put
+its `.gci` in `E:\UDATA\4d580001\card_a\`.
 
 ## Licensing
 
