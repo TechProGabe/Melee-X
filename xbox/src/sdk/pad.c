@@ -88,7 +88,9 @@ u32 PADRead(PADStatus* status) {
         s->analogA = (s->button & PAD_BUTTON_A) ? 0xFF : 0;
         s->analogB = (s->button & PAD_BUTTON_B) ? 0xFF : 0;
         if (s_motor[i] == PAD_MOTOR_RUMBLE) {
-            uint16_t lvl = (uint16_t)(g_xsdk_settings.rumble * 65535.0f);
+            /* 75% of the motor at rumble = 100: full strength was too much
+             * on the console's controllers */
+            uint16_t lvl = (uint16_t)(g_xsdk_settings.rumble * 0.75f * 65535.0f);
             xhw_pad_rumble(i, lvl, lvl);
         }
         motors |= 0x80000000u >> i;

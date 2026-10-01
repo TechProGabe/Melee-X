@@ -85,21 +85,30 @@ static int aci_wait(volatile uint32_t* reg, uint32_t mask, uint32_t want, const 
     return 0;
 }
 
+static int aci_reset(void);
+
 static int aci_init(void) {
-    volatile uint32_t* m = (volatile uint32_t*)ACI;
-    LARGE_INTEGER d;
     uint8_t* mem = (uint8_t*)MmAllocateContiguousMemoryEx(2 * 32 * sizeof(AciDesc), 0, 0xFFFFFFFF, 0, PAGE_READWRITE);
     if (!mem) return 0;
     memset(mem, 0, 2 * 32 * sizeof(AciDesc));
     s_desc_pcm = (AciDesc*)mem;
     s_desc_spdif = (AciDesc*)(mem + 32 * sizeof(AciDesc));
+    return aci_reset();
+}
+
+/* Cold-resets the AC-link and both bus masters and points them at the
+ * descriptor lists again (empty: the pump queues from index 0). */
+static int aci_reset(void) {
+    volatile uint32_t* m = (volatile uint32_t*)ACI;
+    LARGE_INTEGER d;
+    memset(s_desc_pcm, 0, 2 * 32 * sizeof(AciDesc));
     ACI[0x11B] = 0;   /* DMA and interrupt enables off first */
     ACI[0x17B] = 0;
     m[0x12C >> 2] &= ~2u;   /* cold reset the AC-link */
     d.QuadPart = -10 * 1000;
     KeDelayExecutionThread(KernelMode, FALSE, &d);
     m[0x12C >> 2] |= 2u;
-    aci_wait(&m[0x130 >> 2], 0x100, 0x100, "codec ready");
+    aci_wait(&m[0x130 >> 2], 0x100, 0x100, "codec ready");   /* logged; carry on as before */
     ACI[0x11B] = 1u << 1;   /* reset both bus masters */
     ACI[0x17B] = 1u << 1;
     { int i; for (i = 0; i < 1000000 && ((ACI[0x11B] | ACI[0x17B]) & 2); i++) {} }
@@ -135,12 +144,13 @@ static void aci_run(int on) {
  * on the MCPX, and the audio stayed silent for the whole boot (v13, audio 0%
  * in every [PERF] line: the ring never drained). Clear the sticky status,
  * and restart a halted or stuck engine. */
-static unsigned s_aci_restarts, s_aci_stuck, s_aci_last_civ = 99;
+static unsigned s_aci_restarts, s_aci_stuck, s_aci_last_civ = 99, s_aci_dead, s_aci_resets;
 
 static void aci_check(unsigned civ) {
     uint8_t sr = ACI[0x116], sr2 = ACI[0x176];
     if (sr & 0x1C) ACI[0x116] = (uint8_t)(sr & 0x1C);   /* LVBCI BCIS FIFOE: write 1 to clear */
     if (sr2 & 0x1C) ACI[0x176] = (uint8_t)(sr2 & 0x1C);
+    if (civ != s_aci_last_civ) s_aci_dead = 0;   /* a buffer finished: the engine runs */
     s_aci_stuck = civ == s_aci_last_civ ? s_aci_stuck + 1 : 0;
     s_aci_last_civ = civ;
     /* halted, or no buffer finished for ~100 ms (a buffer is ~21 ms) */
@@ -149,6 +159,26 @@ static void aci_check(unsigned civ) {
             xhw_logf("[AUDIO] AC97 %s: civ %u lvi %u sr %02x/%02x, restarting (%u)", sr & 1 ? "halted" : "stuck", civ,
                      ACI[0x115] & 31u, sr, sr2, s_aci_restarts);
         aci_run(0);
+        /* v27 on the console: running (sr 00) but CIV never left 0 through
+         * eight restarts, silent for the whole boot. Starting the bus master
+         * again doesn't help when the codec isn't taking frames: after three
+         * restarts without a finished buffer, cold-reset the AC-link (with a
+         * pause that grows) and queue from index 0 again. */
+        if (++s_aci_dead >= 3 && s_aci_resets < 32) {
+            volatile uint32_t* m = (volatile uint32_t*)ACI;
+            LARGE_INTEGER d;
+            s_aci_resets++;
+            d.QuadPart = -10 * 1000 * (int64_t)(s_aci_resets < 10 ? s_aci_resets * 10 : 100);
+            KeDelayExecutionThread(KernelMode, FALSE, &d);
+            xhw_logf("[AUDIO] AC97 cold reset (%u): global control %08x status %08x", s_aci_resets,
+                     (unsigned)m[0x12C >> 2], (unsigned)m[0x130 >> 2]);
+            if (aci_reset()) {
+                s_queued = 0;
+                s_next_desc = 0;
+                s_aci_last_civ = 99;
+            }
+            s_aci_dead = 0;
+        }
         aci_run(1);
         s_aci_stuck = 0;
     }

@@ -69,44 +69,31 @@ Found and fixed on the console in v17-v25 (details in `renderer.md`,
 
 ## Next
 
-v26 (2026-10-01, built and run in xemu, not yet on the console) has fixes
-for the first five items of v25's list; check each on the console:
+v27 on the console (2026-10-01): Corneria fixed, Fountain's black shadow
+wedges and flashes fixed, frame rate "much better", rumble works (it was off
+in Melee's Options; 25% weaker now), intro movie better but still choppy.
+New: **no audio at all** (AC97 running but CIV stuck at 0 from boot, the
+first time in any log), and once a **GPU stall** after ~5 minutes (PGRAPH
+error source 0x20, LIMIT_ZETA, then `pgraph 18000001`, black screen with the
+watchdog's report). v28 has:
 
-1. **Corneria KOs at the start**: fixed in `disc_lower` (static disc-struct
-   initializers with bit-fields left their other fields little-endian; the
-   stage items' `ItemAttr.x60_scale` read ~4.6e-41 and the hitbox was scaled
-   by its inverse). Gone in xemu on Corneria; Green Greens' blocks had it too.
-   Check: no `[WARN] hit by item kind 160` at the start of a Corneria match.
-2. **Black shadow-map wedges**: not reproducible in xemu (its dumps are
-   clean after the scene copy). v26 sends `BREAK_VERTEX_BUFFER_CACHE` at the
-   start of every pushbuffer batch (the NV2A's vertex fetch cache read
-   ahead into ring memory the CPU had not written yet). Check: BACK late in
-   a Fountain match, the `shotNN.bmp` EFB dumps should have no wedges and
-   the surfaces near fighters should not flash black. If they still do, the
-   `WAIT_FOR_IDLE`s in `clear_fb` and `efb_copy_gpu` are the next suspects.
-3. **Kirby's copy hats**: the `ftParts` guard stopped at legal empty groups
-   (NULL list, no DObjs) and left the rest of the table visible. Check:
-   Kirby with Pikachu's and Falcon's abilities; no `[WARN] ftParts` lines.
-4. **Trophy Collection**: overflow texture pool (`[TEX] overflow pool`),
-   NPOT intensity textures at a quarter of the memory. Check its `[PERF]`
-   `tex` and that `[TEX] overflow pool released` follows on leaving.
-5. **Intro movie**: planes resampled as AY8 in fixed point (was A8R8G8B8
-   floats). Check it plays smoothly.
-6. **Performance** (v26, unmeasured on the console): no waits for idle
-   when the vertex pool evicts (Stadium: ~4 a frame), O(1) pool frees,
-   stable display lists and textures checked every fourth frame,
-   `GXLoadTexMtxImm` no longer dirties unchanged matrices (texmtx dirty on
-   ~9% of draws, was ~77%), kicks every 32 KB. Compare `[PERF]` and
-   `[NV2A] ... idle waits` on Stadium and Fountain with v25.
-7. **Rumble**: the user doesn't remember feeling any in game. Check in a
-   match with rumble on in Melee's Options (it is per player and saved on
-   the card; `settings.ini` `rumble = 100`): `[PAD] port N: rumble on`
-   means the game asked for it, `[PAD] port N: rumble failed (...)` that
-   nxdk's SDL/XID driver refused it. Neither line: the game never asked
-   (Options setting, or `rumble.c`'s status mapping).
-8. **Texture accuracy**: indirect texturing (Fountain's water), TEV swap
+1. **Audio**: AC-link cold reset after three restarts without a finished
+   buffer (`[AUDIO] AC97 cold reset`). Check audio from boot, and for those
+   lines in boot.log.
+2. **GPU stall (LIMIT_ZETA)**: not understood yet. v28's stall line adds the
+   trapped method and data; the BACK dump no longer keeps a 4 MB buffer
+   (v27 ran at ~2 MB free after the first BACK). If it happens again, pull
+   boot.log at once.
+3. **Intro movie**: non-power-of-two textures are linear now, no
+   resampling; the planes cost ~2-3 ms in xemu (was 17-22). Check
+   smoothness; the JPEG decode (~18 ms a frame on the console) is next if
+   it still stutters.
+4. **Kirby's copy hats**, **Trophy Collection**: not checked in v27.
+5. **Rumble**: 75% of the motor at `rumble = 100`; a strength option goes
+   in the settings menu (Future features).
+6. **Texture accuracy**: indirect texturing (Fountain's water), TEV swap
    tables, item crates, fog checks against Dolphin.
-9. **Performance**, as planned below: on the console the simulation is
+7. **Performance**, as planned below: on the console the simulation is
    ~4 ms a tick, the render pass (HSD walking the scene, GX setters) up to
    17 ms a frame on Stadium, display lists 4-5 ms, draw submission 6-9 ms;
    ~50 vertex-program loads a frame remain.

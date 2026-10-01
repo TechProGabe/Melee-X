@@ -131,7 +131,8 @@ started with `xhw_thread_start`.
   - then scaled so full tilt reaches the GameCube's raw rim (±104);
   - the game clamps to its own 80-unit circle.
 - The digital L/R click fires past `trigger_click`.
-- Rumble goes to the pad's motors, scaled by `[input] rumble`.
+- Rumble goes to the pad's motors, scaled by `[input] rumble`; 100 drives the
+  motors at 75% (full strength was too strong on the console's controllers).
 
 ## `settings.ini`
 
@@ -187,7 +188,12 @@ right = RIGHT
    and moving that index on doesn't restart it on the MCPX: one v13 boot
    was silent throughout (`audio 0%`, the ring never drained). The pump
    clears the sticky status bits and restarts a halted or stuck engine,
-   logging `[AUDIO] AC97 halted/stuck ... restarting` (first eight).
+   logging `[AUDIO] AC97 halted/stuck ... restarting` (first eight). After
+   three restarts without a finished buffer it cold-resets the AC-link,
+   reprograms the descriptor lists and queues from index 0 again (`[AUDIO]
+   AC97 cold reset (n)` with the global control and status registers): v27
+   once came up with the engine running but CIV stuck at 0, silent for the
+   whole boot, which restarts alone never fixed.
 5. Under xemu (detected by CPUID) an MCPX APU voice is used instead.
 
 ## CARD (`card.c`)

@@ -172,7 +172,8 @@ whose textures outgrow the pool gets an overflow pool from free RAM until
 the next scene change (Trophy Collection). Display lists evicted when not
 drawn this frame are freed without waiting for the GPU; the pool allocator
 keeps a free list and an offset hash; stable display lists are checked
-every fourth frame, and so are stable textures; `GXLoadTexMtxImm` changes
+every fourth frame, and so are stable textures; non-power-of-two textures
+are linear textures sampled in texels (texgen rows scaled), not resampled; `GXLoadTexMtxImm` changes
 nothing when the matrix is the same; kicks every 32 KB. Non-power-of-two
 intensity textures stay AY8/A8Y8.
 The cost: up to 8 MB more RAM while the overflow pool exists, and a list

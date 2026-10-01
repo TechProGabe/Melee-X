@@ -352,9 +352,12 @@ static volatile uint32_t s_gf_count, s_gf_storms, s_gf_last[5];
 static void report_gpu_stall(void) {
     uint32_t get = *(volatile uint32_t*)(0xFD000000u + 0x3244), put = *(volatile uint32_t*)(0xFD000000u + 0x3240);
     const uint32_t* w = (const uint32_t*)(0x80000000u | (get & 0x03FFFFFFu));
-    xhw_logf("[NV2A] GPU stalled: get %08x put %08x dma_state %08x pgraph %08x, faults %u (last kind %u %08x %08x)",
+    /* fault: kind (1 PGRAPH: nsource, class, trapped method, data; 2 DMA pusher) */
+    xhw_logf("[NV2A] GPU stalled: get %08x put %08x dma_state %08x pgraph %08x, faults %u (last kind %u %08x %08x "
+             "%08x %08x)",
              get, put, *(volatile uint32_t*)(0xFD000000u + 0x3228), *(volatile uint32_t*)(0xFD000000u + 0x400700),
-             (unsigned)s_gf_count, (unsigned)s_gf_last[0], (unsigned)s_gf_last[1], (unsigned)s_gf_last[2]);
+             (unsigned)s_gf_count, (unsigned)s_gf_last[0], (unsigned)s_gf_last[1], (unsigned)s_gf_last[2],
+             (unsigned)s_gf_last[3], (unsigned)s_gf_last[4]);
     xhw_logf("[NV2A]  at get-32: %08x %08x %08x %08x %08x %08x %08x %08x", w[-8], w[-7], w[-6], w[-5], w[-4], w[-3],
              w[-2], w[-1]);
     xhw_logf("[NV2A]  at get:    %08x %08x %08x %08x %08x %08x %08x %08x", w[0], w[1], w[2], w[3], w[4], w[5], w[6],
@@ -428,8 +431,10 @@ void ocx_pb_gpu_fault(unsigned kind, unsigned a, unsigned b, unsigned c, unsigne
 #define MAX_TEX 4096
 typedef struct {
     int used;
-    uint16_t w, h;          /* after POT resampling */
+    uint16_t w, h;          /* after POT resampling; a rect texture's own size */
     uint8_t levels;
+    uint8_t rect;           /* linear (LU_IMAGE) non-power-of-two image, sampled in texels */
+    uint16_t pitch;         /* rect: bytes per row */
     uint8_t nvfmt;          /* NV097_SET_TEXTURE_FORMAT_COLOR_* */
     uint32_t bytes;         /* in the pool */
     void* mem;              /* level 0 */
@@ -619,6 +624,56 @@ static int alloc_handle(void) {
     return 0;
 }
 
+static void* tex_pool_alloc(uint32_t bytes) {
+    uint8_t* base = (uint8_t*)pool_alloc(&s_tp, bytes);
+    if (!base && s_tp2.base) base = (uint8_t*)pool_alloc(&s_tp2, bytes);
+    if (!base && s_ndeferred) {   /* nothing to gain from waiting when nothing is pending */
+        wait_idle();
+        release_deferred();
+        base = (uint8_t*)pool_alloc(&s_tp, bytes);
+        if (!base && s_tp2.base) base = (uint8_t*)pool_alloc(&s_tp2, bytes);
+    }
+    if (!base) s_st_tex_fail++;
+    return base;
+}
+
+/* Non-power-of-two images as they are: a linear (LU_IMAGE) texture of the
+ * image's own size, rows 64-byte aligned, sampled in texel coordinates (the
+ * texgen rows of a unit that binds one are scaled by its size,
+ * build_texgen). GX allows only clamping and no mipmaps for such sizes, which
+ * is what linear textures do. Resampling to a power of two blurred them a
+ * little and cost the movie ~18 ms a frame on the console (640x480 Y/U/V
+ * planes, new every frame); now it is one row copy. */
+static uint32_t tex_create_rect(uint32_t w, uint32_t h, uint32_t fmt, const uint8_t* src) {
+    int id, bpp = fmt_bpp(fmt);
+    uint32_t row = w * (uint32_t)bpp, pitch = (row + 63) & ~63u, bytes = pitch * h, y;
+    uint8_t* base;
+    id = alloc_handle();
+    if (!id) return 0;
+    s_st_tex_kb += bytes / 1024;
+    base = (uint8_t*)tex_pool_alloc(bytes);
+    if (!base) return 0;
+    for (y = 0; y < h; y++) memcpy(base + y * pitch, src + y * row, row);   /* in order: write-combined */
+    s_tex[id].used = 1;
+    s_tex[id].rect = 1;
+    s_tex[id].pitch = (uint16_t)pitch;
+    s_tex[id].w = (uint16_t)w;
+    s_tex[id].h = (uint16_t)h;
+    s_tex[id].levels = 1;
+    s_tex[id].nvfmt = fmt == XGX_TEX_AY8    ? NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_AY8
+                      : fmt == XGX_TEX_A8Y8 ? NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8Y8
+                                            : NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8;
+    s_tex[id].bytes = bytes;
+    s_tex[id].mem = base;
+    s_tex[id].base = base;
+    {
+        static uint32_t s_rgen = 0x80000000u;   /* apart from xgx_tex_create's */
+        s_tex[id].gen = ++s_rgen;
+    }
+    s_tex[id].pal = 0;
+    return (uint32_t)id;
+}
+
 uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data) {
     int id, pw, ph, l, lw, lh, sw, sh;
     uint32_t bytes = 0, pal_bytes = fmt == XGX_TEX_P8 ? XGX_TEX_PALETTE_BYTES : 0;
@@ -629,6 +684,9 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     pw = pot((int)w);
     ph = pot((int)h);
     if (fmt == XGX_TEX_P8 && !data) return 0;
+    if ((pw != (int)w || ph != (int)h) && data &&
+        (fmt == XGX_TEX_ARGB8 || fmt == XGX_TEX_AY8 || fmt == XGX_TEX_A8Y8))
+        return tex_create_rect(w, h, fmt, (const uint8_t*)data);
     if (pw != (int)w || ph != (int)h) {
         /* resampled per 8-bit channel: palette indices and DXT1 blocks can't be */
         if (fmt != XGX_TEX_ARGB8 && fmt != XGX_TEX_AY8 && fmt != XGX_TEX_A8Y8) return 0;
@@ -644,18 +702,8 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     if (!id) return 0;
     bytes += pal_bytes;   /* the palette first: its offset wants 64-byte alignment, the pool gives 128 */
     s_st_tex_kb += bytes / 1024;
-    base = (uint8_t*)pool_alloc(&s_tp, bytes);
-    if (!base && s_tp2.base) base = (uint8_t*)pool_alloc(&s_tp2, bytes);
-    if (!base && s_ndeferred) {   /* nothing to gain from waiting when nothing is pending */
-        wait_idle();
-        release_deferred();
-        base = (uint8_t*)pool_alloc(&s_tp, bytes);
-        if (!base && s_tp2.base) base = (uint8_t*)pool_alloc(&s_tp2, bytes);
-    }
-    if (!base) {
-        s_st_tex_fail++;
-        return 0;
-    }
+    base = (uint8_t*)tex_pool_alloc(bytes);
+    if (!base) return 0;
     mem = base + pal_bytes;
     dst = mem;
     sw = (int)w;
@@ -674,6 +722,8 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     }
     if (pal_bytes) memcpy(base, src, pal_bytes);   /* after the levels in `data` */
     s_tex[id].used = 1;
+    s_tex[id].rect = 0;
+    s_tex[id].pitch = 0;
     s_tex[id].w = (uint16_t)pw;
     s_tex[id].h = (uint16_t)ph;
     s_tex[id].levels = (uint8_t)levels;
@@ -1188,6 +1238,8 @@ static const float* texgen_src_mtx(const XgxState* st, uint32_t id, float out[3]
 
 /* rows for unit u: texgen tg; the post matrix is folded in unless the
  * texgen normalizes first */
+static int s_d_unit_map[4];   /* (defined with the other derived state below) */
+
 static void build_texgen(const XgxState* st, int u, const XgxTexGen* tg) {
     float m[3][4], pt[3][4], out[3][4];
     int r, c;
@@ -1200,6 +1252,15 @@ static void build_texgen(const XgxState* st, int u, const XgxTexGen* tg) {
     else {
         memset(pt, 0, 48);
         pt[0][0] = pt[1][1] = pt[2][2] = 1;
+    }
+    {   /* a linear texture is sampled in texels: s and t times its size (tex_create_rect) */
+        const XgxMap* mp = &st->map[s_d_unit_map[u]];
+        const Tex* t = mp->tex && mp->tex < MAX_TEX && s_tex[mp->tex].used ? &s_tex[mp->tex] : NULL;
+        if (t && t->rect)
+            for (c = 0; c < 4; c++) {
+                pt[0][c] *= (float)t->w;
+                pt[1][c] *= (float)t->h;
+            }
     }
     if (tg->normalize) {
         memcpy(out, m, 48);
@@ -1397,7 +1458,7 @@ static void emit_combiners(const XgxState* st, const RcProg* rp) {
 /* ======================================================================
  * Texture units
  * ====================================================================== */
-static uint32_t s_tex_shadow[4][7];
+static uint32_t s_tex_shadow[4][9];
 static uint32_t s_tex_prog = 0xFFFFFFFFu;   /* NV097_SET_SHADER_STAGE_PROGRAM sent last */
 
 static uint32_t wrap_mode(uint32_t gx) {
@@ -1412,7 +1473,7 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
     uint32_t prog = 0;
     int u;
     for (u = 0; u < 4; u++) {
-        uint32_t v[7] = { 0, 0, 0, 0, 0, 0, 0 };
+        uint32_t v[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
         const Tex* t = NULL;
         const XgxMap* m = NULL;
         if (u < nunits) {
@@ -1423,9 +1484,16 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
             uint32_t minf = m->min_filter + 1, magf = m->mag_filter == 0 ? 1 : 2;
             if (t->levels <= 1 && minf > 2) minf = minf == 3 || minf == 5 ? 1 : 2;   /* no mips: drop the mip part */
             v[0] = (uint32_t)t->mem & 0x03FFFFFF;
-            v[1] = 1 | (1u << 3) | (2u << 4) | ((uint32_t)t->nvfmt << 8) |
-                   ((uint32_t)t->levels << 16) | ((uint32_t)log2i(t->w) << 20) | ((uint32_t)log2i(t->h) << 24);
-            v[2] = wrap_mode(m->wrap_s) | (wrap_mode(m->wrap_t) << 8) | (3u << 16);
+            if (t->rect) {   /* linear, texel coordinates: no size in the format, clamp only */
+                v[1] = 1 | (1u << 3) | (2u << 4) | ((uint32_t)t->nvfmt << 8) | (1u << 16);
+                v[2] = 3 | (3u << 8) | (3u << 16);
+                v[7] = (uint32_t)t->pitch << 16;
+                v[8] = (uint32_t)t->w << 16 | t->h;
+            } else {
+                v[1] = 1 | (1u << 3) | (2u << 4) | ((uint32_t)t->nvfmt << 8) | ((uint32_t)t->levels << 16) |
+                       ((uint32_t)log2i(t->w) << 20) | ((uint32_t)log2i(t->h) << 24);
+                v[2] = wrap_mode(m->wrap_s) | (wrap_mode(m->wrap_t) << 8) | (3u << 16);
+            }
             v[3] = 0x4003FFC0u;
             v[4] = (minf << 16) | (magf << 24) | ((uint32_t)((int)(m->lod_bias * 256.0f)) & 0x1FFF) | 0x2000u;
             /* not sent: a texture made at a freed one's address, format and
@@ -1447,6 +1515,10 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
                 put1(NV097_SET_TEXTURE_CONTROL0 + b, v[3]);
                 put1(NV097_SET_TEXTURE_FILTER + b, v[4]);
                 if (v[6]) put1(NV097_SET_TEXTURE_PALETTE + b, v[6]);
+                if (v[7]) {
+                    put1(NV097_SET_TEXTURE_CONTROL1 + b, v[7]);
+                    put1(NV097_SET_TEXTURE_IMAGE_RECT + b, v[8]);
+                }
             }
             memcpy(s_tex_shadow[u], v, sizeof v);
         }
@@ -2187,10 +2259,12 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
     /* the frame a BACK screenshot captures: each EFB copy's source as a BMP
      * too (up to 8), logged between the draws that made it and use it */
     if (s_shot_once) {
-        static uint32_t* dbg;
+        /* the copy's size, freed after: a kept 4 MB buffer took the console
+         * down to 2 MB free for the rest of the session (v27) */
+        uint32_t* dbg;
         static uint32_t dbg_frame = 0xFFFFFFFFu, dbg_n;
         if (dbg_frame != s_frame) dbg_frame = s_frame, dbg_n = 0;
-        if (dbg_n++ < 8 && (dbg || (dbg = (uint32_t*)malloc(1024 * 1024 * 4)))) {
+        if (dbg_n++ < 8 && (dbg = (uint32_t*)malloc((size_t)pw * ph * 4)) != NULL) {
             xhw_logf("[DRAW] efb copy after #%u: src %d,%d %dx%d -> %ux%u mode %d", s_draws, (int)src[0], (int)src[1],
                      (int)src[2], (int)src[3], pw, ph, mode);
             read_rect(src, pw, ph, dbg);
@@ -2199,11 +2273,12 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
             /* xemu: the HDD's files are out of reach, COM1 isn't */
             xhw_fbdump(dbg, (int)pw, (int)ph, 32, (int)pw * 4);
 #endif
+            free(dbg);
         }
     }
 #endif
     reusable = reuse && reuse < MAX_TEX && s_tex[reuse].used && s_tex[reuse].w == pw && s_tex[reuse].h == ph &&
-               s_tex[reuse].levels == 1 && s_tex[reuse].nvfmt == nv_format(XGX_TEX_ARGB8);
+               s_tex[reuse].levels == 1 && !s_tex[reuse].rect && s_tex[reuse].nvfmt == nv_format(XGX_TEX_ARGB8);
 #if XGX_EFB_GPU_COPY
     if (s_bpp == 32) {
         uint32_t tex = reusable ? reuse : xgx_tex_create(pw, ph, 1, XGX_TEX_ARGB8, NULL);

@@ -416,13 +416,19 @@ Dolphin:
   I4/I8 -> AY8, IA4/IA8 -> A8Y8, RGB565 -> R5G6B5, C4/C8 -> I8 indices with
   a 256-entry A8R8G8B8 palette (the TLUT decoded; it sits at the start of
   the texture's pool allocation, `SET_TEXTURE_PALETTE`). Everything else
-  becomes A8R8G8B8; non-power-of-two images are resampled (bilinear, fixed
-  point, per 8-bit channel) to the next power of two, I4/I8 and IA4/IA8 in
-  AY8/A8Y8 like the power-of-two ones (the same texels as the A8R8G8B8 path
-  at a quarter or half the memory), the rest in A8R8G8B8: palette indices
-  and DXT1 blocks can't be blended. The Trophy Collection's non-power-of-two
-  I4 textures took eight times their GX size, and movie frames (640x480 Y/U/V
-  planes, a new one each frame) were resampled as A8R8G8B8 floats. On Pokémon Stadium, C8 as A8R8G8B8 took 2.1 MB of the pool. A
+  becomes A8R8G8B8. Non-power-of-two images are linear textures of their own
+  size (`LU_IMAGE_AY8`/`A8Y8`/`A8R8G8B8`, rows 64-byte aligned, one row copy
+  each): I4/I8 and IA4/IA8 keep AY8/A8Y8, the rest A8R8G8B8. They are
+  sampled in texel coordinates, so `build_texgen` scales the s and t rows of
+  a unit that binds one by its width and height (the post matrix when the
+  texgen normalizes); GX allows only clamping and no mipmaps at such sizes,
+  which is what linear textures do. Before, they were resampled to the next
+  power of two: a little blur, up to eight times the memory (the Trophy
+  Collection's I4 textures), and ~18 ms a frame for the movie's 640x480
+  Y/U/V planes on the console. Movie frames now cost ~2-3 ms of texture
+  work in xemu (was 17-22) and the movie runs at ~59 fps there (was ~33).
+  Power-of-two sizes that GX wraps are untouched; an EFB copy is still drawn
+  to a power-of-two texture (`copy_dim`). On Pokémon Stadium, C8 as A8R8G8B8 took 2.1 MB of the pool. A
   texture unit is re-sent whenever a different texture binds, even one made
   at a freed texture's address with the same format and size, so a P8
   palette is always loaded again (xemu reads palettes at each draw).
