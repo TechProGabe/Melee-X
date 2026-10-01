@@ -440,6 +440,9 @@ Dolphin:
   palette is always loaded again (xemu reads palettes at each draw).
   `docs/architecture.md` has the table and `tools/xbox/test_tex_convert.py`
   the checks.
+- CMPR textures with a transparent texel (a three-colour block using index
+  3) go to DXT3 instead: GX decodes that index as the average colour with
+  alpha 0, DXT1 as black. The software decoder matches GX now too.
 - CMPR -> DXT1 conversion:
   - GX stores 8x8 tiles, each holding four DXT1 blocks (TL, TR, BL, BR),
     and pads small mip levels to a full tile; they are reordered into

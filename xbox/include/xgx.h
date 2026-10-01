@@ -177,8 +177,8 @@ unsigned xgx_present_count(void);
 /* One [FBDUMP] screenshot of the next presented frame. */
 void xgx_fbdump_next(void);
 
-/* Texture data formats handed to the back end. All but DXT1 are rows top to
- * bottom (the back end swizzles); DXT1 is 4x4 blocks in rows. Level 0 then
+/* Texture data formats handed to the back end. All but DXT1/DXT3 are rows top
+ * to bottom (the back end swizzles); DXT1/DXT3 are 4x4 blocks in rows. Level 0 then
  * the smaller mip levels, each level's data following the previous one. */
 enum {
     XGX_TEX_ARGB8 = 0,   /* uint32 A8R8G8B8; any size (NPOT is resampled) */
@@ -188,6 +188,7 @@ enum {
     XGX_TEX_DXT1,        /* DXT1 blocks (GX CMPR, reordered and byte-swapped) */
     XGX_TEX_P8,          /* uint8 palette indices (GX C4/C8), power-of-two only; after the
                             levels, the palette: 256 uint32 A8R8G8B8 */
+    XGX_TEX_DXT3,        /* DXT3 blocks (GX CMPR with transparent texels: alpha, then colour) */
 };
 #define XGX_TEX_PALETTE_BYTES 1024
 /* Returns a handle or 0 when the pool is full (after waiting for the GPU

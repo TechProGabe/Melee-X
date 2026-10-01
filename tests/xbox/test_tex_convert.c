@@ -1,5 +1,5 @@
 /* test_tex_convert.c - host check of gx_tex.c's native-format conversion:
- * every native texture (DXT1, AY8, A8Y8, RGB565, P8) is expanded back to ARGB
+ * every native texture (DXT1, DXT3, AY8, A8Y8, RGB565, P8) is expanded back to ARGB
  * and compared with gx_tex.c's own A8R8G8B8 decoder. Built and run by
  * tools/xbox/test_tex_convert.py. */
 #include <stdio.h>
@@ -11,7 +11,8 @@ static uint8_t s_data[1 << 20];
 uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data) {
     uint32_t n = 0, l, lw = w, lh = h;
     for (l = 0; l < levels; l++) {
-        n += fmt == XGX_TEX_DXT1 ? ((lw + 3) / 4) * ((lh + 3) / 4) * 8
+        n += fmt == XGX_TEX_DXT1   ? ((lw + 3) / 4) * ((lh + 3) / 4) * 8
+             : fmt == XGX_TEX_DXT3 ? ((lw + 3) / 4) * ((lh + 3) / 4) * 16
                                  : lw * lh * (fmt == XGX_TEX_AY8 || fmt == XGX_TEX_P8 ? 1 : fmt == XGX_TEX_ARGB8 ? 4 : 2);
         lw = lw > 1 ? lw / 2 : 1;
         lh = lh > 1 ? lh / 2 : 1;
@@ -52,6 +53,14 @@ static uint32_t expand(const uint8_t* d, uint32_t fmt, uint32_t w, uint32_t x, u
         case XGX_TEX_AY8: { uint32_t v = d[y * w + x]; return argb(v, v, v, v); }
         case XGX_TEX_A8Y8: { const uint8_t* p = d + (y * w + x) * 2; return argb(p[1], p[0], p[0], p[0]); }
         case XGX_TEX_RGB565: { uint16_t v; memcpy(&v, d + (y * w + x) * 2, 2); return c565(v); }
+        case XGX_TEX_DXT3: {   /* colour block always four-colour */
+            const uint8_t* b = d + ((y / 4) * ((w + 3) / 4) + x / 4) * 16;
+            uint16_t c0 = (uint16_t)(b[8] | b[9] << 8), c1 = (uint16_t)(b[10] | b[11] << 8);
+            uint32_t t = (y & 3) * 4 + (x & 3), i = (b[12 + (y & 3)] >> ((x & 3) * 2)) & 3, p0 = c565(c0),
+                     p1 = c565(c1), a = (b[t / 2] >> ((t & 1) * 4)) & 15, c;
+            c = i == 0 ? p0 : i == 1 ? p1 : i == 2 ? lerp(p0, p1, 2, 1, 3) : lerp(p0, p1, 1, 2, 3);
+            return (c & 0x00FFFFFFu) | (a * 17) << 24;
+        }
         default: {
             const uint8_t* b = d + ((y / 4) * ((w + 3) / 4) + x / 4) * 8;
             uint16_t c0 = (uint16_t)(b[0] | b[1] << 8), c1 = (uint16_t)(b[2] | b[3] << 8);
@@ -62,6 +71,16 @@ static uint32_t expand(const uint8_t* d, uint32_t fmt, uint32_t w, uint32_t x, u
             return i == 2 ? lerp(p0, p1, 1, 1, 2) : 0;
         }
     }
+}
+
+static int near(uint32_t a, uint32_t b) {
+    int k, d;
+    if ((a ^ b) >> 24) return 0;
+    for (k = 0; k < 24; k += 8) {
+        d = (int)((a >> k) & 255) - (int)((b >> k) & 255);
+        if (d > 43 || d < -43) return 0;
+    }
+    return 1;
 }
 
 static int check(uint32_t fmt, uint32_t w, uint32_t h, uint32_t levels) {
@@ -90,6 +109,7 @@ static int check(uint32_t fmt, uint32_t w, uint32_t h, uint32_t levels) {
             for (x = 0; x < lw; x++) {
                 uint32_t got = expand(s_data + doff, s_fmt, lw, x, y), want = ref[y * lw + x];
                 if (s_fmt == XGX_TEX_ARGB8) memcpy(&got, s_data + doff + (y * lw + x) * 4, 4);
+                if (s_fmt == XGX_TEX_DXT3 && near(got, want)) got = want;   /* the average on index 2 */
                 if (got != want && bad++ < 4)
                     printf("fmt %u %ux%u level %u (%u,%u): got %08x want %08x\n", fmt, w, h, l, x, y, got, want);
             }
@@ -111,8 +131,15 @@ int main(void) {
             fail |= check(fmts[f], sizes[s][0], sizes[s][1], 1);
             fail |= check(fmts[f], sizes[s][0], sizes[s][1], 4);
         }
-    if (native_fmt(&(TexObj){.w = 64, .h = 64, .fmt = GX_TF_CMPR}) != XGX_TEX_DXT1) fail = 1, puts("CMPR not DXT1");
-    if (native_fmt(&(TexObj){.w = 64, .h = 64, .fmt = GX_TF_C8}) != XGX_TEX_P8) fail = 1, puts("C8 not P8");
+    {
+        static uint8_t opaque[64 * 64 / 2], clear[64 * 64 / 2];
+        clear[100 * 8 + 7] = 3;   /* c0 = c1 = 0: three-colour mode, one texel on index 3 */
+        if (native_fmt(&(TexObj){.w = 64, .h = 64, .fmt = GX_TF_CMPR, .data = opaque}, 1) != XGX_TEX_DXT1)
+            fail = 1, puts("CMPR not DXT1");
+        if (native_fmt(&(TexObj){.w = 64, .h = 64, .fmt = GX_TF_CMPR, .data = clear}, 1) != XGX_TEX_DXT3)
+            fail = 1, puts("CMPR with a transparent texel not DXT3");
+    }
+    if (native_fmt(&(TexObj){.w = 64, .h = 64, .fmt = GX_TF_C8}, 1) != XGX_TEX_P8) fail = 1, puts("C8 not P8");
     puts(fail ? "FAIL" : "ok: native texture formats match the ARGB decoder");
     return fail;
 }

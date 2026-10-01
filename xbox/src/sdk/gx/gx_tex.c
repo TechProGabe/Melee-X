@@ -198,7 +198,7 @@ static void decode_level(const uint8_t* src, uint32_t fmt, uint32_t w, uint32_t 
                             ((uint8_t*)&pal[2])[k] = (uint8_t)((a + b) / 2);
                         }
                         ((uint8_t*)&pal[2])[3] = 255;
-                        pal[3] = 0;
+                        pal[3] = pal[2] & 0x00FFFFFFu;   /* GX: the average, transparent (DXT1: black) */
                     }
                     for (y = 0; y < 4; y++)
                         for (x = 0; x < 4; x++) {
@@ -404,7 +404,26 @@ static void evict_one(void) {
  * AY8 / A8Y8, RGB565 stays 16-bit, and C4/C8 become 8-bit palette indices
  * with a 256-entry A8R8G8B8 palette (C8 as A8R8G8B8 was a quarter of a
  * Pokémon Stadium match's texture memory). Everything else is A8R8G8B8. */
-static uint32_t native_fmt(const TexObj* o) {
+/* A CMPR block in three-colour mode (c0 <= c1) decodes index 3 as the
+ * average of its colours with alpha 0, where DXT1 has transparent black: a
+ * draw that ignores texture alpha shows the colour (the capsule's env map,
+ * the crate's planks), so such textures go to DXT3 instead (explicit alpha,
+ * twice the memory). */
+static int cmpr_transparent(const uint8_t* src, uint32_t w, uint32_t h, uint32_t levels) {
+    uint32_t l, n, i;
+    for (l = 0; l < levels; l++) {
+        n = ((w + 7) / 8) * ((h + 7) / 8) * 4;
+        for (i = 0; i < n; i++, src += 8) {
+            uint32_t bits = gx_be32(src + 4);
+            if (gx_be16(src) <= gx_be16(src + 2) && (bits & (bits >> 1) & 0x55555555u)) return 1;
+        }
+        w = w > 1 ? w / 2 : 1;
+        h = h > 1 ? h / 2 : 1;
+    }
+    return 0;
+}
+
+static uint32_t native_fmt(const TexObj* o, uint32_t levels) {
     if (o->w & (o->w - 1) || o->h & (o->h - 1)) {
         /* NPOT: resampled to a power of two. Intensity formats are resampled
          * per channel (the same texels as the A8R8G8B8 path, a quarter or
@@ -417,7 +436,9 @@ static uint32_t native_fmt(const TexObj* o) {
         }
     }
     switch (o->fmt) {
-        case GX_TF_CMPR: return o->w >= 4 && o->h >= 4 ? XGX_TEX_DXT1 : XGX_TEX_ARGB8;
+        case GX_TF_CMPR:
+            if (o->w < 4 || o->h < 4) return XGX_TEX_ARGB8;
+            return o->data && cmpr_transparent(o->data, o->w, o->h, levels) ? XGX_TEX_DXT3 : XGX_TEX_DXT1;
         case GX_TF_I4: case GX_TF_I8: return XGX_TEX_AY8;
         case GX_TF_IA4: case GX_TF_IA8: return XGX_TEX_A8Y8;
         case GX_TF_RGB565: return XGX_TEX_RGB565;
@@ -429,6 +450,7 @@ static uint32_t native_fmt(const TexObj* o) {
 static uint32_t native_size(uint32_t fmt, uint32_t w, uint32_t h) {
     switch (fmt) {
         case XGX_TEX_DXT1: return ((w + 3) / 4) * ((h + 3) / 4) * 8;
+        case XGX_TEX_DXT3: return ((w + 3) / 4) * ((h + 3) / 4) * 16;
         case XGX_TEX_AY8: case XGX_TEX_P8: return w * h;
         case XGX_TEX_A8Y8: case XGX_TEX_RGB565: return w * h * 2;
         default: return w * h * 4;
@@ -452,6 +474,32 @@ static void convert_level(const uint8_t* src, uint32_t fmt, uint32_t xfmt, uint3
                 uint8_t* d = out + (by * nbx + bx) * 8;
                 d[0] = b[1]; d[1] = b[0]; d[2] = b[3]; d[3] = b[2];
                 d[4] = rev2(b[4]); d[5] = rev2(b[5]); d[6] = rev2(b[6]); d[7] = rev2(b[7]);
+            }
+        return;
+    }
+    if (xfmt == XGX_TEX_DXT3) {
+        /* 8 bytes of 4-bit alpha (texel 0 in the low nibble), then a colour
+         * block the NV2A always decodes in four-colour mode: a three-colour
+         * GX block keeps c0, c1 and puts the average (indices 2 and 3) on
+         * index 2, 2/3 c0 + 1/3 c1, the nearest four-colour entry */
+        uint32_t nbx = (w + 3) / 4, nby = (h + 3) / 4, tiles_x = (w + 7) / 8;
+        for (by = 0; by < nby; by++)
+            for (bx = 0; bx < nbx; bx++) {
+                const uint8_t* b = src + ((by / 2) * tiles_x + bx / 2) * 32 + ((by & 1) * 2 + (bx & 1)) * 8;
+                uint8_t* d = out + (by * nbx + bx) * 16;
+                uint32_t bits = gx_be32(b + 4), idx = 0, i;
+                int three = gx_be16(b) <= gx_be16(b + 2);
+                memset(d, 0xFF, 8);
+                for (i = 0; i < 16; i++) {
+                    uint32_t k = (bits >> (30 - 2 * i)) & 3;
+                    if (three && k == 3) {
+                        d[i / 2] &= (uint8_t)(i & 1 ? 0x0F : 0xF0);
+                        k = 2;
+                    }
+                    idx |= k << (2 * i);
+                }
+                d[8] = b[1]; d[9] = b[0]; d[10] = b[3]; d[11] = b[2];
+                d[12] = (uint8_t)idx; d[13] = (uint8_t)(idx >> 8); d[14] = (uint8_t)(idx >> 16); d[15] = (uint8_t)(idx >> 24);
             }
         return;
     }
@@ -493,7 +541,7 @@ static void convert_level(const uint8_t* src, uint32_t fmt, uint32_t xfmt, uint3
 }
 
 static uint32_t upload_now(const TexObj* o, const TlutObj* tl, uint32_t levels, uint32_t bytes) {
-    uint32_t need = 0, w = o->w, h = o->h, l, tex, room, xfmt = native_fmt(o);
+    uint32_t need = 0, w = o->w, h = o->h, l, tex, room, xfmt = native_fmt(o, levels);
     const uint8_t* src = o->data;
     uint8_t* dst;
     for (l = 0; l < levels; l++) {

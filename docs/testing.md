@@ -319,6 +319,9 @@ env MELEE_BOOT_SCENE=vs        # skip the menus: debug VS (onEnterDebugVs, gmvsm
 env MELEE_DEBUG_VS_STAGE=10    # StKind (src/melee/gr/forward.h): 10 = Mute City
 env MELEE_DEBUG_VS=cpu4        # Link, Mario, Fox and DK as four CPUs
 env MELEE_DEBUG_VS_TIME=20     # a 20-second timed match: ends on TIME!
+env MELEE_DEBUG_VS_CHARS=4:1,0 # CPUs by CKind[:costume] (yellow Kirby, Falcon)
+env MELEE_DEBUG_VS_ITEMS=3     # items on, hex ItemKind mask (capsules, crates)
+env MELEE_DEBUG_KIRBY_HAT=2    # Kirby spawns with that FighterKind's copy
 300 SHOT
 ```
 

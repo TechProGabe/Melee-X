@@ -209,6 +209,33 @@ void onEnterDebugVs(GameModeState* state)
             start->players[i].slot_type = Gm_PKind_Cpu;
         }
     }
+    /* PORT: MELEE_DEBUG_VS_CHARS=<ckind>[:<color>],...: up to four CPUs of
+     * the given kinds and costumes (4:2,0 = a yellow Kirby and Captain
+     * Falcon), so a run can reach one fighter's draws (Kirby's hats). */
+    if (getenv("MELEE_DEBUG_VS_CHARS") != NULL) {
+        const char* s = getenv("MELEE_DEBUG_VS_CHARS");
+        for (i = 0; i < 4; i++) {
+            start->players[i].slot_type = Gm_PKind_NA;
+        }
+        for (i = 0; i < 4 && *s != '\0'; i++) {
+            start->players[i].ckind = (CharacterKind) strtol(s, (char**) &s, 10);
+            start->players[i].color = 0;
+            if (*s == ':') {
+                start->players[i].color = (u8) strtol(s + 1, (char**) &s, 10);
+            }
+            start->players[i].slot_type = Gm_PKind_Cpu;
+            if (*s == ',') {
+                s++;
+            }
+        }
+    }
+    /* PORT: MELEE_DEBUG_VS_ITEMS=<hex mask of ItemKind bits>: items on at
+     * the highest frequency (the debug match has them off), 3 = capsules
+     * and crates. */
+    if (getenv("MELEE_DEBUG_VS_ITEMS") != NULL) {
+        start->rules.item_freq = 4;
+        start->rules.x20 = strtoull(getenv("MELEE_DEBUG_VS_ITEMS"), NULL, 16);
+    }
     /* PORT: MELEE_DEBUG_VS_TIME=<seconds>: a timed match, so a run reaches
      * the TIME! ending (docs/testing.md). */
     if (getenv("MELEE_DEBUG_VS_TIME") != NULL) {

@@ -308,6 +308,11 @@ marked `PORT:`:
   player; `[WARN] hit by item kind` for items). On Corneria every fighter
   was at 90% by "Go!" and was launched to a KO on its first landing on the
   Great Fox, on the console only.
+- `src/melee/gm/gmvsmode.c` (`onEnterDebugVs`): `MELEE_DEBUG_VS_CHARS`
+  (fighter kinds and costumes) and `MELEE_DEBUG_VS_ITEMS` (item mask, top
+  frequency) for scripted xemu runs; `src/melee/ft/kinds/ftKirby/ftkirby.c`
+  (`ftKb_Init_OnDeath`): `MELEE_DEBUG_KIRBY_HAT` spawns Kirby with a copy
+  ability. All under `TARGET_PC`, inert without the variables.
 - `src/melee/lb/lbaudio_ax.c` (`lbAudioAx_80027648`): when a needed SSM
   failed to load (bank 2 "buffer overflow") and nothing is pending, bank 2
   is reloaded from empty once, then the missing SSMs are dropped, instead

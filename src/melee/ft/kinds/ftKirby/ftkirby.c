@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "ftkirby.h"
 
 #include <stddef.h>
@@ -2564,6 +2565,15 @@ void ftKb_Init_OnDeath(HSD_GObj* gobj)
     {
         ftKb_SpecialN_800F1BAC(gobj, Player_GetUnk4D(fp->player_idx), 0);
     }
+#ifdef TARGET_PC
+    /* PORT: MELEE_DEBUG_KIRBY_HAT=<FighterKind>: Kirby spawns with that
+     * fighter's copy ability (its hat), so a scripted run can reach a hat's
+     * draws (2 = Captain Falcon's helmet; the fighter must be in the match,
+     * which loads its hat). */
+    if (getenv("MELEE_DEBUG_KIRBY_HAT") != NULL) {
+        ftKb_SpecialN_800F1BAC(gobj, atoi(getenv("MELEE_DEBUG_KIRBY_HAT")), 0);
+    }
+#endif
 }
 
 void ftKb_Init_OnLoad(HSD_GObj* gobj)

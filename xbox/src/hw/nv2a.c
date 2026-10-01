@@ -613,7 +613,7 @@ static int fmt_bpp(uint32_t fmt) {
     switch (fmt) {
         case XGX_TEX_RGB565: case XGX_TEX_A8Y8: return 2;
         case XGX_TEX_AY8: case XGX_TEX_P8: return 1;
-        case XGX_TEX_DXT1: return 0;
+        case XGX_TEX_DXT1: case XGX_TEX_DXT3: return 0;
         default: return 4;
     }
 }
@@ -624,6 +624,7 @@ static uint8_t nv_format(uint32_t fmt) {
         case XGX_TEX_AY8: return NV097_SET_TEXTURE_FORMAT_COLOR_SZ_AY8;
         case XGX_TEX_A8Y8: return NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8Y8;
         case XGX_TEX_DXT1: return NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT1_A1R5G5B5;
+        case XGX_TEX_DXT3: return NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT23_A8R8G8B8;
         case XGX_TEX_P8: return NV097_SET_TEXTURE_FORMAT_COLOR_SZ_I8_A8R8G8B8;
         default: return NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8R8G8B8;
     }
@@ -631,6 +632,7 @@ static uint8_t nv_format(uint32_t fmt) {
 
 static uint32_t level_size(uint32_t fmt, int w, int h) {
     if (fmt == XGX_TEX_DXT1) return (uint32_t)(((w + 3) / 4) * ((h + 3) / 4) * 8);
+    if (fmt == XGX_TEX_DXT3) return (uint32_t)(((w + 3) / 4) * ((h + 3) / 4) * 16);
     return (uint32_t)(w * h * fmt_bpp(fmt));
 }
 
@@ -734,7 +736,7 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     lw = pw;
     lh = ph;
     for (l = 0; data && l < (int)levels; l++) {   /* no data: the GPU fills it (EFB copy) */
-        if (fmt == XGX_TEX_DXT1) memcpy(dst, src, level_size(fmt, lw, lh));   /* block-linear, not swizzled */
+        if (fmt == XGX_TEX_DXT1 || fmt == XGX_TEX_DXT3) memcpy(dst, src, level_size(fmt, lw, lh));   /* block-linear, not swizzled */
         else write_level(dst, src, sw, sh, lw, lh, fmt_bpp(fmt));
         src += level_size(fmt, sw, sh);
         dst += level_size(fmt, lw, lh);
@@ -1815,6 +1817,22 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
                  t->ind_format, t->ind_mtx, t->ind_add_prev, x ? x->w : 0, x ? x->h : 0, x ? x->nvfmt : 0,
                  x ? x->levels : 0);
     }
+    xhw_logf("[DRAW]  k %02x%02x%02x%02x %02x%02x%02x%02x swap %u%u%u%u %u%u%u%u stage swap %u/%u", st->konst[0][0],
+             st->konst[0][1], st->konst[0][2], st->konst[0][3], st->konst[1][0], st->konst[1][1], st->konst[1][2],
+             st->konst[1][3], st->swap[0][0], st->swap[0][1], st->swap[0][2], st->swap[0][3], st->swap[1][0],
+             st->swap[1][1], st->swap[1][2], st->swap[1][3], st->tev[0].ras_swap, st->tev[0].tex_swap);
+    for (i = 0; i < st->nchans * 2 && i < 4; i++)
+        xhw_logf("[DRAW]  chan%u on %u amb %u mat %u lights %02x diff %u attn %u | amb %02x%02x%02x%02x mat %02x%02x%02x%02x",
+                 i, st->chan[i].enable, st->chan[i].amb_src, st->chan[i].mat_src, st->chan[i].light_mask,
+                 st->chan[i].diff_fn, st->chan[i].attn_fn, st->amb[i >> 1][0], st->amb[i >> 1][1],
+                 st->amb[i >> 1][2], st->amb[i >> 1][3], st->mat[i >> 1][0], st->mat[i >> 1][1], st->mat[i >> 1][2],
+                 st->mat[i >> 1][3]);
+    for (i = 0; i < XGX_MAX_LIGHTS; i++)
+        if (st->nchans && (st->chan[0].light_mask >> i & 1))
+            xhw_logf("[DRAW]  light%u colour %02x%02x%02x%02x pos %d %d %d dir %d %d %d", i, st->light[i].color[0],
+                     st->light[i].color[1], st->light[i].color[2], st->light[i].color[3], (int)st->light[i].pos[0],
+                     (int)st->light[i].pos[1], (int)st->light[i].pos[2], (int)(st->light[i].dir[0] * 100),
+                     (int)(st->light[i].dir[1] * 100), (int)(st->light[i].dir[2] * 100));
     for (i = 0; i < st->ntexgen && i < XGX_MAX_TEXGEN; i++)
         xhw_logf("[DRAW]  tg%u type %u src %u mtx %u norm %u pt %u", i, st->texgen[i].type, st->texgen[i].src,
                  st->texgen[i].mtx, st->texgen[i].normalize, st->texgen[i].pt_mtx);
