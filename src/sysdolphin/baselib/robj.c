@@ -100,7 +100,10 @@ void HSD_RObjAnim(HSD_RObj* robj)
         return;
     }
 
-    HSD_AObjInterpretAnim(robj->aobj, robj, RObjUpdateFunc);
+    /* PORT: no call when nothing plays (aobj.h) */
+    if (HSD_AObjIsPlaying(robj->aobj)) {
+        HSD_AObjInterpretAnim(robj->aobj, robj, RObjUpdateFunc);
+    }
 }
 
 void HSD_RObjAnimAll(HSD_RObj* robj)

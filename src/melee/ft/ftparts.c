@@ -280,8 +280,9 @@ void ftPartsSetupEnvelopeMtx(HSD_PObj* pobj, MtxPtr vmtx, MtxPtr pmtx,
                 HSD_JObjSetupMatrix(jp);
                 HSD_ASSERT(351, jp->mtx);
                 HSD_ASSERT(352, jp->envelopemtx);
-                PSMTXConcat(jp->mtx, jp->envelopemtx, tmp);
-                HSD_MtxScaledAdd(tmp, mtx, mtx, envelope->weight);
+                /* PORT: one fused step, same bits (mtx.h) */
+                HSD_MtxConcatScaledAdd(jp->mtx, jp->envelopemtx, mtx,
+                                       envelope->weight);
                 envelope = envelope->next;
                 envelope_count++;
             }

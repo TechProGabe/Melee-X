@@ -147,8 +147,13 @@ void HSD_MObjAnim(HSD_MObj* mobj)
     if (mobj == NULL) {
         return;
     }
-    HSD_AObjInterpretAnim(mobj->aobj, mobj, MObjUpdateFunc);
-    HSD_TObjAnimAll(mobj->tobj);
+    /* PORT: no calls for what has nothing to animate (aobj.h) */
+    if (HSD_AObjIsPlaying(mobj->aobj)) {
+        HSD_AObjInterpretAnim(mobj->aobj, mobj, MObjUpdateFunc);
+    }
+    if (mobj->tobj != NULL) {
+        HSD_TObjAnimAll(mobj->tobj);
+    }
 }
 
 static int MObjLoad(HSD_MObj* mobj, HSD_MObjDesc* desc)

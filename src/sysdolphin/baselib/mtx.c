@@ -358,6 +358,23 @@ void HSD_MtxQuat(Mtx arg0, Quaternion* arg1)
     MTXQuat(arg0, arg1);
 }
 
+#ifdef TARGET_XBOX
+/* PORT: sinf and cosf of one angle (pc_sincosf.c, same bits). Below 2^-12,
+ * zero included (a joint turning about one or two axes), the results are x
+ * and 1 (pc_sinf's and pc_cosf's first branch): no call. */
+static inline void HSD_MtxSinCos(f32 x, f32* sinp, f32* cosp)
+{
+    u32 ix = *(u32*) &x & 0x7FFFFFFF;
+
+    if (ix < 0x39800000) {
+        *sinp = x;
+        *cosp = 1.0F;
+    } else {
+        pc_sincosf(x, sinp, cosp);
+    }
+}
+#endif
+
 void HSD_MtxSRT(Mtx m, Vec3* vec1, Vec3* vec2, Vec3* vec3, Vec3* vec4)
 {
     f32 vec1x_2;
@@ -370,12 +387,23 @@ void HSD_MtxSRT(Mtx m, Vec3* vec1, Vec3* vec2, Vec3* vec3, Vec3* vec4)
     f32 vec1y;
     f32 vec1z;
 
+#ifdef TARGET_XBOX
+    /* PORT: sinf and cosf of each angle in one call: same bits
+     * (pc_sincosf.c), one classification and argument conversion instead of
+     * two, and one call, none for small angles. */
+    f32 sinX, cosX, sinY, cosY, sinZ, cosZ;
+
+    HSD_MtxSinCos(vec2->x, &sinX, &cosX);
+    HSD_MtxSinCos(vec2->y, &sinY, &cosY);
+    HSD_MtxSinCos(vec2->z, &sinZ, &cosZ);
+#else
     f32 sinX = sinf(vec2->x);
     f32 cosX = cosf(vec2->x);
     f32 sinY = sinf(vec2->y);
     f32 cosY = cosf(vec2->y);
     f32 sinZ = sinf(vec2->z);
     f32 cosZ = cosf(vec2->z);
+#endif
 
     vec1x_2 = vec1x_1 = vec1x = vec1->x;
     vec1y_2 = vec1y_1 = vec1y = vec1->y;

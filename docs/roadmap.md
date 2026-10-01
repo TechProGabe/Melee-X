@@ -134,9 +134,19 @@ In order, measured against the console's `[PERF]`/`[PROF]` lines
 2. **Simulation CPU**: stage collision (`mpLib_*Wall`, `mpCheck*`; ~15% of
    the CPU work in xemu), musl `sinf`/`cosf` (double math on x87), HSD
    animation (`fobj`, `jobj`). Only bit-identical rewrites (the simulation
-   must round like other builds), as `C_MTXConcat` was.
+   must round like other builds), as `C_MTXConcat` was. First pass done
+   (after v26, unmeasured on the console; `docs/decisions.md`, "HSD
+   animation and matrices"): the spline's divide and call, a shared
+   `sinf`/`cosf` per angle in `HSD_MtxSRT`, no calls for objects with
+   nothing playing. Estimated at a few tenths of a ms per frame; compare
+   the `[PROF]` share of `fobj`, `HSD_MtxSRT`, `pc_sinf`/`pc_cosf` and
+   `HSD_AObjInterpretAnim` with v25. What is left is the arithmetic itself:
+   the next step would be memoizing `sinf`/`cosf` per joint angle (pure
+   functions, so exact), if a console count shows angles repeat between
+   ticks.
 3. **Render-pass CPU**: `PObjSetupMtx` and envelope skinning matrices,
-   GX setter traffic per material.
+   GX setter traffic per material. First pass done (after v26): the envelope
+   blend's concat and scaled add fused into one SSE step.
 4. **CPU/GPU overlap** at present: the frame waits for the GPU to go idle,
    so the GPU sits idle during the next frame's simulation. Worth ~20% in
    xemu; on hardware the GPU wait was under 1 ms, so only once the CPU side
