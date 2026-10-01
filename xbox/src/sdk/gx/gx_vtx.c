@@ -1514,7 +1514,7 @@ void gx_vtx_frame_end(void) {
 /* For HSD_DObjDisp (PORT): 1 when a cached list's vertices, moved by mtx
  * (model to view) and the current projection, lie wholly outside the view
  * volume's sides or behind the camera. 0 when unknown: not cached yet,
- * dynamic, per-vertex matrices. */
+ * dynamic, per-vertex matrices, contents changed. */
 int gx_dl_culled(const void* list, u32 nbytes, const float mtx[3][4]) {
     const DlEntry* e = NULL;
     int i, c, k;
@@ -1526,6 +1526,16 @@ int gx_dl_culled(const void* list, u32 nbytes, const float mtx[3][4]) {
                 break;
             }
     if (!e || !e->bounds || e->dyn || e->is_volatile || !e->mem) return 0;
+    /* a culled list is never called, so its content check runs here: memory
+     * reused for another model must not stay hidden behind the old box (a
+     * changed list is drawn, and dlc_call rebuilds it) */
+    {
+        uint32_t frame = xgx_present_count();
+        if (frame - e->checked > 16) {
+            if (e->hash != content_hash(e)) return 0;
+            ((DlEntry*)e)->checked = frame;
+        }
+    }
     for (c = 0; c < 8; c++) {
         float p[3], v[3], x, y, w;
         uint32_t out = 0;

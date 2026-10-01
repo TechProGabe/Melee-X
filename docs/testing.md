@@ -291,6 +291,7 @@ report.
 | `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU instead of drawn by the GPU |
 | `-DXGX_DEPTH_CULL=1` | cull pixels whose depth falls outside the clip range instead of clamping it (the pre-v15 behaviour) |
 | `-DXGX_DEBUG_EFBLOG` | log the first 200 EFB copies (source rect, size, format) as `[EFB]` lines |
+| `-DXSDK_FPS_DEFAULT=0` | the on-screen frame-rate counter off unless `settings.ini` says `fps = 1` (default 1 while hardware tests need it; an older settings.ini gains the line on boot) |
 | `-DXGX_DEBUG_TRACE` | log every draw (TEV stages, textures and their colours, konst, channels, lights, texgen matrices, screen box, blend, fog) of the frame an autopad `SHOT` or a console BACK screenshot captures, as `[DRAW]` lines (~400 KB each, in `trace.log`, not `boot.log`); on a BACK frame each EFB copy's source is also written as a `shotNN.bmp` (up to 8, announced by a `[DRAW] efb copy` line), and with `-DXHW_AUTOPAD=1` also streamed as `[FBDUMP]` (an autopad `BACK` in xemu, whose HDD is out of reach) |
 | `-DXGX_CHECK_VERTS` | check every position a display-list build decodes (model space): one at 2^20 or more, infinite or NaN is logged as `[WARN] dlist` (first 32) |
 | `-DXGX_PB_KICK=<words>` | pushbuffer words per kick (default 8192; v25 and before 4096) |

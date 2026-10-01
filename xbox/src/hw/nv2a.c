@@ -922,6 +922,56 @@ static volatile int s_shot_req;
 static int s_shot_once;
 void xgx_shot_next(void) { s_shot_req = 1; }
 
+/* On-screen frame rate (settings.ini [video] fps): frames presented over
+ * the last half second, drawn by the CPU into the back buffer once the GPU
+ * is idle, after the screenshot dumps (they stay clean). 5x7 digits at 2x
+ * on a black box, inside the TV-safe area. */
+static int s_fps_on;
+static uint32_t s_fps_val, s_fps_frames;
+static uint64_t s_fps_t0;
+void xgx_set_fps_overlay(int on) { s_fps_on = on; }
+
+static void fps_overlay(void) {
+    static const uint8_t font[10][7] = {
+        { 14, 17, 19, 21, 25, 17, 14 }, { 4, 12, 4, 4, 4, 4, 14 },   { 14, 17, 1, 2, 4, 8, 31 },
+        { 31, 2, 4, 2, 1, 17, 14 },     { 2, 6, 10, 18, 31, 2, 2 },  { 31, 16, 30, 1, 1, 17, 14 },
+        { 6, 8, 16, 30, 17, 17, 14 },   { 31, 1, 2, 4, 8, 8, 8 },    { 14, 17, 17, 14, 17, 17, 14 },
+        { 14, 17, 17, 15, 1, 2, 12 },
+    };
+    uint64_t now = xhw_time_ns();
+    uint8_t* fb = (uint8_t*)pb_back_buffer();
+    uint32_t pitch = pb_back_buffer_pitch(), v, digits[3], nd = 0, i, x, y;
+    int x0 = s_fbw / 16, y0 = s_fbh / 16, w, h, bpp = s_bpp / 8;
+    s_fps_frames++;
+    if (!s_fps_t0 || now - s_fps_t0 > 2000000000ull) {
+        s_fps_t0 = now;
+        s_fps_frames = 0;
+    } else if (now - s_fps_t0 >= 500000000ull) {
+        s_fps_val = (uint32_t)((s_fps_frames * 1000000000ull + (now - s_fps_t0) / 2) / (now - s_fps_t0));
+        s_fps_t0 = now;
+        s_fps_frames = 0;
+    }
+    v = s_fps_val > 999 ? 999 : s_fps_val;
+    do {
+        digits[nd++] = v % 10;
+        v /= 10;
+    } while (v && nd < 3);
+    w = (int)nd * 12 + 4;
+    h = 18;
+    for (y = 0; y < (uint32_t)h; y++)
+        for (x = 0; x < (uint32_t)w; x++) {
+            int on = 0;
+            int gx = (int)x - 2, gy = (int)y - 2, d = gx / 12, cx = (gx % 12) / 2, cy = gy / 2;
+            if (gx >= 0 && gy >= 0 && d < (int)nd && cx < 5 && cy < 7)
+                on = font[digits[nd - 1 - (uint32_t)d]][cy] >> (4 - cx) & 1;
+            {
+                uint8_t* px = fb + (uint32_t)(y0 + (int)y) * pitch + (uint32_t)(x0 + (int)x) * (uint32_t)bpp;
+                if (bpp == 4) *(volatile uint32_t*)px = on ? 0xFFFFFF00u : 0xFF000000u;
+                else *(volatile uint16_t*)px = on ? 0xFFE0u : 0;
+            }
+        }
+}
+
 void xgx_present(int black) {
     frame_open();
     if (black) clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 0, 0);
@@ -935,6 +985,7 @@ void xgx_present(int black) {
         s_shot_once = 0;
         xhw_fbdump_file(pb_back_buffer(), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());
     }
+    if (s_fps_on && !black) fps_overlay();
     if (s_shot_req) {
         s_shot_req = 0;
         s_shot_once = 1;

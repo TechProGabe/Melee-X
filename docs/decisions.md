@@ -314,6 +314,9 @@ marked `PORT:`:
   skipped before its material setup. The GameCube let the GPU clip them; on
   the Xbox each draw's CPU cost (HSD setup plus submission) sets the frame
   rate. Mute City in xemu: 1391 -> ~525 draws a frame, 5.6 -> 15.5 fps.
+  A culled list is never called, so `gx_dl_culled` runs its content hash
+  itself once the last check is 16 frames old and stops culling it if the
+  contents changed (memory reused for another model).
 - `src/sysdolphin/baselib/texp.c` (`HSD_TExpSetReg`): `reg[8]` is static
   (starting white). An RGB-only or alpha-only constant keeps the other half
   of the register from `reg[]`, which HSD never initializes: on the

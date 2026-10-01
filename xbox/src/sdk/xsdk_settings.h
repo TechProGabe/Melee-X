@@ -20,6 +20,7 @@ typedef struct {
 typedef struct {
     int video_720p;          /* 1: use 720p when the dashboard allows it */
     int widescreen;          /* 1: 16:9 at 480 when the dashboard says widescreen */
+    int fps;                 /* 1: frame-rate counter on screen */
     float rumble;            /* 0..1 */
     xsdk_port_settings port[4];
 } xsdk_settings;

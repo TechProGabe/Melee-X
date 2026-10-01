@@ -172,6 +172,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
 void xgx_clear(const int32_t rect[4], const uint8_t rgba[4], uint32_t z24, int color, int alpha, int depth);
 /* End the frame and flip; black: output black (VISetBlack). */
 void xgx_present(int black);
+void xgx_set_fps_overlay(int on);   /* frame-rate counter in the corner (settings.ini [video] fps) */
 /* Frames presented so far (the watchdog's heartbeat line). */
 unsigned xgx_present_count(void);
 /* One [FBDUMP] screenshot of the next presented frame. */

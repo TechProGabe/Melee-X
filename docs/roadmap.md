@@ -74,8 +74,10 @@ Falcon Punch (`HSD_TExpSetReg` konst halves), black capsules (same), crate
 fronts (bump texgen + emboss pair), CMPR transparent texels (DXT3);
 off-screen rigid DObjs culled (Mute City 5.6 -> 15.5 fps in xemu). To do
 before the v31 hardware build: an on-screen FPS counter, toggled in
-`settings.ini` (default on for local hardware test builds; an options-menu
-toggle later); Fountain of Dreams indirect texturing if it fits.
+`settings.ini` (done: `[video] fps`, default on; an options-menu toggle
+later). Fountain of Dreams: a 4-CPU frame in xemu has no indirect stages at
+all (`nind` 0 in every draw), so the "blocky reflection" needs a console
+BACK shot of it before anything is changed.
 
 v29 on the console (2026-10-01, `~/xemu/hw/logs29`, map `melee_x.v29.map`):
 a 5-minute Pokémon Stadium run was stable (no GPU stall). Jungle Japes hung

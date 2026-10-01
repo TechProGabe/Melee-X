@@ -3,6 +3,7 @@
  *   [video]
  *   720p = 1            ; use 720p (16:9) when the dashboard allows it
  *   widescreen = 1      ; 16:9 at 480 when the dashboard is set to widescreen
+ *   fps = 1             ; frame-rate counter in the top-left corner
  *   [input]
  *   rumble = 100        ; percent
  *   [port1] .. [port4]
@@ -20,8 +21,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "xgx.h"
 #include "xhw.h"
 #include "xsdk_settings.h"
+
+/* the frame-rate counter's default when settings.ini has no fps line: on
+ * while the hardware test builds need it */
+#ifndef XSDK_FPS_DEFAULT
+#define XSDK_FPS_DEFAULT 1
+#endif
 
 xsdk_settings g_xsdk_settings;
 
@@ -65,6 +73,7 @@ static void defaults(void) {
     memset(&g_xsdk_settings, 0, sizeof g_xsdk_settings);
     g_xsdk_settings.video_720p = 1;
     g_xsdk_settings.widescreen = 1;
+    g_xsdk_settings.fps = XSDK_FPS_DEFAULT;
     g_xsdk_settings.rumble = 1.0f;
     for (p = 0; p < 4; p++) {
         xsdk_port_settings* ps = &g_xsdk_settings.port[p];
@@ -93,11 +102,13 @@ static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v;
 void xsdk_settings_load(void) {
     char p[260], line[256], section[32] = "";
     FILE* f;
+    int saw_fps = 0;
     defaults();
     path(p, sizeof p);
     f = fopen(p, "r");
     if (!f) {
         xsdk_settings_save();
+        xgx_set_fps_overlay(g_xsdk_settings.fps);
         return;
     }
     while (fgets(line, sizeof line, f)) {
@@ -119,6 +130,7 @@ void xsdk_settings_load(void) {
         if (_stricmp(section, "video") == 0) {
             if (_stricmp(key, "720p") == 0) g_xsdk_settings.video_720p = atoi(val) != 0;
             else if (_stricmp(key, "widescreen") == 0) g_xsdk_settings.widescreen = atoi(val) != 0;
+            else if (_stricmp(key, "fps") == 0) g_xsdk_settings.fps = atoi(val) != 0, saw_fps = 1;
         } else if (_stricmp(section, "input") == 0) {
             if (_stricmp(key, "rumble") == 0) g_xsdk_settings.rumble = clampi(atoi(val), 0, 100) / 100.0f;
         } else if (_strnicmp(section, "port", 4) == 0 && section[4] >= '1' && section[4] <= '4') {
@@ -134,6 +146,8 @@ void xsdk_settings_load(void) {
     }
     fclose(f);
     xhw_logf("[SETTINGS] loaded %s", p);
+    if (!saw_fps) xsdk_settings_save();   /* a file from before the fps line: add it */
+    xgx_set_fps_overlay(g_xsdk_settings.fps);
 }
 
 void xsdk_settings_save(void) {
@@ -144,7 +158,8 @@ void xsdk_settings_save(void) {
     f = fopen(p, "w");
     if (!f) return;
     fprintf(f, "; Melee-X settings. Buttons: Xbox = GameCube (A B X Y Z L R START UP DOWN LEFT RIGHT NONE)\n");
-    fprintf(f, "[video]\n720p = %d\nwidescreen = %d\n\n", g_xsdk_settings.video_720p, g_xsdk_settings.widescreen);
+    fprintf(f, "[video]\n720p = %d\nwidescreen = %d\nfps = %d\n\n", g_xsdk_settings.video_720p,
+            g_xsdk_settings.widescreen, g_xsdk_settings.fps);
     fprintf(f, "[input]\nrumble = %d\n\n", (int)(g_xsdk_settings.rumble * 100.0f + 0.5f));
     for (port = 0; port < 4; port++) {
         const xsdk_port_settings* ps = &g_xsdk_settings.port[port];
