@@ -27,6 +27,7 @@ python3 tools/xbox/test_vp_encoder.py
 python3 tools/xbox/test_fog.py                    # GX fog math (nv2a_fog.c) vs GX's fog factor
 python3 tools/xbox/test_card_endian.py            # card files: field tables vs GmSaveData, BE <-> native
 python3 tools/xbox/test_pool.py                   # nv2a.c texture/vertex pool allocator, random alloc/free
+python3 tools/xbox/test_anim_mtx.py               # fobj.c/mtx.c rewrites vs tests/xbox/anim_mtx_ref.c, bit for bit
 python3 tools/lower/test_lower.py
 ```
 

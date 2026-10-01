@@ -276,7 +276,10 @@ void HSD_TObjAnim(HSD_TObj* tobj)
         return;
     }
 
-    HSD_AObjInterpretAnim(tobj->aobj, tobj, TObjUpdateFunc);
+    /* PORT: no call when nothing plays (aobj.h) */
+    if (HSD_AObjIsPlaying(tobj->aobj)) {
+        HSD_AObjInterpretAnim(tobj->aobj, tobj, TObjUpdateFunc);
+    }
 }
 
 void HSD_TObjAnimAll(HSD_TObj* tobj)

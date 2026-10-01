@@ -532,9 +532,14 @@ void HSD_JObjAnim(HSD_JObj* jobj)
 {
     if (jobj != NULL) {
         HSD_JObjCheckDepend(jobj);
-        HSD_AObjInterpretAnim(jobj->aobj, jobj, JObjUpdateFunc);
-        HSD_RObjAnimAll(jobj->robj);
-        if (union_type_dobj(jobj)) {
+        /* PORT: no calls for what has nothing to animate (aobj.h) */
+        if (HSD_AObjIsPlaying(jobj->aobj)) {
+            HSD_AObjInterpretAnim(jobj->aobj, jobj, JObjUpdateFunc);
+        }
+        if (jobj->robj != NULL) {
+            HSD_RObjAnimAll(jobj->robj);
+        }
+        if (union_type_dobj(jobj) && jobj->u.dobj != NULL) {
             HSD_DObjAnimAll(jobj->u.dobj);
         }
     }

@@ -78,6 +78,14 @@ void HSD_AObjStopAnim(HSD_AObj* aobj, void* obj, HSD_ObjUpdateFunc func);
 void HSD_AObjInterpretAnim(HSD_AObj* aobj, void* obj,
                            HSD_ObjUpdateFunc update_func);
 
+/* PORT: what HSD_AObjInterpretAnim returns at once on, for the per-frame
+ * walkers to test before calling into aobj.c: most joints, materials and
+ * textures have no animation playing. */
+static inline int HSD_AObjIsPlaying(HSD_AObj* aobj)
+{
+    return aobj != NULL && !(aobj->flags & AOBJ_NO_ANIM);
+}
+
 HSD_AObj* HSD_AObjLoadDesc(HSD_AObjDesc* aobjdesc);
 void HSD_AObjRemove(HSD_AObj* aobj);
 HSD_AObj* HSD_AObjAlloc(void);

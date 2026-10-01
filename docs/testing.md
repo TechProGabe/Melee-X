@@ -11,6 +11,7 @@ tools/xbox/test_tex_convert.py   # native texture formats vs the GX decoder
 tools/xbox/test_fog.py           # GX fog on the NV2A vs GX's fog factor (libogc registers, Dolphin's formula)
 tools/xbox/test_card_endian.py   # memory-card files: field tables vs the game's structs, big-endian <-> native
 tools/xbox/test_pool.py          # nv2a.c's pool allocator: random allocations and frees, block-list invariants
+tools/xbox/test_anim_mtx.py      # HSD keyframe interpreter, HSD_MtxSRT, envelope blend vs the code before the rewrites [--full]
 ```
 
 CI (`.github/workflows/build.yml`, started by hand only: builds and tests
@@ -34,6 +35,23 @@ and name-tag bank built by hand from `offsetof` read back with the right
 values and are written back byte for byte, and that a little-endian file
 (an older Melee-X save) is recognised and left alone. A table that doesn't
 add up to `sizeof` its struct also stops the Xbox build.
+
+`test_anim_mtx.py` guards the bit-identical rewrites of HSD's animation and
+matrix code (`docs/decisions.md`, "Edits to imported code"). It builds the
+current `fobj.c` and `mtx.c` on the host as the Xbox builds them
+(`TARGET_XBOX`, SSE, `-ffp-contract=off`) next to `tests/xbox/anim_mtx_ref.c`,
+a verbatim copy of the code before the rewrites, and compares:
+`pc_sincosf` with `pc_sinf`/`pc_cosf` (16M floats spread over all 2^32 and
+every branch boundary; `--full` takes all 2^32, a few minutes), `parseFloat`
+for every frac byte and 16-bit pattern, the spline with `1/fterm` in float
+for every u16, 20000 random keyframe streams (every opcode and frac type,
+pack and wait encodings, truncated streams and garbage) run frame by frame
+at random rates with stops and rewinds (every update callback and the FObj
+state after each frame), and `HSD_MtxSRT` and the fused envelope blend on
+random inputs with denormals, negative zero, infinities and NaNs. Floats
+must have the same bits; a NaN only has to stay a NaN (which NaN operand's
+payload x86 keeps depends on the operand order the compiler picks). A new
+rewrite in this code needs its reference added there first.
 
 ## Running it
 

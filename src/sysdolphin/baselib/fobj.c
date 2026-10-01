@@ -111,6 +111,18 @@ void HSD_FObjStopAnimAll(HSD_FObj* fobj, void* obj,
     }
 }
 
+/* PORT: 1 / (s32) (1 << n) for n = 0..31, exactly (n = 31 is INT_MIN). A
+ * fixed-point key was numer / denom; numer is an integer below 2^16, so
+ * numer * 2^-n is exact and equals the quotient bit for bit, without the
+ * int -> float conversion and the divide. */
+static const f32 parseFloat_scale[32] = {
+    0x1p-0f,  0x1p-1f,  0x1p-2f,  0x1p-3f,  0x1p-4f,  0x1p-5f,  0x1p-6f,
+    0x1p-7f,  0x1p-8f,  0x1p-9f,  0x1p-10f, 0x1p-11f, 0x1p-12f, 0x1p-13f,
+    0x1p-14f, 0x1p-15f, 0x1p-16f, 0x1p-17f, 0x1p-18f, 0x1p-19f, 0x1p-20f,
+    0x1p-21f, 0x1p-22f, 0x1p-23f, 0x1p-24f, 0x1p-25f, 0x1p-26f, 0x1p-27f,
+    0x1p-28f, 0x1p-29f, 0x1p-30f, -0x1p-31f,
+};
+
 static f32 parseFloat(u8** pos, u8 frac)
 {
     union {
@@ -118,17 +130,22 @@ static f32 parseFloat(u8** pos, u8 frac)
         u32 d;
     } u;
     f32 numer;
-    s32 denom;
 
     if (frac == HSD_A_FRAC_FLOAT) {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        /* PORT: the four little-endian bytes in one load (byte by byte, the
+         * pointer was stored back after each one) */
+        memcpy(&u.d, *pos, sizeof(u.d));
+        *pos += 4;
+#else
         u.d = (s32) ((*pos)++)[0];
         u.d |= ((*pos)++)[0] << 8;
         u.d |= ((*pos)++)[0] << 16;
         u.d |= (u32) ((*pos)++)[0] << 24;
+#endif
         return u.f;
     }
 
-    denom = (1 << (frac & 0x1F));
     switch (frac & 0xE0) {
     case HSD_A_FRAC_S8:
         numer = (s8) (*pos)[0];
@@ -149,7 +166,7 @@ static f32 parseFloat(u8** pos, u8 frac)
     default:
         return 0.0f;
     }
-    return numer / denom;
+    return numer * parseFloat_scale[frac & 0x1F];
 }
 
 static u8 parseOpCode(u8** curr_parse)
@@ -333,6 +350,31 @@ static inline u32 FObjLoadData(HSD_FObj* fobj)
     }
 }
 
+/* PORT: splGetHelmite (spline.c), operation for operation, so the game's
+ * flags (-ffp-contract=off, no fast math) keep every rounding the same; the
+ * out-of-line call passed six floats on the stack and returned in x87. */
+static inline f32 FObjHermite(f32 fterm, f32 time, f32 p0, f32 p1, f32 d0,
+                              f32 d1)
+{
+    f32 _3t2_T2;
+    f32 _2t3_T3;
+    f32 t3_T2;
+    f32 t2_T;
+    f32 t2;
+    f32 _1_T2;
+
+    _1_T2 = time * time;
+    t2 = fterm * fterm;
+    t2_T = _1_T2 * fterm;
+    t3_T2 = t2 * (_1_T2 * time);
+    _2t3_T3 = 2.0f * t3_T2 * fterm;
+    _3t2_T2 = 3.0f * _1_T2 * t2;
+
+    return (d1 * (t3_T2 - t2_T)) + ((d0 * (time + ((t3_T2 - t2_T) - t2_T))) +
+                                    ((p0 * (1.0f + (_2t3_T3 - _3t2_T2))) +
+                                     (p1 * (-_2t3_T3 + _3t2_T2))));
+}
+
 void FObjUpdateAnim(HSD_FObj* fobj, void* obj, HSD_ObjUpdateFunc obj_update)
 {
     f32 phi_f0;
@@ -374,9 +416,12 @@ void FObjUpdateAnim(HSD_FObj* fobj, void* obj, HSD_ObjUpdateFunc obj_update)
     case HSD_A_OP_SPL:
     case HSD_A_OP_SLP:
         if (fobj->fterm != 0) {
+            /* PORT: 1 / fterm in float (the double quotient rounded to
+             * float is the same float for every u16, checked for all of
+             * them), and splGetHelmite inlined */
             fobjdata.fv =
-                splGetHelmite(1.0 / fobj->fterm, fobj->time, fobj->p0,
-                              fobj->p1, fobj->d0, fobj->d1);
+                FObjHermite(1.0F / (f32) fobj->fterm, fobj->time, fobj->p0,
+                            fobj->p1, fobj->d0, fobj->d1);
         } else {
             fobjdata.fv = fobj->p1;
         }

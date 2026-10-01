@@ -155,7 +155,10 @@ static void PObjUpdateFunc(void* obj, int type, HSD_ObjData* val)
 
 void HSD_PObjAnim(HSD_PObj* pobj)
 {
-    if (pobj != NULL && pobj_type(pobj) == POBJ_SHAPEANIM) {
+    /* PORT: no call when nothing plays (aobj.h) */
+    if (pobj != NULL && pobj_type(pobj) == POBJ_SHAPEANIM &&
+        HSD_AObjIsPlaying(pobj->u.shape_set->aobj))
+    {
         HSD_AObjInterpretAnim(pobj->u.shape_set->aobj, pobj, PObjUpdateFunc);
     }
 }
@@ -1181,8 +1184,9 @@ static void SetupEnvelopeModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
                 HSD_ASSERT(1895, jp->mtx);
                 HSD_ASSERT(1896, jp->envelopemtx);
 
-                MTXConcat(jp->mtx, jp->envelopemtx, tmp);
-                HSD_MtxScaledAdd(tmp, mtx, mtx, envelope->weight);
+                /* PORT: one fused step, same bits (mtx.h) */
+                HSD_MtxConcatScaledAdd(jp->mtx, jp->envelopemtx, mtx,
+                                       envelope->weight);
                 perf++;
                 envelope = envelope->next;
             }

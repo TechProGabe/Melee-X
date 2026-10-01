@@ -35,6 +35,43 @@ void HSD_VecInitAllocData(void);
 HSD_ObjAllocData* HSD_MtxGetAllocData(void);
 void HSD_MtxInitAllocData(void);
 
+/* PORT: acc += w * (a . b), the envelope-blend step of PObjSetupMtx and
+ * ftParts_PObjSetupMtx, which called PSMTXConcat(a, b, tmp) and then
+ * HSD_MtxScaledAdd(tmp, acc, acc, w). In SSE on the Xbox, one row of four at
+ * a time: each lane does what C_MTXConcat's SSE lanes do (extern/aurora's
+ * mtx.c), then acc + (w * that) as HSD_MtxScaledAdd does, so the bits are
+ * the same; it saves the two calls and the round trip through tmp.
+ * tests/xbox/test_anim_mtx.c compares it with the two calls. */
+#if defined(TARGET_XBOX) && defined(__SSE__)
+typedef f32 HSD_MtxRow __attribute__((vector_size(16), aligned(4)));
+
+static inline void HSD_MtxConcatScaledAdd(Mtx a, Mtx b, Mtx acc, f32 w)
+{
+    const HSD_MtxRow b0 = *(const HSD_MtxRow*) b[0];
+    const HSD_MtxRow b1 = *(const HSD_MtxRow*) b[1];
+    const HSD_MtxRow b2 = *(const HSD_MtxRow*) b[2];
+    const HSD_MtxRow wv = { w, w, w, w };
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        const HSD_MtxRow x = { a[i][0], a[i][0], a[i][0], a[i][0] };
+        const HSD_MtxRow y = { a[i][1], a[i][1], a[i][1], a[i][1] };
+        const HSD_MtxRow z = { a[i][2], a[i][2], a[i][2], a[i][2] };
+        const HSD_MtxRow t = { 0.0f, 0.0f, 0.0f, a[i][3] };
+        const HSD_MtxRow r = (z * b2 + (x * b0 + y * b1)) + t;
+        *(HSD_MtxRow*) acc[i] = *(HSD_MtxRow*) acc[i] + wv * r;
+    }
+}
+#else
+static inline void HSD_MtxConcatScaledAdd(Mtx a, Mtx b, Mtx acc, f32 w)
+{
+    Mtx tmp;
+
+    PSMTXConcat(a, b, tmp);
+    HSD_MtxScaledAdd(tmp, acc, acc, w);
+}
+#endif
+
 static inline f32 fabsf_bitwise(f32 v)
 {
     *(u32*) &v &= ~0x80000000;

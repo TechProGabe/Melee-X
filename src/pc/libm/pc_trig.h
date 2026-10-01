@@ -13,6 +13,9 @@ float pc_sinf(float x);
 float pc_cosf(float x);
 float pc_tanf(float x);
 float pc_atanf(float x);
+/* PORT: Xbox. sinf and cosf of one argument, bit-identical to the two calls
+ * (pc_sincosf.c). Called by name only, never through the macros below. */
+void pc_sincosf(float x, float* sinp, float* cosp);
 
 #define sinf pc_sinf
 #define cosf pc_cosf

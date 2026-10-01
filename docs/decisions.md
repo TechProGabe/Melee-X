@@ -213,6 +213,31 @@ marked `PORT:`:
   time in SSE under `TARGET_XBOX`, same operations in the same order per
   lane, so bit-identical (checked against the C on 5M random and special
   inputs); it was the hottest math routine in a match profile.
+- HSD animation and matrices, rewritten for the Pentium III with the same
+  bits (checked by `tools/xbox/test_anim_mtx.py` against a copy of the code
+  before, `tests/xbox/anim_mtx_ref.c`; a NaN only has to stay a NaN):
+  - `src/sysdolphin/baselib/fobj.c`: the spline's `1.0 / fterm` is a float
+    division (for every u16 the double quotient rounds to the same float,
+    at x87 double and extended precision; it was `fild`+`fidiv`), and
+    `splGetHelmite` is inlined operation for operation (`FObjHermite`);
+    `parseFloat` reads a float key in one load and scales a fixed-point key
+    by an exact power of two instead of dividing.
+  - `src/pc/libm/pc_sincosf.c` (new) and `pc_trig.h`: sinf and cosf of one
+    argument, branch for branch `pc_sinf`'s and `pc_cosf`'s, with the same
+    double arguments to the same out-of-line kernels (so the x87 precision
+    doesn't matter); `src/sysdolphin/baselib/mtx.c` (`HSD_MtxSRT`) uses it
+    under `TARGET_XBOX`. LLVM already turns its `(float)(1.0 / x)` into
+    `divss`, which is exact for every float.
+  - `src/sysdolphin/baselib/mtx.h` (`HSD_MtxConcatScaledAdd`): the envelope
+    blend's `MTXConcat` + `HSD_MtxScaledAdd` as one SSE step per row, the
+    lanes of `C_MTXConcat`'s SSE path then `acc + w * row`; used by
+    `pobj.c` (`SetupEnvelopeModelMtx`) and `src/melee/ft/ftparts.c`
+    (`ftPartsSetupEnvelopeMtx`).
+  - `aobj.h` (`HSD_AObjIsPlaying`), `jobj.c` (`HSD_JObjAnim`), `mobj.c`,
+    `tobj.c`, `robj.c`, `pobj.c` (their `*Anim`): no call into
+    `HSD_AObjInterpretAnim`, `HSD_RObjAnimAll`, `HSD_DObjAnimAll` or
+    `HSD_TObjAnimAll` for an object they would return from at once (no
+    AObj, or one that has stopped; no list).
 - `src/melee/mp/mpisland.c` (`mpIsland_8005A728`, `mpIsland_8005B004`): the
   1.5 KB `visited` arrays, which the code `memzero`s itself, are exempt from
   `-ftrivial-auto-var-init=zero` (it zeroed them a second time per call).
