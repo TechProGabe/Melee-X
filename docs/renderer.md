@@ -440,6 +440,12 @@ Dolphin:
   palette is always loaded again (xemu reads palettes at each draw).
   `docs/architecture.md` has the table and `tools/xbox/test_tex_convert.py`
   the checks.
+- Off-screen culling: the display-list cache keeps each list's model-space
+  box (lists without per-vertex matrices); `HSD_DObjDisp` asks
+  `gx_dl_culled` with the DObj's model-view matrix and the current
+  projection and skips DObjs of rigid PObjs that are wholly outside (a
+  box corner test against the four side planes and the camera plane, so
+  nothing visible is dropped). A list is known after its first draw.
 - Bump texgens (`GX_TG_BUMPn`, HSD's emboss) are drawn as their source
   coordinate (no binormal/tangent offset), and the emboss stage pair
   "prev + h(tc)*ras, prev - h(bump)*ras" is dropped since it cancels; the

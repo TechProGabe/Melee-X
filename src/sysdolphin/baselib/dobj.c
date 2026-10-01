@@ -293,10 +293,39 @@ void forceStringAllocation(
     }
 }
 
+#ifdef TARGET_PC
+int gx_dl_culled(const void* list, u32 nbytes, const float mtx[3][4]);
+
+/* PORT: a DObj whose PObjs are all rigid and whose cached display lists
+ * all lie outside the view is skipped, material setup included (the
+ * GameCube drew it and the GPU clipped it; on the Xbox each draw's CPU cost
+ * is what limits the frame rate). */
+static bool DObjCulled(HSD_DObj* dobj, Mtx pmtx)
+{
+    HSD_PObj* p;
+    if (dobj->pobj == NULL || pmtx == NULL) {
+        return false;
+    }
+    for (p = dobj->pobj; p != NULL; p = p->next) {
+        if (pobj_type(p) != POBJ_SKIN || p->u.jobj != NULL || p->display == NULL ||
+            !gx_dl_culled(p->display, p->n_display << 5, (const float(*)[4]) pmtx))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+#endif
+
 void HSD_DObjDisp(HSD_DObj* dobj, Mtx vmtx, Mtx pmtx, u32 rendermode)
 {
     HSD_PObj* p;
 
+#ifdef TARGET_PC
+    if (DObjCulled(dobj, pmtx)) {
+        return;
+    }
+#endif
     HSD_MObjSetCurrent(dobj->mobj);
     if ((rendermode & 0x4000000) == 0) {
         HSD_MOBJ_METHOD(dobj->mobj)->setup(dobj->mobj, rendermode);

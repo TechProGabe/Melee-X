@@ -308,6 +308,12 @@ marked `PORT:`:
   player; `[WARN] hit by item kind` for items). On Corneria every fighter
   was at 90% by "Go!" and was launched to a KO on its first landing on the
   Great Fox, on the console only.
+- `src/sysdolphin/baselib/dobj.c` (`HSD_DObjDisp`): a DObj whose PObjs
+  are all rigid (`POBJ_SKIN` without a joint list) and whose cached display
+  lists' boxes (`gx_dl_culled`, gx_vtx.c) lie wholly outside the view is
+  skipped before its material setup. The GameCube let the GPU clip them; on
+  the Xbox each draw's CPU cost (HSD setup plus submission) sets the frame
+  rate. Mute City in xemu: 1391 -> ~525 draws a frame, 5.6 -> 15.5 fps.
 - `src/sysdolphin/baselib/texp.c` (`HSD_TExpSetReg`): `reg[8]` is static
   (starting white). An RGB-only or alpha-only constant keeps the other half
   of the register from `reg[]`, which HSD never initializes: on the

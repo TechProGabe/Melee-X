@@ -756,6 +756,8 @@ typedef struct {
     DynList* dyn;
     uint16_t nbatch;
     uint8_t fmts, nrange, rebuilds, is_volatile;
+    uint8_t bounds;                /* bmin/bmax hold the positions' box (no per-vertex matrix) */
+    float bmin[3], bmax[3];
     DlRange range[DLC_MAX_RANGE];
     int next;                      /* bucket chain, -1: end */
 } DlEntry;
@@ -1177,6 +1179,25 @@ static int dlc_build(DlEntry* e, uint32_t frame) {
         }
     }
     merge_copy(batch, nb, tmp, merged, first, ng, e->mem);
+    e->bounds = 1;   /* the model-space box, for gx_dl_culled */
+    e->bmin[0] = e->bmin[1] = e->bmin[2] = 1e30f;
+    e->bmax[0] = e->bmax[1] = e->bmax[2] = -1e30f;
+    for (i = 0; i < nb && e->bounds; i++) {
+        const XgxLayout* l = &batch[i].layout;
+        uint32_t v, k;
+        if (l->off_pos < 0 || l->off_mtx >= 0) {
+            e->bounds = 0;
+            break;
+        }
+        for (v = 0; v < batch[i].count; v++) {
+            const float* q = (const float*)(tmp + batch[i].offset + v * l->stride + l->off_pos);
+            for (k = 0; k < 3; k++) {
+                if (!(q[k] == q[k])) e->bounds = 0;   /* NaN */
+                if (q[k] < e->bmin[k]) e->bmin[k] = q[k];
+                if (q[k] > e->bmax[k]) e->bmax[k] = q[k];
+            }
+        }
+    }
     free(tmp);
     memcpy(e->batch, merged, sizeof(DlBatch) * (size_t)ng);
     s_st_dl_joined += (uint32_t)(nb - ng);
@@ -1488,6 +1509,42 @@ void gx_vtx_frame_end(void) {
             memset(s_flush_who, 0, sizeof s_flush_who);
         }
     }
+}
+
+/* For HSD_DObjDisp (PORT): 1 when a cached list's vertices, moved by mtx
+ * (model to view) and the current projection, lie wholly outside the view
+ * volume's sides or behind the camera. 0 when unknown: not cached yet,
+ * dynamic, per-vertex matrices. */
+int gx_dl_culled(const void* list, u32 nbytes, const float mtx[3][4]) {
+    const DlEntry* e = NULL;
+    int i, c, k;
+    uint32_t all = 0x3F;
+    if (s_dlc_ready)
+        for (i = s_dlc_bucket[dl_bucket((const uint8_t*)list)]; i >= 0; i = s_dlc[i].next)
+            if (s_dlc[i].dl == (const uint8_t*)list && s_dlc[i].nbytes == nbytes) {
+                e = &s_dlc[i];
+                break;
+            }
+    if (!e || !e->bounds || e->dyn || e->is_volatile || !e->mem) return 0;
+    for (c = 0; c < 8; c++) {
+        float p[3], v[3], x, y, w;
+        uint32_t out = 0;
+        p[0] = c & 1 ? e->bmax[0] : e->bmin[0];
+        p[1] = c & 2 ? e->bmax[1] : e->bmin[1];
+        p[2] = c & 4 ? e->bmax[2] : e->bmin[2];
+        for (k = 0; k < 3; k++) v[k] = mtx[k][0] * p[0] + mtx[k][1] * p[1] + mtx[k][2] * p[2] + mtx[k][3];
+        x = g_xgx.proj[0][0] * v[0] + g_xgx.proj[0][1] * v[1] + g_xgx.proj[0][2] * v[2] + g_xgx.proj[0][3];
+        y = g_xgx.proj[1][0] * v[0] + g_xgx.proj[1][1] * v[1] + g_xgx.proj[1][2] * v[2] + g_xgx.proj[1][3];
+        w = g_xgx.proj[3][0] * v[0] + g_xgx.proj[3][1] * v[1] + g_xgx.proj[3][2] * v[2] + g_xgx.proj[3][3];
+        if (x < -w) out |= 1;
+        if (x > w) out |= 2;
+        if (y < -w) out |= 4;
+        if (y > w) out |= 8;
+        if (w <= 0) out |= 16;
+        all &= out;
+        if (!all) return 0;
+    }
+    return 1;
 }
 
 void GXCallDisplayList(const void* list, u32 nbytes) {
