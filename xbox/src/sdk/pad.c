@@ -97,7 +97,13 @@ u32 PADRead(PADStatus* status) {
 }
 
 void PADControlMotor(u32 chan, u32 cmd) {
+    static unsigned logged;
     if (chan >= PORTS) return;
+    if (cmd == PAD_MOTOR_RUMBLE && !(logged & (1u << chan))) {   /* does the game ask at all? */
+        logged |= 1u << chan;
+        xhw_logf("[PAD] port %u: rumble on (strength %d%%)", (unsigned)chan + 1,
+                 (int)(g_xsdk_settings.rumble * 100.0f + 0.5f));
+    }
     if (s_motor[chan] == PAD_MOTOR_RUMBLE && cmd != PAD_MOTOR_RUMBLE) xhw_pad_rumble((int)chan, 0, 0);
     s_motor[chan] = (int)cmd;
 }

@@ -114,7 +114,13 @@ int xhw_pad_get(int port, xhw_pad* out) {
 void xhw_pad_rumble(int port, uint16_t low, uint16_t high) {
     if (port < 0 || port >= PORTS || !s_pad[port]) return;
     /* renewed every PADRead while the game holds the motor on */
-    SDL_GameControllerRumble(s_pad[port], low, high, 100);
+    if (SDL_GameControllerRumble(s_pad[port], low, high, 100) != 0) {
+        static unsigned logged;
+        if (!(logged & (1u << port))) {
+            logged |= 1u << port;
+            xhw_logf("[PAD] port %d: rumble failed (%s)", port + 1, SDL_GetError());
+        }
+    }
 }
 
 void xhw_pad_shutdown(void) {

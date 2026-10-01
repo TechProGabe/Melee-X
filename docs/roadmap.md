@@ -98,9 +98,15 @@ for the first five items of v25's list; check each on the console:
    `GXLoadTexMtxImm` no longer dirties unchanged matrices (texmtx dirty on
    ~9% of draws, was ~77%), kicks every 32 KB. Compare `[PERF]` and
    `[NV2A] ... idle waits` on Stadium and Fountain with v25.
-7. **Texture accuracy**: indirect texturing (Fountain's water), TEV swap
+7. **Rumble**: the user doesn't remember feeling any in game. Check in a
+   match with rumble on in Melee's Options (it is per player and saved on
+   the card; `settings.ini` `rumble = 100`): `[PAD] port N: rumble on`
+   means the game asked for it, `[PAD] port N: rumble failed (...)` that
+   nxdk's SDL/XID driver refused it. Neither line: the game never asked
+   (Options setting, or `rumble.c`'s status mapping).
+8. **Texture accuracy**: indirect texturing (Fountain's water), TEV swap
    tables, item crates, fog checks against Dolphin.
-8. **Performance**, as planned below: on the console the simulation is
+9. **Performance**, as planned below: on the console the simulation is
    ~4 ms a tick, the render pass (HSD walking the scene, GX setters) up to
    17 ms a frame on Stadium, display lists 4-5 ms, draw submission 6-9 ms;
    ~50 vertex-program loads a frame remain.
