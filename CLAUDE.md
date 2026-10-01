@@ -4,7 +4,8 @@ Native original-Xbox port of Super Smash Bros. Melee (NTSC-U 1.02, `GALE01` rev 
 built with nxdk and LLVM 21. It is not an emulator: the decompiled game (doldecomp via
 melee-pc) is compiled for the Pentium III and draws on the NV2A.
 
-Read first: `docs/README.md` (index), `docs/decisions.md`, `docs/renderer.md`,
+Read first: `docs/handoff.md` (current state, Windows setup, working notes),
+`docs/README.md` (index), `docs/decisions.md`, `docs/renderer.md`,
 `docs/testing.md`. `docs/architecture.md` has the memory budget.
 
 ## Layout
@@ -37,20 +38,23 @@ python3 tools/lower/test_lower.py
 xemu (one instance at a time; `pkill -9 -f Xemu.app/Contents/MacOS/xemu` first):
 
 ```sh
-MX_RUN=~/xemu/mc/run MX_ISO=~/xemu/roms/melee102.iso MX_STAGE_EXTRA=~/xemu/mc/gg \
+MX_RUN=~/xemu/mc/run MX_ISO=~/xemu/roms/melee102.iso MX_STAGE_EXTRA=tools/xbox/scenarios/gg \
 MX_XEMU_ARGS="-config_path $HOME/xemu/mc/xemu.toml" \
   tools/xbox/xemu_run.sh <secs> '<stop regex>'       # serial log: $MX_RUN/serial.log
 tools/xbox/fbdump_to_png.py $MX_RUN/serial.log out   # [FBDUMP] screenshots (-DXHW_AUTOPAD=1 + SHOT lines)
 ```
 
-Standard smoke/perf run: `XBOX_CFLAGS=-DXHW_AUTOPAD=1` build, `MX_STAGE_EXTRA=~/xemu/mc/gl`
+On Windows (Git Bash) also set `MX_XEMU=/c/.../xemu.exe`; kill xemu with `taskkill //F //IM xemu.exe`
+(see `docs/handoff.md`).
+
+Standard smoke/perf run: `XBOX_CFLAGS=-DXHW_AUTOPAD=1` build, `MX_STAGE_EXTRA=tools/xbox/scenarios/gl`
 (60 s 4-CPU match, shots mid-match, at TIME! and on the results), `xemu_run.sh 330`;
 read `[PERF]`/`[NV2A]`/`[DLC]` and compare the shots with the last good run
 (docs/testing.md "Performance runs in xemu"). The performance plan is in docs/roadmap.md.
 
 Hardware: FTP `192.168.158.113` (`xbox`/`xbox`), deploy to `/F/Applications/Melee-X/`
 (`default.xbe` and `default.tbn`, the dashboard icon, next to the disc image; `TitleImage.xbx` and `TitleMeta.xbx` to `/E/UDATA/4d580001/` for UnleashX's icon cache), logs in `/E/UDATA/4d580001/` (`boot.log`, `shotNN.bmp`,
-`crash.log`, `hang.log`). Keep each deployed build's `melee_x.map` in `~/xemu/hw/` so
+`crash.log`, `hang.log`): `tools/xbox/console.py stage|deploy|pull vNN`. Keep each deployed build's `melee_x.map` in `~/xemu/hw/` so
 `tools/xbox/sym.py` and `tools/xbox/prof_report.py` can symbolize its logs.
 
 ## Rules

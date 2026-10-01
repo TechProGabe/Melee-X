@@ -9,3 +9,4 @@
 | [testing.md](testing.md) | host tests, running on an Xbox or xemu, logs, symbolizing crashes, first-boot checklist |
 | [decisions.md](decisions.md) | the choices the port rests on, edits to imported code, how to sync melee-pc, known risks |
 | [roadmap.md](roadmap.md) | what's done and what's next |
+| [handoff.md](handoff.md) | current state, Windows setup, scenarios, working notes for the next session |

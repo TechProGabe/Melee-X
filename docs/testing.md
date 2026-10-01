@@ -108,8 +108,8 @@ that the current TSS's link field names (read the GDT to find it).
 
 ## The console loop
 
-What each hardware round looks like (the dev Mac keeps one folder per
-build in `~/xemu/hw/`):
+What each hardware round looks like (one folder per build in `~/xemu/hw/`,
+or `MX_HW`; `tools/xbox/console.py` does steps 1, 2 and 4 on any OS):
 
 1. Build with `XBOX_CFLAGS=-DXHW_PROF=1`; copy `default.xbe`,
    `default.tbn`, `TitleImage.xbx`, `TitleMeta.xbx` into
@@ -164,7 +164,8 @@ level up). `prof_report.py` folds both into functions after the main table.
 
 The standard run is a 60-second 4-CPU timed match on Green Greens with
 screenshots mid-match, at TIME! and on the results screen
-(`~/xemu/mc/gl/autopad.txt` on the dev Mac):
+(`tools/xbox/scenarios/gl/autopad.txt`; the other scenarios are listed in
+`docs/handoff.md`):
 
 ```
 env MELEE_BOOT_SCENE=vs
