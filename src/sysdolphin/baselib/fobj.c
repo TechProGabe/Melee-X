@@ -505,6 +505,7 @@ void HSD_FObjInterpretAnimAll(void* fobj, void* obj,
 {
     HSD_FObj* fobjNew = (HSD_FObj*) fobj;
     while (fobjNew != NULL) {
+        HSD_PREFETCH(fobjNew->next);   /* PORT: xbox_game_prelude.h */
         HSD_FObjInterpretAnim(fobjNew, obj, obj_update, rate);
         fobjNew = fobjNew->next;
     }

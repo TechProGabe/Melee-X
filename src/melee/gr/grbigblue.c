@@ -23,7 +23,11 @@ typedef struct grBb_TrackEntry {
     Vec3 delta;
 } grBb_TrackEntry;
 
-typedef struct grBb_YakumonoParam {
+/* PORT: stage data from the disc (yakumono_param): DISC_STRUCT, so every
+ * field is read big-endian. Without it each parameter was byte-swapped
+ * (v35: the platforms' x position came out as ~-4e8 and the camera assert
+ * in lbVector_WorldToScreen fired on the first frame of a Big Blue match). */
+typedef struct DISC_STRUCT grBb_YakumonoParam {
     f32 x0;
     f32 x4;
     f32 x8;
@@ -100,7 +104,7 @@ typedef struct grBb_YakumonoParam {
     f32 x128;
     f32 x12C;
     f32 x130;
-    Vec3 x134_translate;
+    DiscVec3 x134_translate;   /* PORT: was Vec3 (see above) */
     f32 x140_scale;
 } grBb_YakumonoParam;
 

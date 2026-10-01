@@ -147,6 +147,7 @@ void HSD_MObjAnim(HSD_MObj* mobj)
     if (mobj == NULL) {
         return;
     }
+    HSD_PREFETCH(mobj->tobj);   /* PORT: xbox_game_prelude.h */
     /* PORT: no calls for what has nothing to animate (aobj.h) */
     if (HSD_AObjIsPlaying(mobj->aobj)) {
         HSD_AObjInterpretAnim(mobj->aobj, mobj, MObjUpdateFunc);

@@ -1,82 +1,151 @@
 # Melee-X
 
-Super Smash Bros. Melee running natively on the original Xbox. This is not an
-emulator: the decompiled game code is compiled for the Xbox's Pentium III and
-draws with its NV2A GPU.
+Super Smash Bros. Melee running natively on an original Xbox.
 
-- 4 players on the four controller ports
-- 480i / 480p / 720p output, with 720p rendered 16:9 (hor+ widescreen)
-- Needs your own Melee disc image: NTSC-U 1.02 (`GALE01`, revision 2). No
-  game data is in this repository or in any build.
+This isn't an emulator. The [doldecomp](https://github.com/doldecomp/melee) project turned Melee back into C source, and Melee-X compiles that code for the Xbox's 733 MHz Pentium III. Every frame is drawn by the Xbox's own NV2A GPU through a GameCube graphics layer written for it, and the game data streams from your disc image the same way it would from a GameCube disc.
 
-> **Status: plays on a real Xbox.** Menus run at 60 fps. 4-player matches
-> run the game itself at full speed (60 ticks a second) and draw 25-30 fps
-> on most stages (Pokémon Stadium ~28, Fountain of Dreams ~28 since the
-> display-list cache took its stage model). Saves, audio, rumble, fog and the
-> dashboard icon work, and GameCube/Dolphin saves load (the save data is
-> converted between the card's big-endian layout and the Xbox's).
->
-> Known problems: fighters take damage during Corneria's countdown and are
-> launched on the first landing; textures are not all accurate yet
-> (indirect texturing for reflections and water, TEV swap tables); netplay
-> is not built. [docs/roadmap.md](docs/roadmap.md) has the details and the
-> plan; [docs/testing.md](docs/testing.md) says how to test and which logs
-> to send.
+**Status:** fully playable. Matches usually run somewhere between 30 and 60 fps depending on the stage and how much is going on, menus sit at 60, and the game itself always ticks at full speed.
 
-## How it is put together
+- 4 players on the 4 controller ports, with rumble
+- 480i, 480p or 720p (720p is drawn in 16:9 with extra screen on the sides)
+- Saves use the GameCube `.gci` format, so your Dolphin or memory card save works here and the other way around
 
-| layer | from |
+You need your own copy of the game. Nothing from Nintendo ships with this.
+
+## What you need
+
+- A modded original Xbox (softmod or modchip) that runs homebrew. A stock 64 MB console is fine.
+- A way to copy files to it. Usually that's FTP from your dashboard (UnleashX, XBMC4Gamers, EvolutionX and friends all have a server built in).
+- A disc image of **Super Smash Bros. Melee, NTSC-U, version 1.02** (game ID `GALE01`, revision 2), dumped from your own disc. `.iso`, `.gcm` and `.ciso` all work, and the filename doesn't matter. PAL and Japanese copies won't boot. The 1.00 and 1.01 revisions start, but only 1.02 has been tested.
+- A controller. The Duke and the Controller S both work.
+
+## Download
+
+Grab the newest `Melee-X-<version>.zip` from the [Releases](../../releases) page and unzip it:
+
+```
+Melee-X/
+  default.xbe      the game
+  default.tbn      dashboard icon
+tools/
+  make-xiso        packs the game and your disc image into a burnable ISO
+```
+
+Then pick how you want to play.
+
+## Option 1: install to the hard drive
+
+Easiest, and it loads the fastest.
+
+1. Drop your Melee disc image into the `Melee-X` folder, right next to `default.xbe`.
+2. Connect to your Xbox with an FTP client like FileZilla. Your dashboard shows the Xbox's IP address, and the login on most dashboards is `xbox` / `xbox`.
+3. Copy the whole `Melee-X` folder to wherever your dashboard looks for apps or games, for example `F:\Applications\` or `E:\Games\`.
+4. Launch Melee-X from the dashboard. You should see the orange X icon.
+
+When you're done it looks like this:
+
+```
+F:\Applications\Melee-X\
+  default.xbe
+  default.tbn
+  Melee.iso        (yours, any name)
+```
+
+The image is about 1.4 GB, so give the copy a minute.
+
+## Option 2: burn a disc
+
+This packs `default.xbe` and your disc image into one Xbox disc image. Melee's files fill most of the GameCube disc, so the result is around 1.4 GB and needs a **DVD-R** (a CD-R is too small).
+
+1. Get [xdvdfs](https://github.com/antangelo/xdvdfs/releases). On Windows just download the `.exe` from its releases page.
+2. Build the ISO. Either way works:
+   - With the script, from Git Bash, WSL, Linux or macOS (needs `xdvdfs` on your PATH):
+
+     ```sh
+     tools/make-xiso Melee-X "Melee.iso" Melee-X.iso
+     ```
+
+   - By hand: put your disc image in the `Melee-X` folder like in Option 1, then run `xdvdfs pack Melee-X Melee-X.iso`.
+3. Burn `Melee-X.iso` to a DVD-R at a low speed with something like ImgBurn. Burn it as an image, don't let the burner convert it.
+4. Put the disc in your modded Xbox and start it from the dashboard's disc option.
+
+Not every Xbox DVD drive likes burned discs. Samsung drives are usually the most forgiving and Thomson drives the least. If yours won't read it, go with Option 1.
+
+## Option 3: xemu
+
+Build the ISO from Option 2, then load it in [xemu](https://xemu.app) with Machine > Load Disc. Set xemu's memory to 64 MB. It runs, but slower than a real Xbox, since xemu has to emulate the GPU.
+
+## Saves
+
+Saves always go to the hard drive, even when you play from a disc. They live in `E:\UDATA\4d580001\card_a\` as normal GameCube `.gci` files.
+
+To bring over a save from Dolphin or a real memory card:
+
+1. Export it as a `.gci`. Dolphin's memory card manager does this, and GCI tools can pull one off a real card.
+2. Launch Melee-X once so it makes its folders.
+3. FTP the `.gci` into `E:\UDATA\4d580001\card_a\`.
+
+Going the other way works too: copy the `.gci` off the Xbox and import it into Dolphin.
+
+## Settings
+
+Settings are in `E:\UDATA\4d580001\settings.ini`. Melee-X writes it the first time it boots, and you can edit it over FTP.
+
+| section | setting | what it does |
+|---|---|---|
+| `[video]` | `720p` | 1 uses 720p when your dashboard has it turned on (needs component cables) |
+| | `widescreen` | 1 draws 16:9 at 480i/480p when the dashboard is set to widescreen |
+| | `fps` | 1 shows a frame counter in the top left corner |
+| `[input]` | `rumble` | rumble strength in percent, 0 turns it off |
+| `[port1]` to `[port4]` | `stick_deadzone`, `cstick_deadzone` | stick dead zones in percent |
+| | `trigger_click` | how far (0-255) a trigger goes in before it counts as a full L/R press |
+| | `a`, `b`, `x`, `y`, `white`, `black`, ... | button mapping, written as `xbox button = GameCube button` |
+
+## Controls
+
+| Xbox | GameCube |
 |---|---|
-| game code (`src/melee`, `src/sysdolphin`) | [doldecomp/melee](https://github.com/doldecomp/melee), as adapted to little-endian hosts by [melee-pc](https://github.com/999sian/melee-pc) |
-| Dolphin SDK headers (`extern/aurora/include`) | [encounter/aurora](https://github.com/encounter/aurora) (via melee-pc) |
-| Xbox platform layer (`xbox/`) | this repo, with pieces carried over from [OpenCrossing-Xbox](https://github.com/GabeConway/OpenCrossing-Xbox) |
-| toolchain | [nxdk](https://github.com/XboxDev/nxdk), LLVM 21 |
+| A | A |
+| X | B |
+| B | X |
+| Y | Y |
+| White or Black | Z |
+| Left / right trigger | L / R (analog) |
+| Left stick | control stick |
+| Right stick | C-stick |
+| D-pad | D-pad |
+| Start | Start |
 
-The disc data stays big-endian in memory, as on the GameCube. melee-pc
-marks the on-disc structs `DISC_STRUCT`, which GCC byte-swaps on access.
-nxdk is clang, so the Xbox build lowers those accesses to explicit
-big-endian loads and stores first (`tools/lower`, melee-pc's browser path).
-All documentation is indexed in [docs/README.md](docs/README.md).
+The layout matches where the buttons sit on a GameCube pad. Every port can be remapped in `settings.ini`.
 
-## Building
+Back saves a screenshot to `E:\UDATA\4d580001\` as a `.bmp`.
 
-See [docs/toolchain.md](docs/toolchain.md). In short:
+## If something breaks
 
-```sh
-tools/xbox/setup.sh               # once: LLVM 21, nxdk, disc_lower
-xbox/build.sh                     # -> build-xbox/xbe/default.xbe
-tools/lower/test_lower.py         # lowering oracle tests
-tools/xbox/test_vp_encoder.py     # vertex-program encoder vs nv2a-vsh
-tools/xbox/test_vp_opt.py         # optimized vertex programs vs the reference generator
-tools/xbox/vp_policy.py --check   # vertex-program residency policy
-tools/xbox/test_tex_convert.py    # native texture formats vs the GX decoder
-tools/xbox/test_fog.py            # GX fog on the NV2A vs GX's fog factor
-tools/xbox/test_card_endian.py    # memory-card files: big-endian on the card, native in memory
-tools/xbox/test_pool.py           # texture and vertex pool allocator
-tools/xbox/test_anim_mtx.py       # HSD keyframes and joint/envelope matrices vs the code before the rewrites
-```
+Logs go to `E:\UDATA\4d580001\`: `boot.log` always, plus `crash.log` or `hang.log` if it went wrong. Attach those (and a photo if the screen showed an error) when you open an issue.
 
-Builds and tests run locally; the GitHub workflow runs only when started by
-hand.
+## Building it yourself
 
-On macOS, build in Docker instead and boot the result in xemu
-([docs/testing.md](docs/testing.md)):
+The short version: nxdk and LLVM 21, built either in Docker or natively on Windows with MSYS2.
 
 ```sh
-docker build -t melee-x:sdk tools/xbox/docker   # once
-tools/xbox/docker/build.sh
-MX_ISO=/path/to/your/melee.iso tools/xbox/xemu_run.sh 120
+tools/xbox/msys/build.sh          # Windows, MSYS2
+tools/xbox/docker/build.sh        # Docker (Linux, macOS, Windows)
 ```
 
-To play: copy `default.xbe` and `default.tbn` (the dashboard icon) into a
-folder on the Xbox HDD (e.g. `F:\Applications\Melee-X\`) together with
-your own `GALE01` disc image (`.iso`, `.gcm` or `.ciso`, any name), and
-launch it from your dashboard. Saves, settings and logs go to
-`E:\UDATA\4d580001\` (`boot.log`, `crash.log`; BACK on a controller writes
-a screenshot there). To bring a save from Dolphin or a GameCube card, put
-its `.gci` in `E:\UDATA\4d580001\card_a\`.
+Both write `build-xbox/xbe/default.xbe`. The setup, the tests and how the port works are in [docs/](docs/README.md), starting with [docs/toolchain.md](docs/toolchain.md) and [docs/architecture.md](docs/architecture.md).
 
-## Licensing
+## Legal
 
-See [LICENSE.md](LICENSE.md). The decompiled game code carries no license;
-the port code is GPL-3.0-or-later because it builds on melee-pc.
+This repo has no game assets, no disc data and no Nintendo binaries. It's the decompiled C source plus port code. You need your own legally dumped copy of Melee, so please don't open issues asking for ISOs.
+
+Not affiliated with or endorsed by Nintendo or Microsoft. Super Smash Bros. Melee is a trademark of Nintendo, and Xbox is a trademark of Microsoft. Licensing details are in [LICENSE.md](LICENSE.md).
+
+## Credits
+
+- [doldecomp/melee](https://github.com/doldecomp/melee), the decompilation this is all built on
+- [melee-pc](https://github.com/999sian/melee-pc), the PC port that made the decomp run on little-endian machines
+- [encounter/aurora](https://github.com/encounter/aurora) for the Dolphin SDK headers
+- [OpenCrossing-Xbox](https://github.com/GabeConway/OpenCrossing-Xbox), where the Xbox audio, crash handling and GPU combiner code came from
+- [nxdk](https://github.com/XboxDev/nxdk), [xemu](https://xemu.app) and [xdvdfs](https://github.com/antangelo/xdvdfs), the open Xbox toolchain, emulator and ISO packer
+- AI tools (Claude) were used in developing this port.

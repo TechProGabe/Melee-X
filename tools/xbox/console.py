@@ -6,8 +6,9 @@
     tools/xbox/console.py pull v33             # logs + shots -> hw/logs33
     tools/xbox/console.py ls                   # what's in the log folder
 
-hw/ is ~/xemu/hw unless MX_HW is set. The console's FTP server is
-192.168.158.113, login xbox/xbox (MX_FTP_HOST / MX_FTP_USER / MX_FTP_PASS).
+hw/ is ~/xemu/hw unless MX_HW is set. The console's FTP server is at
+MX_FTP_HOST (its IP, shown by the dashboard), login xbox/xbox unless
+MX_FTP_USER / MX_FTP_PASS say otherwise.
 Deploy puts default.xbe and default.tbn in /F/Applications/Melee-X/ next to
 the disc image, and TitleImage.xbx and TitleMeta.xbx in /E/UDATA/4d580001/
 (UnleashX's icon cache). Logs (boot*.log, trace.log, crash.log, hang.log,
@@ -19,12 +20,13 @@ import io
 import os
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 HW = Path(os.environ.get("MX_HW", Path.home() / "xemu" / "hw"))
-HOST = os.environ.get("MX_FTP_HOST", "192.168.158.113")
+HOST = os.environ.get("MX_FTP_HOST", "")
 USER = os.environ.get("MX_FTP_USER", "xbox")
 PASS = os.environ.get("MX_FTP_PASS", "xbox")
 APP = "/F/Applications/Melee-X"
@@ -38,6 +40,8 @@ def ver(v):
 
 
 def connect():
+    if not HOST:
+        sys.exit("set MX_FTP_HOST to the Xbox's IP address (the dashboard shows it)")
     try:
         f = ftplib.FTP(HOST, timeout=15)
     except OSError as e:
@@ -47,7 +51,9 @@ def connect():
 
 
 def logs(f):
-    return sorted(n for n in (p.rsplit("/", 1)[-1] for p in f.nlst(UDATA)) if LOGS.match(n))
+    # the console's FTP server lists the current directory whatever path NLST is given
+    f.cwd(UDATA)
+    return sorted(n for n in (p.rsplit("/", 1)[-1] for p in f.nlst()) if LOGS.match(n))
 
 
 def stage(v):
@@ -57,6 +63,8 @@ def stage(v):
     for name in FILES:
         shutil.copy2(ROOT / "build-xbox" / "xbe" / name, out / name)
     shutil.copy2(ROOT / "build-xbox" / "melee_x.map", HW / f"melee_x.{v}.map")
+    # static functions too, from this build's objects (static_syms.py)
+    subprocess.run([sys.executable, str(ROOT / "tools/xbox/static_syms.py"), "--map", str(HW / f"melee_x.{v}.map")])
     print(f"staged {out} and melee_x.{v}.map")
 
 

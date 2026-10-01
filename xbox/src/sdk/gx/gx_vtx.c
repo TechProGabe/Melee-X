@@ -55,7 +55,11 @@ static struct {
     int npos_carry;
 } B;
 
-void gx_vtx_reset(void) { memset(&B, 0, sizeof B); }
+static void sig_recompute(void);
+void gx_vtx_reset(void) {
+    memset(&B, 0, sizeof B);
+    sig_recompute();
+}
 
 static void make_plan(Plan* p, int vtxfmt) {
     int i, off = 12;
@@ -550,10 +554,75 @@ void GXParam1u8(const u8 x) { (void)x; }
 void GXParam1u16(const u16 x) { (void)x; }
 void GXParam1u32(const u32 x) { (void)x; }
 
-/* ---- vertex descriptor / formats / arrays ---- */
+/* ---- vertex descriptor / formats / arrays ----
+ * The display-list cache keys and checks every call by the descriptor, the
+ * formats a list uses and the arrays it indexes (fmt_key, vtx_sig). Those
+ * were FNV hashes over ~250 bytes of state per call, ~700 calls a frame.
+ * Instead each attribute's settings have a mixed 32-bit term, and the
+ * setters keep sums of them up to date: a sum doesn't depend on the order
+ * of the changes, so HSD's GXClearVtxDesc and the GXSetVtxDesc calls that
+ * put the same descriptor back leave it as it was. */
+static uint32_t s_desc_term[GX_VA_MAX_ATTR], s_desc_sum;
+static uint32_t s_vat_term[8][GX_VA_MAX_ATTR], s_vat_sum[8];
+static uint32_t s_arr_term[GX_VA_MAX_ATTR], s_arr_sum;       /* indexed arrays: base, stride, byte order */
+static uint32_t s_arrs_term[GX_VA_MAX_ATTR], s_arrs_sum;     /* the same without the base */
+
+static uint32_t mix32(uint32_t h) {   /* murmur3's finalizer */
+    h ^= h >> 16;
+    h *= 0x85EBCA6Bu;
+    h ^= h >> 13;
+    h *= 0xC2B2AE35u;
+    return h ^ h >> 16;
+}
+
+static void sig_desc(uint32_t a) {
+    uint32_t t = mix32(0x01000000u | a << 8 | g_gx.desc[a]);
+    s_desc_sum += t - s_desc_term[a];
+    s_desc_term[a] = t;
+}
+
+static void sig_vat(uint32_t f, uint32_t a) {
+    const GxAttrFmt* v = &g_gx.vat[f][a];
+    uint32_t t = mix32(0x02000000u ^ f << 29 ^ a << 24 ^ (uint32_t)v->cnt << 16 ^ (uint32_t)v->type << 8 ^ v->frac);
+    s_vat_sum[f] += t - s_vat_term[f][a];
+    s_vat_term[f][a] = t;
+}
+
+/* after a change of attribute a's descriptor or array */
+static void sig_arr(uint32_t a) {
+    uint32_t t = 0, ts = 0;
+    if (g_gx.desc[a] == GX_INDEX8 || g_gx.desc[a] == GX_INDEX16) {
+        ts = mix32(0x03000000u ^ a << 24 ^ g_gx.array_stride[a] << 1 ^ g_gx.array_le[a]);
+        t = mix32(ts ^ (uint32_t)(uintptr_t)g_gx.array[a]);
+    }
+    s_arr_sum += t - s_arr_term[a];
+    s_arr_term[a] = t;
+    s_arrs_sum += ts - s_arrs_term[a];
+    s_arrs_term[a] = ts;
+}
+
+static void sig_recompute(void) {
+    uint32_t a, f;
+    memset(s_desc_term, 0, sizeof s_desc_term);
+    memset(s_vat_term, 0, sizeof s_vat_term);
+    memset(s_arr_term, 0, sizeof s_arr_term);
+    memset(s_arrs_term, 0, sizeof s_arrs_term);
+    s_desc_sum = s_arr_sum = s_arrs_sum = 0;
+    memset(s_vat_sum, 0, sizeof s_vat_sum);
+    for (a = 0; a < GX_VA_MAX_ATTR; a++) {
+        sig_desc(a);
+        sig_arr(a);
+        for (f = 0; f < 8; f++) sig_vat(f, a);
+    }
+}
+
 void GXSetVtxDesc(GXAttr attr, GXAttrType type) {
     gx_vtx_close();   /* a finished batch has its vertices already */
-    if (attr < GX_VA_MAX_ATTR) g_gx.desc[attr] = (uint8_t)type;
+    if (attr < GX_VA_MAX_ATTR && g_gx.desc[attr] != (uint8_t)type) {
+        g_gx.desc[attr] = (uint8_t)type;
+        sig_desc(attr);
+        sig_arr(attr);
+    }
 }
 
 void GXSetVtxDescv(GXVtxDescList* list) {
@@ -561,8 +630,14 @@ void GXSetVtxDescv(GXVtxDescList* list) {
 }
 
 void GXClearVtxDesc(void) {
+    uint32_t a;
     gx_vtx_close();   /* a finished batch has its vertices already */
-    memset(g_gx.desc, GX_NONE, sizeof g_gx.desc);
+    for (a = 0; a < GX_VA_MAX_ATTR; a++)
+        if (g_gx.desc[a] != GX_NONE) {
+            g_gx.desc[a] = GX_NONE;
+            sig_desc(a);
+            sig_arr(a);
+        }
 }
 
 void GXSetVtxAttrFmt(GXVtxFmt fmt, GXAttr attr, GXCompCnt cnt, GXCompType type, u8 frac) {
@@ -571,6 +646,7 @@ void GXSetVtxAttrFmt(GXVtxFmt fmt, GXAttr attr, GXCompCnt cnt, GXCompType type, 
     g_gx.vat[fmt][attr].cnt = (uint8_t)cnt;
     g_gx.vat[fmt][attr].type = (uint8_t)type;
     g_gx.vat[fmt][attr].frac = frac;
+    sig_vat(fmt, attr);
 }
 
 void GXSetArray(GXAttr attr, const void* data, u32 size, u8 stride, bool le) {
@@ -580,6 +656,7 @@ void GXSetArray(GXAttr attr, const void* data, u32 size, u8 stride, bool le) {
     g_gx.array[attr] = (const uint8_t*)data;
     g_gx.array_stride[attr] = stride;
     g_gx.array_le[attr] = le;
+    sig_arr(attr);
 }
 
 /* ---- display lists ---- */
@@ -747,6 +824,7 @@ typedef struct {
     const uint8_t* dl;
     uint32_t nbytes;
     uint32_t sig, hash;
+    uint32_t qhash;                /* quick_hash of the same, for stable lists (dlc_content_changed) */
     uint32_t fkey;                 /* fmt_key(fmts) it was made under (part of the key) */
     uint32_t checked, last_used;
     uint32_t stable;               /* content checks passed in a row (dlc_content_changed) */
@@ -763,6 +841,12 @@ typedef struct {
 } DlEntry;
 
 static DlEntry s_dlc[DLC_MAX];
+/* each slot's last_used, DLC_FREE for an empty one: the eviction scan reads
+ * these 8 KB in order instead of a word from every 180-byte entry (2048
+ * cache misses per eviction; the console's Fountain of Dreams evicted a few
+ * times a frame and spent ~1.5% of its CPU there) */
+#define DLC_FREE 0xFFFFFFFFu
+static uint32_t s_dlc_lru[DLC_MAX];
 static int s_dlc_n;
 static int s_dlc_bucket[DLC_BUCKETS];
 static int s_dlc_ready;
@@ -813,25 +897,42 @@ static uint32_t sample_hash(uint32_t h, const uint8_t* p, uint32_t n) {
     return fnv(((h ^ h1) * 16777619u ^ h2) * 16777619u ^ h3, p + n - 4, 4);
 }
 
+/* 16 sampled words plus the tail (everything under 256 bytes): the recheck
+ * of a list that has stayed the same for a while. The words are scattered
+ * cache misses, so a quarter of sample_hash's cost. */
+static uint32_t quick_hash(uint32_t h, const uint8_t* p, uint32_t n) {
+    uint32_t i, step, w[4];
+    if (n < 256) return sample_hash(h, p, n);
+    step = (n - 4) / 16;
+    for (i = 0; i < 16; i += 4) {
+        memcpy(&w[0], p + i * step, 4);
+        memcpy(&w[1], p + (i + 1) * step, 4);
+        memcpy(&w[2], p + (i + 2) * step, 4);
+        memcpy(&w[3], p + (i + 3) * step, 4);
+        h = (((h ^ w[0]) * 16777619u ^ w[1]) * 16777619u ^ w[2]) * 16777619u;
+        h = (h ^ w[3]) * 16777619u;
+    }
+    return fnv(h, p + n - 4, 4);
+}
+
 /* the vertex descriptor and the formats `fmts` use; with_arrays: the array
  * bases too (a dynamic list takes moving arrays as they come) */
+static uint32_t fmt_key(uint32_t fmts);
 static uint32_t vtx_sig(uint32_t fmts, int with_arrays) {
-    uint32_t h = fnv(2166136261u, g_gx.desc, sizeof g_gx.desc), f, a;
-    for (f = 0; f < 8; f++)
-        if (fmts & (1u << f)) h = fnv(h, g_gx.vat[f], sizeof g_gx.vat[f]);
-    for (a = 0; a < GX_VA_MAX_ATTR; a++)
-        if (g_gx.desc[a] == GX_INDEX8 || g_gx.desc[a] == GX_INDEX16) {
-            if (with_arrays) h = fnv(h, &g_gx.array[a], sizeof g_gx.array[a]);
-            h = fnv(h, &g_gx.array_stride[a], sizeof g_gx.array_stride[a]);
-            h = (h ^ g_gx.array_le[a]) * 16777619u;
-        }
-    return h;
+    return mix32(fmt_key(fmts) ^ (with_arrays ? s_arr_sum : s_arrs_sum * 0x9E3779B1u));
 }
 
 static uint32_t content_hash(const DlEntry* e) {
     uint32_t h = sample_hash(2166136261u, e->dl, e->nbytes);
     int i;
     for (i = 0; i < e->nrange; i++) h = sample_hash(h, e->range[i].p, e->range[i].bytes);
+    return h;
+}
+
+static uint32_t content_qhash(const DlEntry* e) {
+    uint32_t h = quick_hash(2166136261u, e->dl, e->nbytes);
+    int i;
+    for (i = 0; i < e->nrange; i++) h = quick_hash(h, e->range[i].p, e->range[i].bytes);
     return h;
 }
 
@@ -877,6 +978,7 @@ static void dlc_drop_mem(int idx, int now) {
     dlc_unlink(idx);
     dlc_release_mem(&s_dlc[idx], now);
     s_dlc[idx].dl = NULL;
+    s_dlc_lru[idx] = DLC_FREE;
     s_dlc_free[s_dlc_nfree++] = idx;
     s_dlc_n--;
 }
@@ -885,14 +987,15 @@ static void dlc_drop(int idx) { dlc_drop_mem(idx, 0); }
 
 /* The content check (sampled words of the list and its arrays) runs once a
  * frame per list; a list that passed DLC_STABLE checks in a row is checked
- * every fourth frame, staggered by slot. On the console the checks took ~4%
- * of the CPU in a match, where no list changed content at all. */
+ * every fourth frame, staggered by slot, and with a quarter of the samples
+ * (content_qhash). On the console the checks took ~4% of the CPU in a match,
+ * where no list changed content at all; v32's Fountain of Dreams ~3%. */
 #define DLC_STABLE 120
 static int dlc_content_changed(DlEntry* e, uint32_t frame) {
     if (e->checked == frame) return 0;
     if (e->stable >= DLC_STABLE && ((frame + (uint32_t)(e - s_dlc)) & 3)) return 0;
     e->checked = frame;
-    if (e->hash != content_hash(e)) {
+    if (e->stable >= DLC_STABLE ? e->qhash != content_qhash(e) : e->hash != content_hash(e)) {
         e->stable = 0;
         return 1;
     }
@@ -903,11 +1006,15 @@ static int dlc_content_changed(DlEntry* e, uint32_t frame) {
 /* evicts the least recently used entry not drawn this frame, other than
  * `keep`; 0: none */
 static int dlc_evict_one(uint32_t frame, const DlEntry* keep) {
-    int i, pick = -1;
-    for (i = 0; i < DLC_MAX; i++)
-        if (s_dlc[i].dl && &s_dlc[i] != keep && s_dlc[i].last_used != frame &&
-            (pick < 0 || s_dlc[i].last_used < s_dlc[pick].last_used))
+    int i, pick = -1, skip = keep ? (int)(keep - s_dlc) : -1;
+    uint32_t best = DLC_FREE;
+    for (i = 0; i < DLC_MAX; i++) {
+        uint32_t u = s_dlc_lru[i];
+        if (u < best && u != frame && i != skip) {
+            best = u;
             pick = i;
+        }
+    }
     if (pick < 0) return 0;
     dlc_drop_mem(pick, 1);   /* not drawn this frame: the GPU is done with it */
     return 1;
@@ -919,9 +1026,9 @@ static int dlc_evict_one(uint32_t frame, const DlEntry* keep) {
  * descriptor), and one entry per list flipping between them rebuilt on every
  * call until it went volatile (~100 lists, decoded on every call). */
 static uint32_t fmt_key(uint32_t fmts) {
-    uint32_t h = fnv(2166136261u, g_gx.desc, sizeof g_gx.desc), f;
+    uint32_t h = mix32(s_desc_sum), f;
     for (f = 0; f < 8; f++)
-        if (fmts & (1u << f)) h = fnv(h, g_gx.vat[f], sizeof g_gx.vat[f]);
+        if (fmts & (1u << f)) h = mix32(h + s_vat_sum[f]);
     return h;
 }
 
@@ -1214,6 +1321,7 @@ static int dlc_build(DlEntry* e, uint32_t frame) {
     e->sig = vtx_sig(fmts, 1);
     e->fkey = fmt_key(fmts);
     e->hash = content_hash(e);
+    e->qhash = content_qhash(e);
     e->stable = 0;
     e->checked = frame;
     s_st_dl_builds++;
@@ -1403,7 +1511,7 @@ static int dyn_call(DlEntry* e, uint32_t frame) {
         xgx_draw(b->prim, b->count, &b->plan.layout, &g_xgx);
         g_xgx.dirty = 0;
     }
-    e->last_used = frame;
+    e->last_used = s_dlc_lru[e - s_dlc] = frame;
     s_st_dyn_calls++;
     return 1;
 }
@@ -1427,6 +1535,7 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
     int i;
     if (!s_dlc_ready) {
         memset(s_dlc_bucket, 0xFF, sizeof s_dlc_bucket);
+        memset(s_dlc_lru, 0xFF, sizeof s_dlc_lru);
         for (i = 0; i < DLC_MAX; i++) s_dlc_free[i] = DLC_MAX - 1 - i;
         s_dlc_nfree = DLC_MAX;
         s_dlc_ready = 1;
@@ -1454,6 +1563,7 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
         idx = s_dlc_free[--s_dlc_nfree];
         e = &s_dlc[idx];
         memset(e, 0, sizeof *e);
+        s_dlc_lru[idx] = 0;   /* last_used */
         e->dl = dl;
         e->nbytes = nbytes;
         e->fkey = fmt_key(0);   /* until a build knows the formats */
@@ -1465,7 +1575,7 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
         log_uncached(dl, nbytes, s_build_why);
         return 0;
     }
-    e->last_used = frame;
+    e->last_used = s_dlc_lru[e - s_dlc] = frame;
     s_st_dl_hits++;
     for (i = 0; i < e->nbatch; i++) {
         const DlBatch* b = &e->batch[i];
@@ -1517,8 +1627,7 @@ void gx_vtx_frame_end(void) {
  * dynamic, per-vertex matrices, contents changed. */
 int gx_dl_culled(const void* list, u32 nbytes, const float mtx[3][4]) {
     const DlEntry* e = NULL;
-    int i, c, k;
-    uint32_t all = 0x3F;
+    int i, k;
     if (s_dlc_ready)
         for (i = s_dlc_bucket[dl_bucket((const uint8_t*)list)]; i >= 0; i = s_dlc[i].next)
             if (s_dlc[i].dl == (const uint8_t*)list && s_dlc[i].nbytes == nbytes) {
@@ -1532,29 +1641,39 @@ int gx_dl_culled(const void* list, u32 nbytes, const float mtx[3][4]) {
     {
         uint32_t frame = xgx_present_count();
         if (frame - e->checked > 16) {
-            if (e->hash != content_hash(e)) return 0;
+            if (e->stable >= DLC_STABLE ? e->qhash != content_qhash(e) : e->hash != content_hash(e)) return 0;
             ((DlEntry*)e)->checked = frame;
         }
     }
-    for (c = 0; c < 8; c++) {
-        float p[3], v[3], x, y, w;
-        uint32_t out = 0;
-        p[0] = c & 1 ? e->bmax[0] : e->bmin[0];
-        p[1] = c & 2 ? e->bmax[1] : e->bmin[1];
-        p[2] = c & 4 ? e->bmax[2] : e->bmin[2];
-        for (k = 0; k < 3; k++) v[k] = mtx[k][0] * p[0] + mtx[k][1] * p[1] + mtx[k][2] * p[2] + mtx[k][3];
-        x = g_xgx.proj[0][0] * v[0] + g_xgx.proj[0][1] * v[1] + g_xgx.proj[0][2] * v[2] + g_xgx.proj[0][3];
-        y = g_xgx.proj[1][0] * v[0] + g_xgx.proj[1][1] * v[1] + g_xgx.proj[1][2] * v[2] + g_xgx.proj[1][3];
-        w = g_xgx.proj[3][0] * v[0] + g_xgx.proj[3][1] * v[1] + g_xgx.proj[3][2] * v[2] + g_xgx.proj[3][3];
-        if (x < -w) out |= 1;
-        if (x > w) out |= 2;
-        if (y < -w) out |= 4;
-        if (y > w) out |= 8;
-        if (w <= 0) out |= 16;
-        all &= out;
-        if (!all) return 0;
+    /* The box in view space: its centre, and the half extents of the
+     * view-aligned box around it (|M| times the model-space half extents).
+     * That box contains the 8 corners, so "wholly outside one clip plane"
+     * holds for it only when it holds for every corner: it culls a little
+     * less than testing the corners, never more, at a third of the cost
+     * (the 8-corner version was ~2% of the console's CPU on Fountain of
+     * Dreams). Clip planes x >= -w, x <= w, y >= -w, y <= w and w > 0, each
+     * a row combination of the projection, tested at the box's support
+     * point: n.c + |n|.h < 0 (or <= 0 for w). */
+    {
+        float c[3], h[3], v[3], hv[3];
+        static const float sx[5] = { 1, -1, 0, 0, 0 }, sy[5] = { 0, 0, 1, -1, 0 };
+        for (k = 0; k < 3; k++) {
+            c[k] = (e->bmin[k] + e->bmax[k]) * 0.5f;
+            h[k] = (e->bmax[k] - e->bmin[k]) * 0.5f;
+        }
+        for (k = 0; k < 3; k++) {
+            v[k] = mtx[k][0] * c[0] + mtx[k][1] * c[1] + mtx[k][2] * c[2] + mtx[k][3];
+            hv[k] = __builtin_fabsf(mtx[k][0]) * h[0] + __builtin_fabsf(mtx[k][1]) * h[1] + __builtin_fabsf(mtx[k][2]) * h[2];
+        }
+        for (i = 0; i < 5; i++) {
+            float n[4], d, r;
+            for (k = 0; k < 4; k++) n[k] = g_xgx.proj[3][k] + sx[i] * g_xgx.proj[0][k] + sy[i] * g_xgx.proj[1][k];
+            d = n[0] * v[0] + n[1] * v[1] + n[2] * v[2] + n[3];
+            r = __builtin_fabsf(n[0]) * hv[0] + __builtin_fabsf(n[1]) * hv[1] + __builtin_fabsf(n[2]) * hv[2];
+            if (i < 4 ? d + r < 0 : d + r <= 0) return 1;
+        }
     }
-    return 1;
+    return 0;
 }
 
 void GXCallDisplayList(const void* list, u32 nbytes) {

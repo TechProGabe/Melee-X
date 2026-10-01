@@ -323,6 +323,11 @@ static uint32_t* s_pb_base;
 #define XGX_VBUF_FREE_NOW 1
 #endif
 #define PB_GUARD (PB_BYTES - 192 * 1024)
+/* -DXGX_OVERLAP=0: xgx_present waits for the GPU before the flip, as up to
+ * v32, instead of the next frame's first GPU use (frame_open) */
+#ifndef XGX_OVERLAP
+#define XGX_OVERLAP 1
+#endif
 #define PCRTC_START_REG (*(volatile uint32_t*)0xFD600800)
 
 static inline void put1(uint32_t m, uint32_t v) { P[0] = (1u << 18) | m; P[1] = v; P += 2; }
@@ -821,6 +826,15 @@ unsigned xgx_present_count(void) { return s_frame; }
 static void frame_open(void);
 static void vp_frame_end(void);
 
+/* GXCopyDisp's clear comes right after the present: it waits (in order)
+ * until the next frame opens, so it doesn't open the frame early */
+#define PENDING_CLEARS 4
+static struct {
+    int x, y, w, h, color, depth;
+    uint32_t argb, z24;
+} s_pending_clear[PENDING_CLEARS];
+static int s_npending_clear;
+
 static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int depth, uint32_t z24) {
     if (x < 0) { w += x; x = 0; }
     if (y < 0) { h += y; y = 0; }
@@ -860,11 +874,23 @@ void xgx_clear(const int32_t r[4], const uint8_t rgba[4], uint32_t z24, int colo
     int x0, y0, x1, y1;
     uint32_t argb = (uint32_t)rgba[3] << 24 | (uint32_t)rgba[0] << 16 | (uint32_t)rgba[1] << 8 | rgba[2];
     (void)alpha;
-    frame_open();
     x0 = map_x((float)r[0]);
     y0 = map_y((float)r[1]);
     x1 = map_x((float)(r[0] + r[2]));
     y1 = map_y((float)(r[1] + r[3]));
+    if (XGX_OVERLAP && !s_frame_open && s_npending_clear < PENDING_CLEARS) {
+        s_pending_clear[s_npending_clear].x = x0;
+        s_pending_clear[s_npending_clear].y = y0;
+        s_pending_clear[s_npending_clear].w = x1 - x0;
+        s_pending_clear[s_npending_clear].h = y1 - y0;
+        s_pending_clear[s_npending_clear].argb = argb;
+        s_pending_clear[s_npending_clear].color = color;
+        s_pending_clear[s_npending_clear].depth = depth;
+        s_pending_clear[s_npending_clear].z24 = z24;
+        s_npending_clear++;
+        return;
+    }
+    frame_open();
     clear_fb(x0, y0, x1 - x0, y1 - y0, argb, color, depth, z24);
 }
 
@@ -879,8 +905,19 @@ static void state_reset_shadows(void);
  * retarget. */
 #define CONTROL0 NV097_SET_CONTROL0_TEXTURE_PERSPECTIVE_ENABLE
 
+/* The first GPU use of a frame. With XGX_OVERLAP the previous frame's wait
+ * for the GPU is here rather than in xgx_present: the GPU finishes drawing
+ * it (and the queued flip) while the CPU runs the next simulation ticks.
+ * Everything after this point may assume, as before, that the GPU is idle
+ * at the start of the frame (the vertex ring and the pushbuffer restart,
+ * deferred frees are released, xgx_vbuf_free_now). */
 static void frame_open(void) {
+    int i;
     if (s_frame_open) return;
+    if (XGX_OVERLAP) {
+        wait_idle();
+        release_deferred();
+    }
     pb_reset();
     s_pb_base = pb_begin();
     pb_target_back_buffer();
@@ -893,6 +930,10 @@ static void frame_open(void) {
     s_frame_open = 1;
     /* the bars outside the content rect, and a defined EFB */
     clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 1, 0xFFFFFF);
+    for (i = 0; i < s_npending_clear; i++)
+        clear_fb(s_pending_clear[i].x, s_pending_clear[i].y, s_pending_clear[i].w, s_pending_clear[i].h,
+                 s_pending_clear[i].argb, s_pending_clear[i].color, s_pending_clear[i].depth, s_pending_clear[i].z24);
+    s_npending_clear = 0;
 }
 
 /* restart at the pushbuffer head when a frame gets close to its end:
@@ -923,9 +964,9 @@ static int s_shot_once;
 void xgx_shot_next(void) { s_shot_req = 1; }
 
 /* On-screen frame rate (settings.ini [video] fps): frames presented over
- * the last half second, drawn by the CPU into the back buffer once the GPU
- * is idle, before the screenshot dumps (shots show it). Yellow 5x7 digits at 2x
- * on a black box, inside the TV-safe area. */
+ * the last half second, drawn by the GPU after the frame (colour fills of
+ * the lit runs of each font row), before the screenshot dumps (shots show
+ * it). Yellow 5x7 digits at 2x on a black box, inside the TV-safe area. */
 static int s_fps_on;
 static uint32_t s_fps_val, s_fps_frames;
 static uint64_t s_fps_t0;
@@ -939,9 +980,8 @@ static void fps_overlay(void) {
         { 14, 17, 17, 15, 1, 2, 12 },
     };
     uint64_t now = xhw_time_ns();
-    uint8_t* fb = (uint8_t*)pb_back_buffer();
-    uint32_t pitch = pb_back_buffer_pitch(), v, digits[3], nd = 0, i, x, y;
-    int x0 = s_fbw / 16, y0 = s_fbh / 16, w, h, bpp = s_bpp / 8;
+    uint32_t v, digits[3], nd = 0, d, cy;
+    int x0 = s_fbw / 16, y0 = s_fbh / 16, w, h;
     s_fps_frames++;
     if (!s_fps_t0 || now - s_fps_t0 > 2000000000ull) {
         s_fps_t0 = now;
@@ -958,16 +998,16 @@ static void fps_overlay(void) {
     } while (v && nd < 3);
     w = (int)nd * 12 + 4;
     h = 18;
-    for (y = 0; y < (uint32_t)h; y++)
-        for (x = 0; x < (uint32_t)w; x++) {
-            int on = 0;
-            int gx = (int)x - 2, gy = (int)y - 2, d = gx / 12, cx = (gx % 12) / 2, cy = gy / 2;
-            if (gx >= 0 && gy >= 0 && d < (int)nd && cx < 5 && cy < 7)
-                on = font[digits[nd - 1 - (uint32_t)d]][cy] >> (4 - cx) & 1;
-            {
-                uint8_t* px = fb + (uint32_t)(y0 + (int)y) * pitch + (uint32_t)(x0 + (int)x) * (uint32_t)bpp;
-                if (bpp == 4) *(volatile uint32_t*)px = on ? 0xFFFFFF00u : 0xFF000000u;
-                else *(volatile uint16_t*)px = on ? 0xFFE0u : 0;
+    pb_close();
+    pb_fill(x0, y0, w, h, 0xFF000000u);   /* pb_fill converts to the surface's format */
+    for (d = 0; d < nd; d++)
+        for (cy = 0; cy < 7; cy++) {
+            uint32_t bits = font[digits[nd - 1 - d]][cy], cx = 0;
+            while (cx < 5) {   /* runs of lit cells, 2x2 pixels each */
+                uint32_t run = 0;
+                while (cx + run < 5 && (bits >> (4 - (cx + run)) & 1)) run++;
+                if (run) pb_fill(x0 + 2 + (int)(d * 12 + cx * 2), y0 + 2 + (int)cy * 2, (int)run * 2, 2, 0xFFFFFF00u);
+                cx += run ? run : 1;
             }
         }
 }
@@ -976,8 +1016,10 @@ void xgx_present(int black) {
     frame_open();
     if (black) clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 0, 0);
     pb_budget();   /* the frame's pushbuffer peak */
-    wait_idle();
     if (s_fps_on && !black) fps_overlay();
+    /* the next frame_open waits (XGX_OVERLAP); a screenshot reads the frame now */
+    if (!XGX_OVERLAP || s_fbdump_once || s_shot_once || (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0))
+        wait_idle();
     if (s_fbdump_once || (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0)) {
         s_fbdump_once = 0;
         xhw_fbdump(pb_back_buffer(), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());
@@ -990,7 +1032,7 @@ void xgx_present(int black) {
         s_shot_req = 0;
         s_shot_once = 1;
     }
-    release_deferred();
+    if (!XGX_OVERLAP) release_deferred();
     if (s_gf_count != s_gf_logged) {
         xhw_logf("[NV2A] GPU fault x%u: kind %u %08x %08x %08x %08x%s", (unsigned)s_gf_count, (unsigned)s_gf_last[0],
                  (unsigned)s_gf_last[1], (unsigned)s_gf_last[2], (unsigned)s_gf_last[3], (unsigned)s_gf_last[4],
@@ -1053,7 +1095,7 @@ void xgx_present(int black) {
     }
     s_draws = s_approx = 0;
     s_frame_open = 0;
-    frame_open();
+    if (!XGX_OVERLAP) frame_open();
 }
 
 /* ======================================================================
@@ -1088,6 +1130,11 @@ static uint32_t vp_hash(const VpKey* k) {
 
 #define VP_CACHE VPM_PROGS
 static VpEntry* s_vp;
+/* hash, valid flag and last use of each entry side by side: the lookup and
+ * the LRU scan read these instead of a word per 2 KB entry (a cache miss
+ * each, ~80 program switches a frame) */
+static uint32_t s_vp_hash[VP_CACHE], s_vp_used[VP_CACHE];
+static uint8_t s_vp_valid[VP_CACHE];
 static int s_vp_cur = -1;
 static uint32_t s_vp_now;
 static VpMem s_vpm;
@@ -1174,19 +1221,19 @@ static void vp_select(const VpKey* k) {
     s_vp_now++;
     s_st_vp_sel++;
     for (i = 0; i < VP_CACHE; i++)
-        if (s_vp[i].valid && s_vp[i].hash == h && memcmp(&s_vp[i].key, k, sizeof *k) == 0) { pick = i; break; }
+        if (s_vp_hash[i] == h && s_vp_valid[i] && memcmp(&s_vp[i].key, k, sizeof *k) == 0) { pick = i; break; }
     if (pick < 0) {
         /* a free entry, or the least recently used (its memory is freed) */
         for (i = 0; i < VP_CACHE; i++)
-            if (!s_vp[i].valid || pick < 0 || s_vp[i].used < s_vp[pick].used) {
+            if (!s_vp_valid[i] || pick < 0 || s_vp_used[i] < s_vp_used[pick]) {
                 pick = i;
-                if (!s_vp[i].valid) break;
+                if (!s_vp_valid[i]) break;
             }
         e = &s_vp[pick];
         if (e->valid) vpm_drop(&s_vpm, pick);
         e->key = *k;
-        e->hash = h;
-        e->valid = 1;
+        e->hash = s_vp_hash[pick] = h;
+        e->valid = s_vp_valid[pick] = 1;
         vp_generate(k, &e->prog);
     }
     e = &s_vp[pick];
@@ -1195,7 +1242,7 @@ static void vp_select(const VpKey* k) {
 #ifdef XGX_DEBUG_VPTRACE
     vpt_record(e, loaded);
 #endif
-    e->used = s_vp_now;
+    e->used = s_vp_used[pick] = s_vp_now;
     put1(NV097_SET_TRANSFORM_PROGRAM_START, (uint32_t)start);
     s_vp_cur = pick;
     if (e->prog.approximated) s_approx++;
@@ -1274,21 +1321,32 @@ static void build_mtx(XgxState* st) {
     st->posmtx_mask = 0;
 }
 
+/* colours as 0..1: a multiply, not a divide per component (the result may
+ * differ from x / 255 in the last bit, far below what the GPU resolves) */
+#define INV255 (1.0f / 255.0f)
+
 static void build_chans(const XgxState* st) {
     int c, k;
     vc_mark(VPC_CHAN, 4);
     for (c = 0; c < 2; c++)
         for (k = 0; k < 4; k++) {
-            s_vc[VPC_CHAN + c * 2][k] = st->mat[c][k] / 255.0f;
-            s_vc[VPC_CHAN + c * 2 + 1][k] = st->amb[c][k] / 255.0f;
+            s_vc[VPC_CHAN + c * 2][k] = st->mat[c][k] * INV255;
+            s_vc[VPC_CHAN + c * 2 + 1][k] = st->amb[c][k] * INV255;
         }
 }
 
+/* Only the lights an enabled channel uses: the program reads no others, and
+ * a channel change (XGX_DIRTY_CHANS) rebuilds them, so a light that comes
+ * into use later is written then. ~20% of a match's draws get here. */
 static void build_lights(const XgxState* st, uint32_t spec_lights) {
+    uint32_t used = 0;
     int i;
+    for (i = 0; i < 4; i++)
+        if (st->chan[i].enable) used |= st->chan[i].light_mask;
     for (i = 0; i < XGX_MAX_LIGHTS; i++) {
         const XgxLight* l = &st->light[i];
         int b = VPC_LIGHT + i * 5;
+        if (!(used & (1u << i))) continue;
         if (spec_lights & (1u << i)) {
             float n = sqrtf(l->pos[0] * l->pos[0] + l->pos[1] * l->pos[1] + l->pos[2] * l->pos[2]);
             n = n > 1e-12f ? 1.0f / n : 0.0f;
@@ -1297,7 +1355,7 @@ static void build_lights(const XgxState* st, uint32_t spec_lights) {
             set_row(b, l->pos[0], l->pos[1], l->pos[2], 1);
         }
         set_row(b + 1, l->dir[0], l->dir[1], l->dir[2], 0);
-        set_row(b + 2, l->color[0] / 255.0f, l->color[1] / 255.0f, l->color[2] / 255.0f, l->color[3] / 255.0f);
+        set_row(b + 2, l->color[0] * INV255, l->color[1] * INV255, l->color[2] * INV255, l->color[3] * INV255);
         set_row(b + 3, l->a[0], l->a[1], l->a[2], 0);
         set_row(b + 4, l->k[0], l->k[1], l->k[2], 0);
     }
@@ -1407,6 +1465,9 @@ static void emit_vc(void) {
 typedef struct { uint32_t hash; RcCfg cfg; RcProg prog; } RcEntry;
 #define RC_CACHE 256
 static RcEntry* s_rc;
+/* the entries' hashes side by side: a lookup scans these 1 KB instead of one
+ * word per 624-byte entry (a cache miss each; ~0.7% of the console's CPU) */
+static uint32_t s_rc_hash[RC_CACHE];
 static int s_rc_count, s_rc_last = -1;
 static uint32_t s_rc_gen;             /* bumped whenever a cache slot is (re)compiled */
 static const RcProg* s_rc_sent;       /* the program on the GPU, valid while s_rc_sent_gen == s_rc_gen */
@@ -1443,14 +1504,14 @@ static const RcProg* rc_lookup(const RcCfg* cfg) {
     if (s_rc_last >= 0 && memcmp(&s_rc[s_rc_last].cfg, cfg, n) == 0) return &s_rc[s_rc_last].prog;
     h = fnv(cfg, n);
     for (k = 0; k < s_rc_count; k++)
-        if (s_rc[k].hash == h && memcmp(&s_rc[k].cfg, cfg, n) == 0) {
+        if (s_rc_hash[k] == h && memcmp(&s_rc[k].cfg, cfg, n) == 0) {
             s_rc_last = k;
             return &s_rc[k].prog;
         }
     k = s_rc_count < RC_CACHE ? s_rc_count++ : (int)(s_draws % RC_CACHE);
     s_rc_last = k;
     s_rc_gen++;
-    s_rc[k].hash = h;
+    s_rc[k].hash = s_rc_hash[k] = h;
     s_rc[k].cfg = *cfg;
     rc_compile(cfg, &s_rc[k].prog);
     return &s_rc[k].prog;
@@ -1777,6 +1838,9 @@ void xgx_vbuf_free(void* p) {
  * costs (Pokémon Stadium: ~4 extra a frame, each one stopping the CPU until
  * the GPU has drawn everything queued). */
 void xgx_vbuf_free_now(void* p) {
+    /* before the frame's first GPU use the last frame may still be drawing
+     * (XGX_OVERLAP): opening the frame waits for it */
+    if (p && XGX_VBUF_FREE_NOW) frame_open();
     if (p && XGX_VBUF_FREE_NOW) pool_free(&s_vb, p);
     else if (p) defer_free(p);
 }

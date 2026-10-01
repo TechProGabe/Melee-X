@@ -15,3 +15,6 @@ __pycache__/
 *.gci
 *.qcow2
 *.img
+
+# release zips (tools/xbox/package_release.py)
+/dist/

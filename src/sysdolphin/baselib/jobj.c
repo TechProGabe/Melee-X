@@ -549,6 +549,11 @@ void JObjAnimAll(HSD_JObj* jobj)
 {
     HSD_JObj* child;
     if (jobj != NULL) {
+        /* PORT: the nodes walked next (xbox_game_prelude.h HSD_PREFETCH) */
+        HSD_PREFETCH(jobj->child);
+        HSD_PREFETCH(jobj->next);
+        HSD_PREFETCH(jobj->aobj);
+        HSD_PREFETCH(jobj->u.dobj);
         HSD_JObjAnim(jobj);
         if (!(jobj->flags & JOBJ_INSTANCE)) {
             child = jobj->child;
@@ -590,6 +595,9 @@ void HSD_JObjDispAll(HSD_JObj* jobj, Mtx vmtx, u32 flags, u32 rendermode)
                 HSD_JObjDispAll(jobj->child, mtx, flags, rendermode);
             }
         } else {
+            /* PORT: the nodes walked next (xbox_game_prelude.h) */
+            HSD_PREFETCH(jobj->child);
+            HSD_PREFETCH(jobj->next);
             if (jobj->flags & (flags << 0x12)) {
                 HSD_JObjDisp(jobj, new_var, flags, rendermode);
             }

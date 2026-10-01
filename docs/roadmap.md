@@ -65,7 +65,7 @@ Found and fixed on the console in v17-v25 (details in `renderer.md`,
   check the v25 BACK dumps (`[DRAW] efb copy` lines) before trying more.
 - trophy gallery: the save's trophy count was byte-swapped (see the memory
   card PR); the user's console save had been rewritten by older builds and
-  was replaced with the Dolphin original (`~/Downloads/...35037.gci`).
+  was replaced with the Dolphin original.
 
 ## Next
 

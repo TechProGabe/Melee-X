@@ -188,12 +188,30 @@ void GXGetScissor(u32* left, u32* top, u32* wd, u32* ht) {
 void GXSetScissorBoxOffset(s32 x, s32 y) { (void)x; (void)y; }
 void GXSetClipMode(GXClipMode mode) { (void)mode; }
 
+/* 3x4 matrices compared and copied as 12 words, inline: as memcmp/memcpy
+ * they were calls (48 bytes is past clang's inline limit here), ~2% of the
+ * console's CPU from these two setters alone, called for every PObj */
+static int mtx34_same(const void* a, const void* b) {
+    const uint32_t *x = (const uint32_t*)a, *y = (const uint32_t*)b;
+    int i;
+    for (i = 0; i < 12; i++)
+        if (x[i] != y[i]) return 0;
+    return 1;
+}
+
+static void mtx34_copy(void* dst, const void* src) {
+    uint32_t* d = (uint32_t*)dst;
+    const uint32_t* s = (const uint32_t*)src;
+    int i;
+    for (i = 0; i < 12; i++) d[i] = s[i];
+}
+
 void GXLoadPosMtxImm(const void* mtx, u32 id) {
     u32 k = id / 3;
     if (k >= XGX_NUM_POSMTX) return;
-    if (memcmp(g_xgx.posmtx[k], mtx, sizeof g_xgx.posmtx[k]) == 0) return;
+    if (mtx34_same(g_xgx.posmtx[k], mtx)) return;
     FLUSH();
-    memcpy(g_xgx.posmtx[k], mtx, sizeof g_xgx.posmtx[k]);
+    mtx34_copy(g_xgx.posmtx[k], mtx);
     g_xgx.posmtx_mask |= 1u << k;
     DIRTY(XGX_DIRTY_POSMTX);
 }
@@ -255,9 +273,9 @@ void GXLoadTexMtxImm(const void* mtx, u32 id, GXTexMtxType type) {
     } else {
         memcpy(m, mtx, sizeof(float) * 12);
     }
-    if (memcmp(dst, m, sizeof m) == 0) return;
+    if (mtx34_same(dst, m)) return;
     FLUSH();
-    memcpy(dst, m, sizeof m);
+    mtx34_copy(dst, m);
     if (pos) g_xgx.posmtx_mask |= 1u << (id / 3);
     DIRTY(bits);
 }

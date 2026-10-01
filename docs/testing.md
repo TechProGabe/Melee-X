@@ -159,6 +159,9 @@ function's return address, or its caller's once it has made a call itself).
 `[PROFL]` lines count them for samples inside memcpy/memset/memcmp/memmove
 (who copies), `[PROFC]` lines for every sample (the hottest call sites one
 level up). `prof_report.py` folds both into functions after the main table.
+`[PROFS]` lines (v33 on) count only the samples taken while `[PERF]`'s
+current bucket was the simulation: `prof_report.py` lists them last, as the
+simulation's own profile (HSD's animation and matrix code runs in both).
 
 ### Performance runs in xemu
 
@@ -298,6 +301,7 @@ report.
 | `-DXGX_PB_KICK=<words>` | pushbuffer words per kick (default 8192; v25 and before 4096) |
 | `-DXGX_VB_CACHE_BREAK=0` | no `BREAK_VERTEX_BUFFER_CACHE` at each batch start (v26 added it) |
 | `-DXGX_VBUF_FREE_NOW=0` | evicted display-list vertex buffers go through the deferred free like the rest (v26 freed them at once) |
+| `-DXGX_OVERLAP=0` | `xgx_present` waits for the GPU before the flip, as up to v32, instead of the next frame's first GPU use (v33) |
 | `-DXGX_DEBUG_VPTRACE[=<n>]` | log the vertex-program selects of two consecutive frames every n (default 600) as `[VPT]` lines: each program (key hash, instructions, key bytes), then the selects in order with `L` where one was loaded; replay with `tools/xbox/vp_policy.py boot.log` |
 | `-DXGX_DEBUG_NOMIP` | bind only the base level of every texture |
 | `-DXHW_FBDUMP_EVERY=<n>` | screenshot every n presented frames |

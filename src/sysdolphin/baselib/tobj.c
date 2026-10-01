@@ -291,6 +291,9 @@ void HSD_TObjAnimAll(HSD_TObj* tobj)
     }
 
     for (i = tobj; i != NULL; i = i->next) {
+        /* PORT: the nodes walked next (xbox_game_prelude.h HSD_PREFETCH) */
+        HSD_PREFETCH(i->next);
+        HSD_PREFETCH(i->aobj);
         HSD_TObjAnim(i);
     }
 }

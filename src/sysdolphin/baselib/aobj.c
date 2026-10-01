@@ -129,6 +129,7 @@ void HSD_AObjInterpretAnim(HSD_AObj* aobj, void* obj,
     if (!aobj || aobj->flags & AOBJ_NO_ANIM) {
         return;
     }
+    HSD_PREFETCH(aobj->fobj);   /* PORT: xbox_game_prelude.h */
 
     if (aobj->flags & AOBJ_FIRST_PLAY) {
         aobj->flags &= 0xF7FFFFFF;

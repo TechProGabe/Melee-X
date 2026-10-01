@@ -293,9 +293,12 @@ void HSD_JObjDispSub(HSD_JObj* jobj, MtxPtr vmtx, MtxPtr pmtx,
 
     HSD_PObjClearMtxMark(NULL, 0);
     for (dobj = jobj->u.dobj; dobj; dobj = dobj->next) {
+        HSD_PREFETCH(dobj->next);   /* PORT: xbox_game_prelude.h */
         if (dobj->flags & DOBJ_HIDDEN) {
             continue;
         }
+        HSD_PREFETCH(dobj->mobj);   /* PORT: xbox_game_prelude.h */
+        HSD_PREFETCH(dobj->pobj);
 
         if (dobj->flags & dobj_trsp) {
             HSD_DObjSetCurrent(dobj);

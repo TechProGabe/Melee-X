@@ -68,8 +68,8 @@ may hold up to 512 draws: Fountain of Dreams' stage is one 104 KB list of
 more than 64, and at the old limit of 64 it was decoded on every call
 (~15 ms of a console frame). When the pool is full, the least recently
 used list not drawn this frame is evicted and its buffer freed at once:
-`xgx_present` waits for the GPU before a frame begins, so nothing reads it
-any more. Freeing them only after the next wait for idle cost Pokémon
+the frame's first GPU use (`frame_open`) waits for the GPU, so nothing
+reads it any more (a free before that point opens the frame first). Freeing them only after the next wait for idle cost Pokémon
 Stadium ~4 extra waits a frame on the console, each one stopping the CPU
 until the GPU had drawn everything queued. The content hashes (display lists and
 textures) run four FNV chains side by side over the same words, so the
@@ -139,6 +139,57 @@ compared as words inline.
 `[DLC]` line counts joined batches and names the calls that drew a waiting
 immediate batch.
 
+### CPU cost of the back end (v33)
+
+The v32 console profile of a 4-CPU Fountain of Dreams match (21 fps, ~47 ms
+a frame) had the back end at about a quarter of the CPU, mostly cache
+misses in lookups and revalidation rather than useful work. v33:
+
+- **CPU/GPU overlap** (`XGX_OVERLAP`, default 1): `xgx_present` no longer
+  waits for the GPU. It queues the frame-rate counter (GPU colour fills, it
+  was CPU writes into the back buffer) and pbkit's flip, which the GPU runs
+  after the frame's draws (triple buffering), and returns. The wait for idle
+  moved to `frame_open`, the next frame's first GPU use, so the GPU finishes
+  while the CPU runs the next simulation ticks; deferred frees are released
+  there. Everything after `frame_open` still sees an idle GPU at the start
+  of the frame (the vertex ring and pushbuffer restart, `xgx_vbuf_free_now`).
+  `GXCopyDisp`'s clear, which comes right after the present, is queued
+  until the frame opens. A screenshot frame still waits in the present. The
+  console waited ~3.6 ms a frame there on Fountain of Dreams; xemu, whose
+  GPU is slow, went from 19 to ~33 fps in the standard match.
+  `-DXGX_OVERLAP=0` restores the old order.
+- Display-list eviction scans a packed array of every slot's last use
+  (8 KB) instead of a word from each 180-byte entry: 2048 cache misses per
+  eviction, a few evictions a frame on Fountain of Dreams (~1.5% of the CPU).
+- The display-list cache's per-call key and check (`fmt_key`, `vtx_sig`)
+  were FNV hashes over the descriptor, the formats and the arrays (~250
+  bytes, ~700 calls a frame). The vertex setters now keep sums of a mixed
+  term per attribute setting, so both are a few multiplies; a sum doesn't
+  depend on the order of changes, so `GXClearVtxDesc` and the
+  `GXSetVtxDesc` calls that restore the same descriptor cancel out.
+- Revalidation of stable display lists and textures (passed 120 checks)
+  samples 16 words per range instead of 64 (`content_qhash`, `quick_hash`):
+  the samples are scattered cache misses. Textures above 512 bytes are
+  sampled (64 words) instead of hashed in full up to 4 KB (most of a
+  match's textures). The schedule is unchanged: every fourth frame,
+  staggered, once stable.
+- The combiner-program and vertex-program caches keep their entries'
+  hashes (and the programs' valid flags and last use) in packed arrays:
+  their lookups scanned a word from each 624-byte or 2 KB entry.
+- `gx_tex_bind` marks the maps dirty only when the bound texture or its
+  sampling changed: HSD rebinds the same texture through a new texture
+  object per material, and ~40% of a match's draws rebuilt the texture
+  units and combiners for nothing.
+- Light rows are built only for the lights an enabled channel uses (a
+  channel change rebuilds them), and colours are scaled by 1/255 with a
+  multiply instead of a divide (~20% of draws rebuild lights or channels).
+- v34: the off-screen cull (`gx_dl_culled`) transforms the box's centre
+  and tests the view-aligned box around it against each clip plane (one
+  transform and five plane tests instead of eight corners); it can only cull
+  less than the corner test, never more. `GXLoadPosMtxImm` and
+  `GXLoadTexMtxImm` compare and copy their 3x4 matrices inline as 12 words
+  (48 bytes was a memcmp and a memcpy call each, ~2% of the CPU).
+
 `xgx.h` is compiled by both triples (game and nxdk), so its structs hold only
 32-bit scalars, floats and byte arrays: no bit-fields, no 64-bit members.
 
@@ -146,8 +197,8 @@ The GPU counts as idle (`wait_idle`) only once the pusher has caught up,
 PFIFO's CACHE1 is empty, the pusher has stopped and PGRAPH is idle, seen
 twice in a row. pbkit's `pb_busy` checks the first and last only, so
 methods still in CACHE1 passed as done whenever PGRAPH was between two of
-them. Deferred frees, the vertex ring's restart at every frame and EFB
-copy targets all rely on this wait. xemu runs methods as they arrive and
+them. Deferred frees, the vertex ring's restart at every frame (in
+`frame_open`) and EFB copy targets all rely on this wait. xemu runs methods as they arrive and
 can't show the difference.
 
 The pushbuffer is 1 MB. pbkit's `pb_size` takes powers of two only and

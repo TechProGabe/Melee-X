@@ -169,6 +169,7 @@ void HSD_PObjAnimAll(HSD_PObj* pobj)
 
     if (pobj != NULL) {
         for (pp = pobj; pp != NULL; pp = pp->next) {
+            HSD_PREFETCH(pp->next);   /* PORT: xbox_game_prelude.h */
             HSD_PObjAnim(pp);
         }
     }
@@ -1137,6 +1138,68 @@ static void SetupSharedVtxModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
     }
 }
 
+#ifdef TARGET_XBOX
+/* PORT: the PObjs of one DObj mostly repeat the same envelopes (same joints
+ * and weights, separate HSD_Envelope objects): ~1250 envelope matrices a
+ * frame in a 4-CPU match, ~630 distinct. Within one HSD_DObjDisp nothing
+ * moves a joint, so a repeat reuses the matrices computed for the first
+ * (bit for bit the same) instead of blending, concatenating and inverting
+ * again. HSD_DObjDisp clears the memo before its PObjs. */
+#define ENV_MEMO 16
+#define ENV_MEMO_JOINTS 4
+typedef struct {
+    int n;
+    HSD_JObj* jobj[ENV_MEMO_JOINTS];
+    u32 weight[ENV_MEMO_JOINTS];
+    MtxPtr vmtx;
+    int flags, perf;
+    Mtx pos, nrm;
+} EnvMemo;
+static EnvMemo env_memo[ENV_MEMO];
+static int env_memo_n, env_memo_next;
+
+void HSD_PObjEnvelopeMemoReset(void)
+{
+    env_memo_n = 0;
+    env_memo_next = 0;
+}
+
+/* the envelope chain as a memo key; 0 if it has too many joints */
+static int env_key(HSD_Envelope* env, EnvMemo* k)
+{
+    k->n = 0;
+    for (; env != NULL; env = env->next) {
+        if (k->n == ENV_MEMO_JOINTS) {
+            return 0;
+        }
+        k->jobj[k->n] = env->jobj;
+        memcpy(&k->weight[k->n], &env->weight, 4);
+        k->n++;
+    }
+    return 1;
+}
+
+static EnvMemo* env_find(const EnvMemo* k)
+{
+    int i, j;
+    for (i = 0; i < env_memo_n; i++) {
+        EnvMemo* m = &env_memo[i];
+        if (m->n != k->n || m->vmtx != k->vmtx || m->flags != k->flags) {
+            continue;
+        }
+        for (j = 0; j < k->n; j++) {
+            if (m->jobj[j] != k->jobj[j] || m->weight[j] != k->weight[j]) {
+                break;
+            }
+        }
+        if (j == k->n) {
+            return m;
+        }
+    }
+    return NULL;
+}
+#endif
+
 static void SetupEnvelopeModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
                                   u32 rendermode)
 {
@@ -1162,6 +1225,34 @@ static void SetupEnvelopeModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
         int perf = 0;
 
         HSD_ASSERT(1872, envelope);
+#ifdef TARGET_XBOX
+        /* PORT: a repeat of an envelope this DObj already set up (above) */
+        EnvMemo key;
+        int memo_ok = right == NULL && env_key(envelope, &key);
+        if (memo_ok) {
+            EnvMemo* m;
+            key.vmtx = vmtx;
+            key.flags = flags;
+            m = env_find(&key);
+            if (m != NULL) {
+                HSD_PerfCountEnvelopeBlending(m->perf);
+                GXLoadPosMtxImm(m->pos, mtx_no);
+                HSD_PerfCountMtxLoad();
+                if (flags & SETUP_NORMAL) {
+                    if (jobj->flags & JOBJ_LIGHTING) {
+                        GXLoadNrmMtxImm(m->nrm, mtx_no);
+                        HSD_PerfCountMtxLoad();
+                    }
+                    if (flags & SETUP_NORMAL_PROJECTION) {
+                        GXLoadTexMtxImm(m->nrm, HSD_Index2TexMtx(MtxIdx),
+                                        GX_MTX3x4);
+                        HSD_PerfCountMtxLoad();
+                    }
+                }
+                continue;
+            }
+        }
+#endif
         if (envelope->weight >= (1.0f - FLT_EPSILON)) {
             HSD_JObjSetupMatrix(envelope->jobj);
             if (right) {
@@ -1211,6 +1302,21 @@ static void SetupEnvelopeModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
                 HSD_PerfCountMtxLoad();
             }
         }
+#ifdef TARGET_XBOX
+        if (memo_ok) {   /* PORT: remembered for this DObj's other PObjs */
+            EnvMemo* m = &env_memo[env_memo_next];
+            env_memo_next = (env_memo_next + 1) % ENV_MEMO;
+            if (env_memo_n < ENV_MEMO) {
+                env_memo_n++;
+            }
+            *m = key;
+            m->perf = perf;
+            MTXCopy(tmp, m->pos);
+            if (flags & SETUP_NORMAL) {
+                MTXCopy(mtx, m->nrm);
+            }
+        }
+#endif
     }
 }
 

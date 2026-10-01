@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Pack Melee-X and your own Melee disc image into one Xbox disc image (XISO)
+# to burn to a DVD-R for a modded Xbox, or to load in xemu.
+#
+#   tools/make-xiso <folder with default.xbe> <your GALE01 .iso/.gcm/.ciso> [out.iso]
+#
+# Melee's files fill most of the GameCube disc, so the result is about the
+# size of your image (~1.4 GB): a DVD-R, not a CD-R.
+#
+# Packs with xdvdfs (https://github.com/antangelo/xdvdfs) or extract-xiso,
+# whichever is on PATH. Runs locally on your files only; nothing is
+# downloaded. From Open Crossing-Xbox's tool of the same name.
+set -euo pipefail
+src="${1:?usage: make-xiso <folder with default.xbe> <disc image> [out.iso]}"
+img="${2:?usage: make-xiso <folder with default.xbe> <disc image> [out.iso]}"
+out="${3:-Melee-X.iso}"
+[ -f "$src/default.xbe" ] || { echo "no default.xbe in $src" >&2; exit 1; }
+[ -f "$img" ] || { echo "no such disc image: $img" >&2; exit 1; }
+case "$(echo "${img##*.}" | tr 'A-Z' 'a-z')" in
+    iso|gcm|ciso) ;;
+    *) echo "the disc image should be a .iso, .gcm or .ciso" >&2; exit 1 ;;
+esac
+
+# stage next to the output: default.xbe, the dashboard icon, your image
+outdir="$(cd "$(dirname "$out")" && pwd)"
+stage="$(mktemp -d "$outdir/.melee-x-xiso.XXXXXX")"
+trap 'rm -rf "$stage"' EXIT
+cp "$src/default.xbe" "$stage/"
+[ -f "$src/default.tbn" ] && cp "$src/default.tbn" "$stage/"
+# hard link the 1.4 GB image when it's on the same drive, else copy it
+ln "$img" "$stage/$(basename "$img")" 2>/dev/null || cp "$img" "$stage/"
+
+# relative paths from the output's folder (Git Bash would otherwise hand
+# Windows tools /c/... paths)
+name="$(basename "$out")"
+rm -f "$out"
+if command -v xdvdfs >/dev/null 2>&1; then
+    (cd "$outdir" && xdvdfs pack "$(basename "$stage")" "$name")
+elif command -v extract-xiso >/dev/null 2>&1; then
+    (cd "$outdir" && extract-xiso -c "$(basename "$stage")" "$name" >/dev/null)
+else
+    echo "need xdvdfs (https://github.com/antangelo/xdvdfs/releases) or extract-xiso on your PATH" >&2
+    exit 1
+fi
+echo "wrote $outdir/$name ($(du -h "$outdir/$name" | cut -f1))"

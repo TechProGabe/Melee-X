@@ -18,13 +18,21 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 LINE = re.compile(r'^\s*[0-9a-f]{4}:[0-9a-f]{8}\s+(\S+)\s+([0-9a-f]{16})\s+(?:f\s+)?(?:i\s+)?(\S+)\s*$')
 
 
-def load(path):
+def load(path, statics=True):
+    """The map's public symbols, plus the static functions in <map>.statics
+    (tools/xbox/static_syms.py) when that file exists."""
     syms = []
     with open(path, errors='replace') as f:
         for line in f:
             m = LINE.match(line)
             if m:
                 syms.append((int(m.group(2), 16), m.group(1), m.group(3)))
+    if statics and os.path.isfile(path + '.statics'):
+        with open(path + '.statics') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) == 3:
+                    syms.append((int(parts[0], 16), parts[1], parts[2]))
     syms.sort()
     return syms
 

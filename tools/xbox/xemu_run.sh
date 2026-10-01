@@ -9,6 +9,8 @@
 #   MX_GUI=1  leave xemu running (don't kill at timeout)
 #   MX_STAGE_EXTRA  dir whose contents are also packed onto the disc
 #   MX_XEMU_ARGS    extra xemu arguments (e.g. -config_path <xemu.toml>)
+#   MX_XISO   a native extract-xiso instead of the docker image's (Windows
+#             without Docker: /c/xdev/nxdk/tools/extract-xiso/build/extract-xiso.exe)
 #   MX_XEMU   the xemu binary (default: macOS's /Applications/Xemu.app; on
 #             Windows e.g. /c/xemu/xemu.exe)
 # xemu needs your own MCPX ROM, BIOS and HDD image, set to 64 MB.
@@ -27,8 +29,12 @@ cp "$xbe" "$run/stage/default.xbe"
 if [ -n "$iso" ] && [ "$iso" != none ]; then ln -f "$iso" "$run/stage/$(basename "$iso")" 2>/dev/null || cp "$iso" "$run/stage/"; fi
 rm -f "$run/game.xiso"
 vrun="$run"; [ "$win" = 1 ] && vrun="$(cd "$run" && pwd -W)"
-docker run --rm -v "$vrun":/run melee-x:sdk \
-  /usr/src/nxdk/tools/extract-xiso/build/extract-xiso -c /run/stage /run/game.xiso >/dev/null
+if [ -n "${MX_XISO:-}" ]; then
+  (cd "$run" && "$MX_XISO" -c stage game.xiso >/dev/null)
+else
+  docker run --rm -v "$vrun":/run melee-x:sdk \
+    /usr/src/nxdk/tools/extract-xiso/build/extract-xiso -c /run/stage /run/game.xiso >/dev/null
+fi
 log="$run/serial.log"; : > "$log"
 xemu="${MX_XEMU:-/Applications/Xemu.app/Contents/MacOS/xemu}"
 xrun="$run"; [ "$win" = 1 ] && xrun="$(cd "$run" && pwd -W)"

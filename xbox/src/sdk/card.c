@@ -125,12 +125,44 @@ static File* alloc_file(void) {
     return NULL;
 }
 
+#if XHW_AUTOPAD
+/* Test builds: .gci files staged on the disc in D:\card_a\ (MX_STAGE_EXTRA)
+ * are copied to the card once, so an emulator's empty HDD starts with a save. */
+static void seed_from_disc(const char* dirp) {
+    void* h;
+    xhw_dir_entry e;
+    for (h = xhw_dir_first("D:\\card_a\\*.gci", &e); h; h = xhw_dir_next(h, &e) ? h : NULL) {
+        char src[160], dst[160];
+        static u8 buf[BLOCK];
+        FILE *in, *out;
+        size_t n;
+        snprintf(dst, sizeof dst, "%s\\%s", dirp, e.name);
+        if ((out = fopen(dst, "rb"))) {
+            fclose(out);
+            continue;
+        }
+        snprintf(src, sizeof src, "D:\\card_a\\%s", e.name);
+        if (!(in = fopen(src, "rb"))) continue;
+        if ((out = fopen(dst, "wb"))) {
+            while ((n = fread(buf, 1, sizeof buf, in)) > 0) fwrite(buf, 1, n, out);
+            xhw_flush(out);
+            fclose(out);
+            xhw_logf("[CARD] seeded %s from the disc", e.name);
+        }
+        fclose(in);
+    }
+}
+#endif
+
 static void load_all(void) {
     char dirp[96], pattern[128];
     void* h;
     xhw_dir_entry e;
     card_dir(dirp, sizeof dirp);
     xhw_mkdir(dirp);
+#if XHW_AUTOPAD
+    seed_from_disc(dirp);
+#endif
     snprintf(pattern, sizeof pattern, "%s\\*.gci", dirp);
     for (h = xhw_dir_first(pattern, &e); h; h = xhw_dir_next(h, &e) ? h : NULL) {
         char p[160];

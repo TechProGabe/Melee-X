@@ -50,6 +50,7 @@ uint64_t xhw_perf_now(void);                   /* rdtsc, for xhw_perf_audio */
 void xhw_perf_audio(uint64_t ticks);           /* mixer thread: time spent mixing */
 void xhw_perf_frame(uint32_t draws, uint32_t verts);   /* once per presented frame */
 void xhw_perf_ticks(uint32_t n);               /* simulation ticks run before a render pass */
+int xhw_perf_bucket(void);                     /* the game thread's current bucket (the profiler's [PROFS]) */
 
 /* ---- threads and locks ---- */
 typedef struct xhw_mutex xhw_mutex;

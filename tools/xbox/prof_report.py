@@ -11,7 +11,9 @@ report instead of summing all of them.
 
 Newer builds also log callers (return addresses, one frame up): [PROFL] for
 samples inside memcpy/memset/memcmp/memmove, [PROFC] for every sample. Those
-are folded into the calling functions and listed after the functions."""
+are folded into the calling functions and listed after the functions.
+[PROFS] buckets (v33 on) count only the samples taken during the simulation
+ticks; they are listed last, as the simulation's own profile."""
 import argparse, bisect, collections, pathlib, re, sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -29,16 +31,17 @@ for line in pathlib.Path(a.log).read_text(errors='replace').splitlines():
     m = re.search(r'\[PROF\] (\d+) samples: (\d+) in image', line)
     if m:
         cur = {'total': int(m[1]), 'placed': int(m[2]), 'buckets': collections.Counter(),
-               'libc': collections.Counter(), 'callers': collections.Counter(), 'libc_n': 0, 'callers_n': 0}
+               'libc': collections.Counter(), 'callers': collections.Counter(), 'libc_n': 0, 'callers_n': 0,
+               'sim': collections.Counter(), 'sim_n': 0}
         reports.append(cur)
         continue
     if cur is None:
         continue
-    m = re.search(r'\[PROF([LC])\] (\d+) samples', line)
+    m = re.search(r'\[PROF([LCS])\] (\d+) samples', line)
     if m:
-        cur['libc_n' if m[1] == 'L' else 'callers_n'] += int(m[2])
+        cur[{'L': 'libc_n', 'C': 'callers_n', 'S': 'sim_n'}[m[1]]] += int(m[2])
         continue
-    for tag, key in (('[PROFL]', 'libc'), ('[PROFC]', 'callers'), ('[PROF]', 'buckets')):
+    for tag, key in (('[PROFL]', 'libc'), ('[PROFC]', 'callers'), ('[PROFS]', 'sim'), ('[PROF]', 'buckets')):
         if tag in line:
             for addr, n in re.findall(r'([0-9a-f]{8}):(\d+)', line):
                 cur[key][int(addr, 16)] += int(n)
@@ -76,4 +79,5 @@ def callers(key, title):
 
 
 callers('libc', 'memcpy/memset/memcmp/memmove, by calling function')
+callers('sim', 'simulation ticks only, by function')
 callers('callers', 'all samples, by calling function (one frame up)')

@@ -46,6 +46,8 @@ void xhw_perf_leave(int prev) {
 
 uint64_t xhw_perf_now(void) { return rdtsc(); }
 
+int xhw_perf_bucket(void) { return *(volatile int*)&s_cur; }
+
 /* Melee runs one simulation tick per pad poll queued since the last frame
  * (up to 5), then renders once: a slow frame makes the next one run more
  * ticks. "ticks" is that count per render pass. */

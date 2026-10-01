@@ -42,6 +42,7 @@ typedef struct {
     uint16_t w, h;
     uint8_t fmt, levels, tlut_fmt, efb;
     uint32_t hash, tlut_hash;
+    uint32_t qhash;             /* quick_hash of the texels, for stable entries (tex_due) */
     uint32_t tex;
     uint32_t last_used, checked;
     uint32_t stable;            /* revalidations passed in a row (tex_due) */
@@ -253,13 +254,15 @@ static void decode_level(const uint8_t* src, uint32_t fmt, uint32_t w, uint32_t 
     }
 }
 
-/* sampled hash: whole small textures, 64 strided words of big ones. Four
- * FNV chains, one per word of every group of four: a single chain is a
- * serial multiply per word (this ran once a frame for every texture drawn). */
+/* sampled hash: whole palettes and tiny textures, 64 strided words of the
+ * rest (whole textures up to 4 KB were hashed before: most of a match's
+ * textures, ~100 cache lines each, ~1% of the console's CPU). Four FNV
+ * chains, one per word of every group of four: a single chain is a serial
+ * multiply per word (this ran once a frame for every texture drawn). */
 static uint32_t hash_bytes(const uint8_t* p, uint32_t n) {
     uint32_t h0 = 2166136261u, h1 = h0 ^ 1, h2 = h0 ^ 2, h3 = h0 ^ 3, i;
     if (!p) return 0;
-    if (n <= 4096) {
+    if (n <= 512) {
         const uint32_t* w = (const uint32_t*)p;
         for (i = 0; i + 16 <= n; i += 16, w += 4) {
             h0 = (h0 ^ w[0]) * 16777619u;
@@ -279,6 +282,17 @@ static uint32_t hash_bytes(const uint8_t* p, uint32_t n) {
         h0 = (h0 ^ *(const uint32_t*)(p + n - 4)) * 16777619u;
     }
     return ((h0 ^ h1) * 16777619u ^ h2) * 16777619u ^ h3;
+}
+
+/* 16 strided words: the recheck of a texture that has stayed the same for a
+ * while (scattered cache misses, so a quarter of hash_bytes' cost) */
+static uint32_t quick_hash(const uint8_t* p, uint32_t n) {
+    uint32_t h = 2166136261u, i, step;
+    if (!p) return 0;
+    if (n <= 64) return hash_bytes(p, n);
+    step = (n / 4 / 16) * 4;
+    for (i = 0; i < 16; i++) h = (h ^ *(const uint32_t*)(p + i * step)) * 16777619u;
+    return (h ^ *(const uint32_t*)(p + n - 4)) * 16777619u;
 }
 
 static Entry* find(const uint8_t* data, uint16_t w, uint16_t h, uint8_t fmt, uint8_t levels, const uint8_t* tlut_data) {
@@ -620,7 +634,8 @@ static int bind_unchanged(uint32_t map, const TexObj* o) {
 
 /* Revalidation (sampled hash of the texels and palette) runs at most once a
  * frame per texture; one that passed TEX_STABLE in a row is checked every
- * fourth frame, staggered by address. The hashes were ~4% of the console's
+ * fourth frame, staggered by address, with a quarter of the samples
+ * (quick_hash). The hashes were ~4% of the console's
  * CPU in a match (some 230 textures a frame, scattered reads of MEM1), and
  * no texture changed there; one rewritten in place shows stale for up to
  * three frames. Movie planes change every other frame and never get there. */
@@ -668,15 +683,17 @@ void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
     bytes = GXGetTexBufferSize(o->w, o->h, o->fmt, o->mipmap, (u8)levels);
     e = find(o->data, o->w, o->h, o->fmt, (uint8_t)levels, tl ? tl->data : NULL);
     if (e && !e->efb && tex_due(e)) {
-        hash = hash_bytes(o->data, bytes);
+        int quick = e->stable >= TEX_STABLE, texels;
+        hash = quick ? quick_hash(o->data, bytes) : hash_bytes(o->data, bytes);
+        texels = hash != (quick ? e->qhash : e->hash);
         if (tl) thash = hash_bytes(tl->data, (tl->entries ? tl->entries : 256) * 2);
-        if (hash != e->hash || thash != e->tlut_hash) {
-            if (hash != e->hash) s_st_chg_data++;
+        if (texels || thash != e->tlut_hash) {
+            if (texels) s_st_chg_data++;
             else s_st_chg_tlut++;
             if (!s_chg_logged) {
                 s_chg_logged = 1;
                 xhw_logf("[TEX] changed: %ux%u fmt %u, %u levels, %s at %p", o->w, o->h, o->fmt, levels,
-                         hash != e->hash ? "texels" : "palette only", (const void*)o->data);
+                         texels ? "texels" : "palette only", (const void*)o->data);
             }
             drop(e);
             e = NULL;
@@ -716,20 +733,31 @@ void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
         e->levels = (uint8_t)levels;
         e->tlut_data = tl ? tl->data : NULL;
         e->hash = hash_bytes(o->data, bytes);
+        e->qhash = quick_hash(o->data, bytes);
         e->tlut_hash = tl ? hash_bytes(tl->data, (tl->entries ? tl->entries : 256) * 2) : 0;
         e->tex = tex;
         e->checked = s_frame;
     }
     e->last_used = s_frame;
-    m->tex = e->tex;
-    m->w = e->w;
-    m->h = e->h;
-    m->wrap_s = o->wrap_s;
-    m->wrap_t = o->wrap_t;
-    m->min_filter = o->min_f;
-    m->mag_filter = o->mag_f;
-    m->lod_bias = o->lod_bias;
-    g_xgx.dirty |= XGX_DIRTY_MAPS;
+    {   /* HSD rebinds the texture a map already has through another texture
+         * object (a new one per material): no change, no dirty bit, so the
+         * back end doesn't rebuild the units and combiners for it (~40% of a
+         * match's draws had MAPS dirty) */
+        XgxMap nm;
+        memset(&nm, 0, sizeof nm);
+        nm.tex = e->tex;
+        nm.w = e->w;
+        nm.h = e->h;
+        nm.wrap_s = o->wrap_s;
+        nm.wrap_t = o->wrap_t;
+        nm.min_filter = o->min_f;
+        nm.mag_filter = o->mag_f;
+        nm.lod_bias = o->lod_bias;
+        if (memcmp(m, &nm, sizeof nm) != 0) {
+            *m = nm;
+            g_xgx.dirty |= XGX_DIRTY_MAPS;
+        }
+    }
     b->obj = *o;
     b->tlut_data = tl ? tl->data : NULL;
     b->tex = e->tex;

@@ -169,6 +169,10 @@ void HSD_DObjAnimAll(HSD_DObj* dobj)
     }
 
     for (dp = dobj; dp != NULL; dp = dp->next) {
+        /* PORT: the nodes walked next (xbox_game_prelude.h HSD_PREFETCH) */
+        HSD_PREFETCH(dp->next);
+        HSD_PREFETCH(dp->mobj);
+        HSD_PREFETCH(dp->pobj);
         HSD_DObjAnim(dp);
     }
 }
@@ -295,6 +299,9 @@ void forceStringAllocation(
 
 #ifdef TARGET_PC
 int gx_dl_culled(const void* list, u32 nbytes, const float mtx[3][4]);
+#ifdef TARGET_XBOX
+void HSD_PObjEnvelopeMemoReset(void);   /* pobj.c */
+#endif
 
 /* PORT: a DObj whose PObjs are all rigid and whose cached display lists
  * all lie outside the view is skipped, material setup included (the
@@ -330,7 +337,11 @@ void HSD_DObjDisp(HSD_DObj* dobj, Mtx vmtx, Mtx pmtx, u32 rendermode)
     if ((rendermode & 0x4000000) == 0) {
         HSD_MOBJ_METHOD(dobj->mobj)->setup(dobj->mobj, rendermode);
     }
+#ifdef TARGET_XBOX
+    HSD_PObjEnvelopeMemoReset();   /* PORT: pobj.c SetupEnvelopeModelMtx */
+#endif
     for (p = dobj->pobj; p != NULL; p = p->next) {
+        HSD_PREFETCH(p->next);   /* PORT: xbox_game_prelude.h */
         HSD_POBJ_METHOD(p)->disp(p, vmtx, pmtx, rendermode);
     }
     if ((rendermode & 0x4000000) == 0) {

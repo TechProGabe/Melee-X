@@ -10,6 +10,9 @@ cmake_minimum_required(VERSION 3.16)
 project(melee_x C)
 
 set(ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
+# __FILE__ relative to the checkout: no builder's home directory in the XBE
+get_filename_component(ROOT_ABS "${ROOT}" ABSOLUTE)
+add_compile_options("-ffile-prefix-map=${ROOT_ABS}/=")
 set(NXDK_DIR $ENV{NXDK_DIR})
 
 # ---- pbkit, patched so a GPU fault can't freeze the console ----

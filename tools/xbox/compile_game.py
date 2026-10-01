@@ -47,8 +47,12 @@ SYSTEM_FLAGS = [
     '-U_WIN32', '-U__MINGW32__', '-U__MINGW64__', '-UWIN32', '-U__WIN32', '-U__WIN32__',
 ]
 
+# __FILE__ (HSD's asserts) relative to the checkout: no builder's home
+# directory in the XBE
+PREFIX_MAP = [f'-ffile-prefix-map={ROOT.as_posix()}/=', f'-ffile-prefix-map={ROOT}{os.sep}=']
+
 PREPROCESS_FLAGS = [
-    *TRIPLE, *SYSTEM_FLAGS, '-fsigned-char',
+    *TRIPLE, *SYSTEM_FLAGS, *PREFIX_MAP, '-fsigned-char',
     '-DTARGET_PC=1', '-DMELEE_PC=1', '-DTARGET_XBOX=1', '-DMELEE_DISC_LOWERING=1',
     '-Ixbox/include/game', '-Iextern/aurora/include', '-Isrc', '-Isrc/sdk_include',
     '-include', 'xbox/include/game/xbox_game_prelude.h',
@@ -75,9 +79,11 @@ COMPILE_FLAGS = [
 
 
 def game_sources():
-    sources = sorted([*(ROOT / 'src/melee').rglob('*.c'), *(ROOT / 'src/sysdolphin').rglob('*.c')])
+    # sorted case-sensitively, as on Linux (link order = code layout)
+    posix = lambda p: p.as_posix()
+    sources = sorted([*(ROOT / 'src/melee').rglob('*.c'), *(ROOT / 'src/sysdolphin').rglob('*.c')], key=posix)
     sources += [ROOT / 'src/pc' / n for n in ('vtxarray.c', 'widescreen.c', 'region.c', 'discfont.c')]
-    sources += sorted((ROOT / 'src/pc/libm').glob('pc_*.c'))
+    sources += sorted((ROOT / 'src/pc/libm').glob('pc_*.c'), key=posix)
     # PowerPC/MetroTRK debugger integration and the netplay determinism probe.
     skip = {'debugconsole_main.c', 'pc_perturb.c'}
     return [s for s in sources if s.name not in skip]
@@ -89,7 +95,8 @@ def up_to_date(obj, dep, source):
     if not obj.exists() or not dep.exists():
         return False
     stamp = obj.stat().st_mtime
-    deps = dep.read_text().replace('\\\n', ' ').split(':', 1)[-1].split()
+    # ': ' ends the target (a Windows target has a drive colon of its own)
+    deps = dep.read_text().replace('\\\n', ' ').split(': ', 1)[-1].split()
     for d in [str(source), __file__, str(DISC_LOWER), *deps]:
         path = pathlib.Path(d) if os.path.isabs(d) else ROOT / d
         try:

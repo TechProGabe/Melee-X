@@ -181,6 +181,18 @@ or texture rewritten in place may draw stale for up to three frames.
 `-DXGX_PB_KICK`, `-DXGX_VB_CACHE_BREAK=0` and `-DXGX_VBUF_FREE_NOW=0` undo
 the GPU-side changes one at a time, to bisect the console's GPU stalls.
 
+**The GPU finishes a frame while the CPU starts the next (v33).** The wait
+for GPU idle moved from `xgx_present` to the next frame's first GPU use
+(`frame_open`), so the GPU draws the last frame and runs the queued flip
+during the next simulation ticks; the frame-rate counter is drawn by the
+GPU. The invariant every frame relies on (an idle GPU when the frame
+opens) is kept. `-DXGX_OVERLAP=0` restores the old order. With it, v33's
+other back-end changes (`docs/renderer.md` "CPU cost of the back end"):
+stable lists and textures are revalidated with 16 samples instead of 64
+(same schedule), and textures above 512 bytes are sampled rather than
+hashed in full; the cost is a lower chance of noticing a partial in-place
+rewrite of a list or texture that had stayed the same for two seconds.
+
 **Logs that survive a long session.** `boot.log` keeps the first 4 MB, then
 the log alternates between `boot2.log` and `boot3.log` (2 MB each), and
 `[DRAW]` trace lines go to `trace.log`: v28's trace filled the old 2 MB cap
@@ -341,6 +353,28 @@ marked `PORT:`:
   menu back to the title). The overflow report gives the bank's use.
   `lbaudio_ax.c` (`lbAudioAx_80023B24`, the sound test) waits for loads in
   flight before emptying bank 2, so a late one can't fill it uncounted.
+- `HSD_PREFETCH` (v33, `xbox/include/game/xbox_game_prelude.h`): cache-line
+  prefetches of the next nodes in HSD's list walks: `jobj.c`
+  (`JObjAnimAll`, `HSD_JObjDispAll`), `dobj.c` (`HSD_DObjAnimAll`,
+  `HSD_DObjDisp`), `pobj.c` (`HSD_PObjAnimAll`), `mobj.c` (`HSD_MObjAnim`),
+  `tobj.c` (`HSD_TObjAnimAll`), `fobj.c` (`HSD_FObjInterpretAnimAll`),
+  `aobj.c` (`HSD_AObjInterpretAnim`), `displayfunc.c` (`HSD_JObjDispDObj`'s
+  DObj loop). Hints only: no result changes, the simulation stays bit for
+  bit. v33's console profile had the simulation's animation pass stalling on
+  the first load from each node (128 KB L2, no hardware prefetcher).
+- `src/sysdolphin/baselib/pobj.c` (`SetupEnvelopeModelMtx`) and `dobj.c`
+  (`HSD_DObjDisp`), v35: within one DObj, an envelope (same joints and
+  weights, same view matrix and setup flags) that an earlier PObj already
+  set up reuses its position and normal matrices instead of blending,
+  concatenating and inverting again (~1250 envelope matrices a frame in a
+  4-CPU match, ~630 distinct). The same bits and the same GX loads; the memo
+  is cleared before each DObj's PObjs, where no joint can move.
+- `src/melee/gr/grbigblue.c` (`grBb_YakumonoParam`), v36: the stage's
+  parameters from the disc are `DISC_STRUCT` (and `x134_translate` a
+  `DiscVec3`). Every other stage's parameter struct already was; this one
+  was read byte-swapped, the platforms' x came out near -4e8 and
+  `lbVector_WorldToScreen`'s range assert stopped the console on the first
+  frame of a Big Blue match.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after

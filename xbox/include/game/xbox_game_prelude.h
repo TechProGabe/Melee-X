@@ -43,6 +43,14 @@ float pc_cosf(float);
 float pc_tanf(float);
 float pc_atanf(float);
 
+/* A cache-line prefetch (SSE prefetcht0): a hint that changes no result.
+ * The console's CPU has 128 KB of L2 and no hardware prefetcher, and HSD
+ * walks linked lists of scattered objects (every JObj, DObj, PObj, MObj,
+ * TObj and FObj each simulation tick): its v32/v33 profiles stall on the
+ * first load from each node. PORT: uses in HSD fetch the next nodes while
+ * the current one is processed. A NULL or stale pointer is fine. */
+#define HSD_PREFETCH(p) __builtin_prefetch((const void*)(p))
+
 #ifndef M_PI
 #define M_E 2.7182818284590452354
 #define M_LOG2E 1.4426950408889634074

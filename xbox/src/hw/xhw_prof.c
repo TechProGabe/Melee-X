@@ -17,6 +17,9 @@
  * has already made a call, of its caller: one frame up either way). Those are
  * counted too: [PROFL] for samples inside memcpy/memset/memcmp/memmove (who
  * copies), [PROFC] for every sample (the hottest call sites one level up).
+ * [PROFS] buckets count only the samples taken while [PERF]'s current
+ * bucket was the simulation (xhw_perf_bucket), to tell its cost from the
+ * render pass's in the shared HSD code (animation, matrices).
  *
  * xhw_thread_eip() is always built: the watchdog uses it to say where the
  * game thread is stuck. */
@@ -67,8 +70,9 @@ unsigned long xhw_thread_eip(void* kthread, unsigned long* esp_out) {
 
 #if XHW_PROF
 static uint16_t* s_hist;
+static uint16_t* s_hist_sim;   /* the samples taken during the simulation ticks */
 static uint32_t s_nbuckets;
-static uint32_t s_placed, s_outside, s_waiting, s_noframe;
+static uint32_t s_placed, s_outside, s_waiting, s_noframe, s_sim_placed;
 
 /* return address -> samples, open addressing */
 #define CT_SIZE 4096
@@ -132,7 +136,7 @@ static uint32_t caller_of(uint32_t esp) {
  * line, each flushed (the log does that for the first 600 frames), it took
  * ~10 s on the console and starved the disc image reads on the same disk:
  * the character select load stalled long enough to trip the watchdog. */
-static char s_rep[16384];
+static char s_rep[24576];
 static int s_rlen;
 
 static void rep(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -167,6 +171,31 @@ static void report_callers(const char* tag, const char* what, CallerTable* t) {
     memset(t, 0, sizeof *t);
 }
 
+/* the hottest buckets of a histogram as `tag` lines */
+static void report_hist(const char* tag, uint16_t* hist) {
+    uint32_t i, k, best[TOP], bestn[TOP];
+    memset(best, 0, sizeof best);
+    memset(bestn, 0, sizeof bestn);
+    for (i = 0; i < s_nbuckets; i++) {
+        uint32_t c = hist[i];
+        if (!c || c <= bestn[TOP - 1]) continue;
+        for (k = TOP - 1; k > 0 && bestn[k - 1] < c; k--) {
+            best[k] = best[k - 1];
+            bestn[k] = bestn[k - 1];
+        }
+        best[k] = i;
+        bestn[k] = c;
+    }
+    for (k = 0; k < TOP && bestn[k]; k += 6) {
+        int j;
+        rep("%s", tag);
+        for (j = 0; j < 6 && k + j < TOP && bestn[k + j]; j++)
+            rep(" %08x:%u", xhw_image_base + (best[k + j] << BUCKET_SHIFT), bestn[k + j]);
+        rep("\n");
+    }
+    memset(hist, 0, s_nbuckets * sizeof hist[0]);
+}
+
 static void report(void) {
     uint32_t i, k, best[TOP], bestn[TOP], total = s_placed + s_outside;
     memset(best, 0, sizeof best);
@@ -192,7 +221,11 @@ static void report(void) {
         rep("\n");
     }
     memset(s_hist, 0, s_nbuckets * sizeof s_hist[0]);
-    s_placed = s_outside = s_waiting = s_noframe = 0;
+    if (s_hist_sim) {
+        rep("[PROFS] %u samples in the simulation\n", s_sim_placed);
+        report_hist("[PROFS]", s_hist_sim);
+    }
+    s_placed = s_outside = s_waiting = s_noframe = s_sim_placed = 0;
     report_callers("[PROFL]", "in memcpy/memset/memcmp/memmove, by caller", s_libc);
     report_callers("[PROFC]", "by caller (one frame up)", s_callers);
     if (s_rlen && s_rep[s_rlen - 1] == '\n') s_rlen--;
@@ -221,6 +254,10 @@ static DWORD WINAPI sampler(LPVOID arg) {
             uint32_t b = (eip - xhw_image_base) >> BUCKET_SHIFT;
             if (s_hist[b] != 0xFFFF) s_hist[b]++;
             s_placed++;
+            if (s_hist_sim && xhw_perf_bucket() == XHW_PERF_LOGIC) {
+                if (s_hist_sim[b] != 0xFFFF) s_hist_sim[b]++;
+                s_sim_placed++;
+            }
             if (caller) {
                 ct_add(s_callers, caller);
                 if (eip >= s_libc_lo && eip < s_libc_hi) ct_add(s_libc, caller);
@@ -241,6 +278,7 @@ void xhw_prof_start(void) {
     uint32_t fn[4] = { (uint32_t)&memcpy, (uint32_t)&memmove, (uint32_t)&memset, (uint32_t)&memcmp }, i;
     s_nbuckets = ((xhw_image_end - xhw_image_base) >> BUCKET_SHIFT) + 1;
     s_hist = (uint16_t*)calloc(s_nbuckets, sizeof s_hist[0]);
+    s_hist_sim = (uint16_t*)calloc(s_nbuckets, sizeof s_hist_sim[0]);
     s_libc = (CallerTable*)calloc(1, sizeof *s_libc);
     s_callers = (CallerTable*)calloc(1, sizeof *s_callers);
     if (!s_hist || !s_libc || !s_callers) return;

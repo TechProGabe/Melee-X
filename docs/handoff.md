@@ -26,58 +26,31 @@ what they held is here. Read `CLAUDE.md`, then this, then
   again); the Fountain reflection has no indirect stages in xemu (needs a
   console BACK shot before changing anything).
 
-## Windows setup (not yet tried on Windows)
+## Windows setup
 
-The tools were written on macOS; the scripts below were adjusted for Git
-Bash but haven't run there yet. Expect small fixes.
+Tried and working (2026-10-01). Docker and WSL2 need CPU virtualization,
+which can be off in the BIOS, so the build also runs natively:
 
-- **Git Bash** (comes with Git for Windows) for the `.sh` scripts.
-  `xemu_run.sh` and `docker/build.sh` set `MSYS_NO_PATHCONV=1` and pass
-  `C:/...` paths to docker and xemu when they detect MSYS.
-- **Docker Desktop**, then once: `docker build -t melee-x:sdk tools/xbox/docker`.
-  Build: `tools/xbox/docker/build.sh` (the first build takes a while).
-- **Python 3** with Pillow (`pip install pillow`) for the dashboard icon,
-  `fbdump_to_png.py` and the host tests. The host tests compile C with a
-  host compiler: on macOS `test_anim_mtx.py` needed
-  `CC=/opt/homebrew/opt/llvm/bin/clang`; on Windows try clang from LLVM or
-  run them in WSL. `test_lower.py` needs `/opt/llvm21` (the docker image).
-- **xemu for Windows.** Supply your own files; none are committed: MCPX
-  boot ROM, BIOS (flash), EEPROM, HDD image (qcow2, 64 MB RAM setting), and
-  the GALE01 rev 2 image (`melee102.iso`). A minimal `xemu.toml`:
-
-  ```toml
-  [general]
-  show_welcome = false
-  skip_boot_anim = true
-  [general.updates]
-  check = false
-  [sys.files]
-  bootrom_path = 'C:/xemu/mcpx.bin'
-  flashrom_path = 'C:/xemu/bios.bin'
-  eeprom_path = 'C:/xemu/eeprom.bin'
-  hdd_path = 'C:/xemu/hdd.qcow2'
-  ```
-
-- A run (Git Bash):
-
-  ```sh
-  XBOX_CFLAGS=-DXHW_AUTOPAD=1 tools/xbox/docker/build.sh
-  MX_XEMU=/c/xemu/xemu.exe MX_RUN=/c/xemu/run MX_ISO=/c/xemu/melee102.iso \
-  MX_STAGE_EXTRA=tools/xbox/scenarios/gl MX_XEMU_ARGS="-config_path C:/xemu/xemu.toml" \
-    tools/xbox/xemu_run.sh 330 'FBDUMP\] END'
-  python tools/xbox/fbdump_to_png.py /c/xemu/run/serial.log shots
-  ```
-
-  Kill a stale xemu first (it holds the HDD's write lock):
-  `taskkill //F //IM xemu.exe`. xemu on a Windows PC (x86 host, likely KVM-
-  less WHPX or TCG) will run at a different speed than on the Mac's TCG:
-  re-baseline the standard run's `[PERF]` before comparing.
-- **Console** (any OS): `tools/xbox/console.py` replaces the per-round
-  bash scripts: `stage vNN` (copies the build and its map into
-  `~/xemu/hw`, override with `MX_HW`), `deploy vNN` (deletes the old
-  logs/shots, uploads, re-downloads to verify), `pull vNN` (logs and shots
-  to `hw/logsNN`), `ls`. Its FTP path is untested (the console was off when
-  it was written); the old curl scripts worked. Next build number: **v33**.
+- **MSYS2** (`C:\msys64`) with `make git bison flex cmake ninja` and the
+  `mingw-w64-x86_64-` `clang lld llvm python python-pillow gcc` packages.
+  Not mingw's own `cmake`/`ninja`: they can't run nxdk's shell wrappers.
+  MSYS2's clang is LLVM 21.1.8, the Docker image's version.
+- **nxdk** at the Dockerfile's `NXDK_SHA` in `C:\xdev\nxdk`, built once
+  with `make tools` and `make NXDK_ONLY=y NXDK_SDL=y NXDK_CXX=y` (see
+  `tools/xbox/msys/build.sh`).
+- **Build** from Git Bash: `tools/xbox/msys/build.sh` (passes `XBOX_CFLAGS`
+  and friends through; Git Bash's environment doesn't reach MSYS2's bash).
+  The code layout matches the Docker build's (v32's map, symbol for
+  symbol). `-ffile-prefix-map` keeps the checkout path out of the XBE.
+- **xemu**: the Windows release; `tools/xbox/xemu_run.sh` with
+  `MX_XISO=<nxdk>/tools/extract-xiso/build/extract-xiso.exe` instead of the
+  Docker image's packer. Kill a stale one with `taskkill //F //IM xemu.exe`.
+  On an x86 PC xemu runs ~19 fps in the standard match (v32), ~33 (v33 on).
+- **Console**: `MX_FTP_HOST=<the Xbox's IP> tools/xbox/console.py stage|deploy|pull vNN`;
+  stage also writes `<map>.statics` (static functions, for the profiler).
+- **Release**: plain build (no `XBOX_CFLAGS`), then
+  `tools/xbox/package_release.py <name>` -> `dist/Melee-X-<name>.zip`;
+  `tools/make-xiso` packs a burnable disc (README).
 
 ## Scenarios (`tools/xbox/scenarios/`)
 
@@ -127,9 +100,9 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
   `MELEE_DEBUG_VS_CHARS=<ckind>[:<color>][h],...`, `MELEE_DEBUG_VS_ITEMS=<hex>`,
   `MELEE_DEBUG_KIRBY_HAT=<FighterKind>`, `XGX_SKIP=<a>-<b>` (trace builds).
   Shot timing differs between builds.
-- **Console**: FTP `192.168.158.113`, `xbox`/`xbox`, reachable only while
+- **Console**: FTP at the console's IP (`MX_FTP_HOST`), `xbox`/`xbox`, reachable only while
   on. Dashboard UnleashX caches icons by title ID (4d580001). The user's 100%
-  save is a Dolphin `.gci` kept on the Mac (`~/Downloads/...35037.gci`);
+  save is a Dolphin `.gci` kept off the repo;
   never restore the corrupted copies in `~/xemu/hw/card-*`.
 - **Dolphin reference** (unfinished): an isolated user dir with a Gecko code
   forcing the attract stage; blocked at the memory card prompt; next idea
