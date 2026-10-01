@@ -12,6 +12,8 @@ This isn't an emulator. The [doldecomp](https://github.com/doldecomp/melee) proj
 
 You need your own copy of the game. Nothing from Nintendo ships with this.
 
+The Xbox side grew out of [OpenCrossing-Xbox](https://github.com/GabeConway/OpenCrossing-Xbox), my Animal Crossing port.
+
 ## What you need
 
 - A modded original Xbox (softmod or modchip) that runs homebrew. A stock 64 MB console is fine.
@@ -95,7 +97,7 @@ Settings are in `E:\UDATA\4d580001\settings.ini`. Melee-X writes it the first ti
 |---|---|---|
 | `[video]` | `720p` | 1 uses 720p when your dashboard has it turned on (needs component cables) |
 | | `widescreen` | 1 draws 16:9 at 480i/480p when the dashboard is set to widescreen |
-| | `fps` | 1 shows a frame counter in the top left corner |
+| | `fps` | 1 shows a frame counter in the top left corner (off by default) |
 | `[input]` | `rumble` | rumble strength in percent, 0 turns it off |
 | `[port1]` to `[port4]` | `stick_deadzone`, `cstick_deadzone` | stick dead zones in percent |
 | | `trigger_click` | how far (0-255) a trigger goes in before it counts as a full L/R press |
@@ -117,8 +119,6 @@ Settings are in `E:\UDATA\4d580001\settings.ini`. Melee-X writes it the first ti
 | Start | Start |
 
 The layout matches where the buttons sit on a GameCube pad. Every port can be remapped in `settings.ini`.
-
-Back saves a screenshot to `E:\UDATA\4d580001\` as a `.bmp`.
 
 ## If something breaks
 
@@ -146,6 +146,6 @@ Not affiliated with or endorsed by Nintendo or Microsoft. Super Smash Bros. Mele
 - [doldecomp/melee](https://github.com/doldecomp/melee), the decompilation this is all built on
 - [melee-pc](https://github.com/999sian/melee-pc), the PC port that made the decomp run on little-endian machines
 - [encounter/aurora](https://github.com/encounter/aurora) for the Dolphin SDK headers
-- [OpenCrossing-Xbox](https://github.com/GabeConway/OpenCrossing-Xbox), where the Xbox audio, crash handling and GPU combiner code came from
 - [nxdk](https://github.com/XboxDev/nxdk), [xemu](https://xemu.app) and [xdvdfs](https://github.com/antangelo/xdvdfs), the open Xbox toolchain, emulator and ISO packer
-- AI tools (Claude) were used in developing this port.
+
+> AI tools (Claude) were used in developing this port.

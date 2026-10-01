@@ -193,6 +193,12 @@ stable lists and textures are revalidated with 16 samples instead of 64
 hashed in full; the cost is a lower chance of noticing a partial in-place
 rewrite of a list or texture that had stayed the same for two seconds.
 
+**Release builds have no test tools (v37).** A plain build is a release:
+BACK does nothing and the frame-rate counter is off unless `settings.ini`
+turns it on. The profiler and autopad builds, which every console test
+round uses, imply `XHW_TEST_BUILD` and keep BACK screenshots and the
+counter (`docs/testing.md`).
+
 **Logs that survive a long session.** `boot.log` keeps the first 4 MB, then
 the log alternates between `boot2.log` and `boot3.log` (2 MB each), and
 `[DRAW]` trace lines go to `trace.log`: v28's trace filled the old 2 MB cap

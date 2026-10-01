@@ -13,6 +13,19 @@
 extern "C" {
 #endif
 
+/* Test builds (the profiler's or autopad's, or -DXHW_TEST_BUILD=1) keep the
+ * tools for console rounds: BACK takes a screenshot (BACK+Y flushes the
+ * caches) and the frame-rate counter is on by default. A plain build is a
+ * release: BACK does nothing and the counter is off unless settings.ini
+ * says fps = 1. */
+#ifndef XHW_TEST_BUILD
+#if (defined(XHW_PROF) && XHW_PROF) || (defined(XHW_AUTOPAD) && XHW_AUTOPAD)
+#define XHW_TEST_BUILD 1
+#else
+#define XHW_TEST_BUILD 0
+#endif
+#endif
+
 /* ---- logging (COM1 when present, E:\UDATA\...\boot.log / last.log) ---- */
 void xhw_log(const char* line);
 void xhw_logf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));

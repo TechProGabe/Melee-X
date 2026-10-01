@@ -142,7 +142,7 @@ started with `xhw_thread_start`.
 [video]
 720p = 1            ; use 720p (16:9) when the dashboard allows it
 widescreen = 1      ; 16:9 at 480 when the dashboard is set to widescreen
-fps = 1             ; frame-rate counter in the top-left corner (default: XSDK_FPS_DEFAULT, 1 for now)
+fps = 0             ; frame-rate counter in the top-left corner (default: 1 in test builds, 0 in a release)
 [input]
 rumble = 100        ; percent
 [port1]             ; .. [port4]

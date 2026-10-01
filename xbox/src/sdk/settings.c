@@ -25,10 +25,10 @@
 #include "xhw.h"
 #include "xsdk_settings.h"
 
-/* the frame-rate counter's default when settings.ini has no fps line: on
- * while the hardware test builds need it */
+/* the frame-rate counter's default when settings.ini has no fps line: on in
+ * test builds, off in a release (XHW_TEST_BUILD, xhw.h) */
 #ifndef XSDK_FPS_DEFAULT
-#define XSDK_FPS_DEFAULT 1
+#define XSDK_FPS_DEFAULT XHW_TEST_BUILD
 #endif
 
 xsdk_settings g_xsdk_settings;
