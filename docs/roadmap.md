@@ -146,6 +146,16 @@ In order, measured against the console's `[PERF]`/`[PROF]` lines
 
 ## Future features
 
+- **Settings menu**: an in-game screen for what only `settings.ini` sets
+  today (`docs/platform.md`): video mode (720p / 480p / 480i, widescreen),
+  rumble, per-port button mapping and dead zones, plus port toggles worth
+  exposing (screenshot button, `[PERF]` overlay, texture pool size, the
+  performance trade-offs as they appear). Options: a page in Melee's own
+  Options menu (imported menu code, `PORT:` edits), or a separate Melee-X
+  screen before the title (held button at boot, drawn with the splash
+  code). Writes `settings.ini`; a video-mode change needs a restart (the
+  NV2A and pools are sized at boot).
+
 - **Front LED effects**: the SMC takes a custom four-step red/green pattern
   over SMBus (`HalWriteSMBusValue(0x20, 0x08, 0, pattern)` then register
   0x07 = 1; register 0x07 = 0 hands the LED back to the SMC). Ideas: a
