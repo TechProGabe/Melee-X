@@ -688,6 +688,14 @@ int lbAudioAx_80023B24(int id)
         HSD_AudioSFXKeyOffAll();
         if (lbl_80433984[slot] != 2) {
             fn_800269AC_delay();
+#ifdef TARGET_PC
+            /* PORT: let a load still in flight (the character select
+             * queues SSMs without waiting) finish before the bank is
+             * emptied; landing afterwards it would fill bank 2 with an
+             * SSM the tables below no longer count, and a later load
+             * overflows the bank. */
+            HSD_SynthSFXWaitForLoadCompletion(lb_800195D0);
+#endif
             HSD_SynthSFXUnloadBank(2);
 
             {

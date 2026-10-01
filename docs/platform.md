@@ -189,12 +189,17 @@ right = RIGHT
    and moving that index on doesn't restart it on the MCPX: one v13 boot
    was silent throughout (`audio 0%`, the ring never drained). The pump
    clears the sticky status bits and restarts a halted or stuck engine,
-   logging `[AUDIO] AC97 halted/stuck ... restarting` (first eight). After
-   three restarts without a finished buffer it cold-resets the AC-link,
-   reprograms the descriptor lists and queues from index 0 again (`[AUDIO]
-   AC97 cold reset (n)` with the global control and status registers): v27
-   once came up with the engine running but CIV stuck at 0, silent for the
-   whole boot, which restarts alone never fixed.
+   logging `[AUDIO] AC97 halted/stuck ... restarting` (first eight). Every
+   start, the first one included, goes through `aci_start`: reset the bus
+   masters, queue seven buffers of audio from index 0, set LVI, and only
+   then the run bit. Until v31 the run bit could be set on an empty
+   descriptor 0: at boot the init raced the pump thread, a restart only
+   toggled the run bit, and a cold reset zeroed the descriptors and ran at
+   once. Then CIV stayed at 0 with the engine running, silent for the
+   whole boot (v27, v31), and every boot logged one `halted` restart. After
+   three restarts without a finished buffer the pump also cold-resets the
+   AC-link (`[AUDIO] AC97 cold reset (n)` with the global control and
+   status registers).
 5. Under xemu (detected by CPUID) an MCPX APU voice is used instead.
 
 ## CARD (`card.c`)

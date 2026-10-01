@@ -31,7 +31,7 @@ static uint32_t s_in_rate = 32000;
 #define ACI ((volatile uint8_t*)0xFEC00000)
 
 static int16_t* s_outbuf[NBUF];
-static int s_pump_run, s_started;
+static int s_pump_run, s_started, s_aci_on;
 static unsigned s_queued;
 static uint32_t s_frac;
 
@@ -96,28 +96,37 @@ static int aci_init(void) {
     return aci_reset();
 }
 
-/* Cold-resets the AC-link and both bus masters and points them at the
- * descriptor lists again (empty: the pump queues from index 0). */
-static int aci_reset(void) {
+/* Stops both bus masters, resets them (CIV and LVI back to 0) and points
+ * them at empty descriptor lists. The engine stays stopped: aci_start
+ * queues buffers before it sets the run bit. */
+static void aci_bm_reset(void) {
     volatile uint32_t* m = (volatile uint32_t*)ACI;
-    LARGE_INTEGER d;
-    memset(s_desc_pcm, 0, 2 * 32 * sizeof(AciDesc));
     ACI[0x11B] = 0;   /* DMA and interrupt enables off first */
     ACI[0x17B] = 0;
-    m[0x12C >> 2] &= ~2u;   /* cold reset the AC-link */
-    d.QuadPart = -10 * 1000;
-    KeDelayExecutionThread(KernelMode, FALSE, &d);
-    m[0x12C >> 2] |= 2u;
-    aci_wait(&m[0x130 >> 2], 0x100, 0x100, "codec ready");   /* logged; carry on as before */
     ACI[0x11B] = 1u << 1;   /* reset both bus masters */
     ACI[0x17B] = 1u << 1;
     { int i; for (i = 0; i < 1000000 && ((ACI[0x11B] | ACI[0x17B]) & 2); i++) {} }
+    memset(s_desc_pcm, 0, 2 * 32 * sizeof(AciDesc));
     ACI[0x116] = 0xFF;
     ACI[0x176] = 0xFF;
     m[0x100 >> 2] = 0;
     m[0x110 >> 2] = MmGetPhysicalAddress(s_desc_pcm);
     m[0x170 >> 2] = MmGetPhysicalAddress(s_desc_spdif);
     s_next_desc = 0;
+}
+
+/* Cold-resets the AC-link, then the bus masters. */
+static int aci_reset(void) {
+    volatile uint32_t* m = (volatile uint32_t*)ACI;
+    LARGE_INTEGER d;
+    ACI[0x11B] = 0;
+    ACI[0x17B] = 0;
+    m[0x12C >> 2] &= ~2u;   /* cold reset the AC-link */
+    d.QuadPart = -10 * 1000;
+    KeDelayExecutionThread(KernelMode, FALSE, &d);
+    m[0x12C >> 2] |= 2u;
+    aci_wait(&m[0x130 >> 2], 0x100, 0x100, "codec ready");   /* logged; carry on as before */
+    aci_bm_reset();
     return 1;
 }
 
@@ -136,6 +145,25 @@ static void aci_queue(const int16_t* buf, unsigned bytes) {
 static void aci_run(int on) {
     ACI[0x11B] = on ? 1 : 0;
     ACI[0x17B] = on ? 1 : 0;
+}
+
+/* (Re)starts playback from a clean engine: bus masters reset, NBUF - 1
+ * buffers of audio queued from index 0, LVI on the last of them, and only
+ * then the run bit. v31 on the console: the run bit was set with
+ * descriptor 0 still empty (at boot the pump thread raced the init's
+ * aci_run, a restart only toggled the run bit, and a cold reset zeroed
+ * every descriptor and ran at once): CIV stayed at 0 with the engine
+ * running, silent for the whole boot, cold resets included (v27 too). */
+static void aci_start(void) {
+    aci_bm_reset();
+    s_queued = 0;
+    while (s_queued < NBUF - 1) {
+        int16_t* b = s_outbuf[s_queued % NBUF];
+        fill_48k(b);
+        aci_queue(b, OUT_FRAMES * 4);
+        s_queued++;
+    }
+    aci_run(1);
 }
 
 /* Polled, nobody clears the status bits or notices a halt. If the pump
@@ -160,10 +188,9 @@ static void aci_check(unsigned civ) {
                      ACI[0x115] & 31u, sr, sr2, s_aci_restarts);
         aci_run(0);
         /* v27 on the console: running (sr 00) but CIV never left 0 through
-         * eight restarts, silent for the whole boot. Starting the bus master
-         * again doesn't help when the codec isn't taking frames: after three
-         * restarts without a finished buffer, cold-reset the AC-link (with a
-         * pause that grows) and queue from index 0 again. */
+         * eight restarts, silent for the whole boot. If the codec isn't
+         * taking frames, after three restarts without a finished buffer,
+         * cold-reset the AC-link (with a pause that grows) as well. */
         if (++s_aci_dead >= 3 && s_aci_resets < 32) {
             volatile uint32_t* m = (volatile uint32_t*)ACI;
             LARGE_INTEGER d;
@@ -172,14 +199,11 @@ static void aci_check(unsigned civ) {
             KeDelayExecutionThread(KernelMode, FALSE, &d);
             xhw_logf("[AUDIO] AC97 cold reset (%u): global control %08x status %08x", s_aci_resets,
                      (unsigned)m[0x12C >> 2], (unsigned)m[0x130 >> 2]);
-            if (aci_reset()) {
-                s_queued = 0;
-                s_next_desc = 0;
-                s_aci_last_civ = 99;
-            }
+            aci_reset();
             s_aci_dead = 0;
         }
-        aci_run(1);
+        aci_start();
+        s_aci_last_civ = ACI[0x114] & 31;
         s_aci_stuck = 0;
     }
 }
@@ -276,9 +300,16 @@ static void pump(void* arg) {
         if (s_apu) {
             apu_pump();
         } else {
-            unsigned civ = ACI[0x114] & 31;
-            unsigned ahead = ((s_queued & 31) - civ) & 31;
+            unsigned civ, ahead;
+            if (!s_aci_on) {   /* first start here, after the queue is filled */
+                aci_start();
+                s_aci_last_civ = ACI[0x114] & 31;
+                s_aci_on = 1;
+            }
+            civ = ACI[0x114] & 31;
             aci_check(civ);
+            civ = ACI[0x114] & 31;
+            ahead = ((s_queued & 31) - civ) & 31;
             while (ahead < NBUF - 1) {
                 int16_t* b = s_outbuf[s_queued % NBUF];
                 fill_48k(b);
@@ -321,9 +352,9 @@ int xhw_audio_init(uint32_t rate) {
         *(volatile uint16_t*)(ACI + 0x18) = 0x0000;
     }
     s_apu = XHW_AUDIO_APU && xemu && apu_init();
+    s_aci_on = 0;
     ASET(s_pump_run, 1);
-    xhw_thread_start(pump, NULL, 2, 16 * 1024);
-    if (!s_apu) aci_run(1);
+    xhw_thread_start(pump, NULL, 2, 16 * 1024);   /* AC97: the pump starts the engine */
     s_started = 1;
     xhw_logf("[AUDIO] %s, %u Hz in -> 48 kHz", s_apu ? "xemu APU voice" : "AC97 polled", s_in_rate);
     return 1;

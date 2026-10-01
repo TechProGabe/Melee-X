@@ -69,7 +69,39 @@ Found and fixed on the console in v17-v25 (details in `renderer.md`,
 
 ## Next
 
-v31 round (in progress): fixed in xemu: Kirby's grey Falcon helmet during
+v32 round (in progress): fixes for the two v31 console problems, below.
+Check audio first on the console (`[AUDIO]` lines; rule: every console
+build gets an audio review of what changed since the last good boot).
+
+- **No sound for the whole boot** (v31, v27 before it): `AC97 stuck: civ 0
+  lvi 6 sr 00/00`, restarts and 31 cold resets never recovered. The run bit
+  could be set while descriptor 0 was still empty (boot raced the pump
+  thread; a restart only toggled the run bit; a cold reset zeroed the
+  descriptors and ran at once). Now every start resets the bus masters,
+  queues seven buffers, then runs (`aci_start`, `docs/platform.md`). In xemu
+  with `-DXHW_AUDIO_APU=0` the AC97 started once with no `halted` restart
+  (every earlier console boot logged one).
+- **Hang going from the Data menu back to the title** (hang.log: the title's
+  `lbAudioAx_80027648` waiting on `HSD_SynthSFXWaitForLoadCompletion`):
+  `Can't load SFX file; bank(id=2) buffer overflow`, then its callback
+  queued the same SSM again, overflowing again on the DVD thread forever.
+  The v30 reload guard therefore never ran (the v29 Jungle Japes hang was
+  the same loop). Overflows now drop the load without the callback, the
+  guard reloads bank 2 from empty, and the report gives the bank's use
+  (look for it, and for `[WARN] SFX bank 2 load failed`, in v32's log). The
+  sound test also waits for in-flight loads before emptying bank 2. Why the
+  bank's real fill outgrew the game's accounting is still open; the
+  per-SSM size table is never smaller than the US files (checked against
+  the disc), so it isn't that.
+
+v31 on the console (2026-10-01, `~/xemu/hw/logs31`, map `melee_x.v31.map`):
+Kirby's Falcon helmet, capsules and crates fixed; Mute City 30-40 fps (was
+the slowest stage), Onett 40-50, Fountain of Dreams looks right but dips to
+~15 fps at moments (to look at); no crashes over many matches; "with audio
+fixed, almost a release candidate". To do later: the FPS counter's
+options-menu toggle (now `settings.ini` `[video] fps`).
+
+v31 round: fixed in xemu: Kirby's grey Falcon helmet during
 Falcon Punch (`HSD_TExpSetReg` konst halves), black capsules (same), crate
 fronts (bump texgen + emboss pair), CMPR transparent texels (DXT3);
 off-screen rigid DObjs culled (Mute City 5.6 -> 15.5 fps in xemu). To do
@@ -83,9 +115,7 @@ v29 on the console (2026-10-01, `~/xemu/hw/logs29`, map `melee_x.v29.map`):
 a 5-minute Pokémon Stadium run was stable (no GPU stall). Jungle Japes hung
 on entry after four matches: `Can't load SFX file; bank(id=2) buffer
 overflow`, then `onEnterVs` -> `lbAudioAx_80027648` waited forever for the
-SSM (fixed in v30: reload bank 2, else drop it; the overflow itself, the
-game's SSM accounting vs the bank's fill pointer, is still unexplained: look
-for the v30 `[WARN] SFX bank 2 load failed` line). Shots: shot20 = Kirby's
+SSM (v30's reload guard never ran: see v32 above). Shots: shot20 = Kirby's
 grey Falcon helmet (trace section 3 of `trace.log`), shot61 = the capsule
 drawn near black (section 9; draws #372/#501: texgen NRM x TEXMTX0,
 normalized, post PTTEXMTX0 -> env map 64x64 DXT1, TEV konst x ras x tex),

@@ -334,6 +334,13 @@ marked `PORT:`:
   failed to load (bank 2 "buffer overflow") and nothing is pending, bank 2
   is reloaded from empty once, then the missing SSMs are dropped, instead
   of waiting forever (v29: hang entering Jungle Japes after four matches).
+- `src/sysdolphin/baselib/synth.c` (`HSD_SynthSFXHeaderLoadCallback`): an
+  SSM that overflows its bank is dropped without calling its callback.
+  `fn_80026C04` queued the same SSM again, so it overflowed forever on the
+  DVD thread and the guard above never ran (v31: hang going from the Data
+  menu back to the title). The overflow report gives the bank's use.
+  `lbaudio_ax.c` (`lbAudioAx_80023B24`, the sound test) waits for loads in
+  flight before emptying bank 2, so a late one can't fill it uncounted.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after

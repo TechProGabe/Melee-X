@@ -166,14 +166,15 @@ static void HSD_SynthSFXHeaderLoadCallback(int result, uintptr_t length,
         int bankID = HSD_Synth_804C2A60[0].bankID;
 
 #ifdef TARGET_PC
-        static int warned_bank = -1;
         if (hsd_SynthSFXBankHead[bankID + 1] - hsd_SynthSFXBank[bankID] <
             hsd_SynthSFXLoadBuf[1].v)
         {
-            if (warned_bank != bankID) {
-                warned_bank = bankID;
-                OSReport("Can't load SFX file; bank(id=%d) buffer overflow.\n", bankID);
-            }
+            OSReport("Can't load SFX file; bank(id=%d) buffer overflow "
+                     "(entry %d needs %d, bank %d used of %d).\n",
+                     bankID, HSD_Synth_804C2A60[0].entrynum,
+                     (int) hsd_SynthSFXLoadBuf[1].v,
+                     (int) (hsd_SynthSFXBank[bankID] - hsd_SynthSFXBankHead[bankID]),
+                     (int) (hsd_SynthSFXBankHead[bankID + 1] - hsd_SynthSFXBankHead[bankID]));
         }
 #else
         HSD_ASSERTREPORT(0xCD,
@@ -189,14 +190,14 @@ static void HSD_SynthSFXHeaderLoadCallback(int result, uintptr_t length,
         {
             BOOL intr;
             int i;
-            void (*cb)(int, int) = HSD_Synth_804C2A60[0].x8;
-            int entrynum = HSD_Synth_804C2A60[0].entrynum;
-            int mode = HSD_Synth_804C2A60[0].xC;
 
-            if (cb != NULL) {
-                cb(-1, mode);
-            }
-
+            /* PORT: drop the load without calling its callback. The only
+             * one, lbaudio_ax.c's fn_80026C04, queues the next missing SSM,
+             * which is this same one again: it overflowed again on the DVD
+             * thread forever, the pending count never reached 0 and the
+             * waiting scene hung (v29 entering Jungle Japes, v31 Data ->
+             * title). With the queue drained, lbAudioAx_80027648 reloads
+             * bank 2 from empty. Retail asserts here instead. */
             intr = OSDisableInterrupts();
             HSD_Synth_804D772C -= 1;
             for (i = 0; i < HSD_Synth_804D772C; i++) {
