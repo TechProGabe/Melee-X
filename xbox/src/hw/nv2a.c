@@ -131,16 +131,59 @@ _Static_assert((PB_BYTES & (PB_BYTES - 1)) == 0 && PB_BYTES >= 64 * 1024, "pb_si
 #define POOL_ALIGN 128
 #define POOL_BIG (256 * 1024)
 
-typedef struct Blk { uint32_t off, size; int free; struct Blk* next; } Blk;
+/* Blocks in address order (next/prev), the free ones also on a list of
+ * their own, the allocated ones in a hash by offset: with ~2000 cached lists
+ * and textures, walking every block per allocation and twice per free took
+ * ~5% of the console's CPU on Pokémon Stadium. Placement is unchanged: small
+ * requests take the lowest free block that fits, big ones the top of the
+ * highest (keeping the two apart against fragmentation). */
+#define POOL_HASH 4096
+typedef struct Blk { uint32_t off, size; int free; struct Blk *next, *prev, *fnext, *fprev, *hnext; } Blk;
 typedef struct {
     uint8_t* base;
     uint32_t bytes, used;
     Blk* blocks;
+    Blk* freelist;
+    Blk* hash[POOL_HASH];
 } Pool;
 static Pool s_tp;   /* textures */
 static Pool s_vb;   /* cached display-list vertices (gx_vtx.c) */
+static Pool s_tp2;  /* textures past s_tp: only while a scene's working set outgrows it (xgx_tex_pool_grow) */
+
+static void fl_add(Pool* pl, Blk* b) {
+    b->fprev = NULL;
+    b->fnext = pl->freelist;
+    if (pl->freelist) pl->freelist->fprev = b;
+    pl->freelist = b;
+}
+
+static void fl_del(Pool* pl, Blk* b) {
+    if (b->fprev) b->fprev->fnext = b->fnext;
+    else pl->freelist = b->fnext;
+    if (b->fnext) b->fnext->fprev = b->fprev;
+}
+
+static unsigned hkey(uint32_t off) { return (off / POOL_ALIGN) & (POOL_HASH - 1); }
+
+static void h_add(Pool* pl, Blk* b) {
+    unsigned k = hkey(b->off);
+    b->hnext = pl->hash[k];
+    pl->hash[k] = b;
+}
+
+static Blk* h_take(Pool* pl, uint32_t off) {
+    Blk** pp;
+    for (pp = &pl->hash[hkey(off)]; *pp; pp = &(*pp)->hnext)
+        if ((*pp)->off == off) {
+            Blk* b = *pp;
+            *pp = b->hnext;
+            return b;
+        }
+    return NULL;
+}
 
 static int pool_init(Pool* pl, uint32_t bytes) {
+    memset(pl, 0, sizeof *pl);
     pl->base = (uint8_t*)MmAllocateContiguousMemoryEx(bytes, 0, MAXRAM, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
     pl->blocks = pl->base ? (Blk*)calloc(1, sizeof(Blk)) : NULL;
     if (!pl->blocks) {
@@ -152,6 +195,7 @@ static int pool_init(Pool* pl, uint32_t bytes) {
     pl->used = 0;
     pl->blocks->size = bytes;
     pl->blocks->free = 1;
+    fl_add(pl, pl->blocks);
     return 1;
 }
 
@@ -166,36 +210,44 @@ static void pool_release(Pool* pl) {
     memset(pl, 0, sizeof *pl);
 }
 
+static void blk_insert_after(Blk* b, Blk* n) {
+    n->prev = b;
+    n->next = b->next;
+    if (b->next) b->next->prev = n;
+    b->next = n;
+}
+
 static void* pool_alloc(Pool* pl, uint32_t size) {
     Blk *b, *pick = NULL;
     size = (size + POOL_ALIGN - 1) & ~(uint32_t)(POOL_ALIGN - 1);
-    for (b = pl->blocks; b; b = b->next) {
-        if (!b->free || b->size < size) continue;
-        pick = b;
-        if (size < POOL_BIG) break;
+    for (b = pl->freelist; b; b = b->fnext) {
+        if (b->size < size) continue;
+        if (!pick || (size < POOL_BIG ? b->off < pick->off : b->off > pick->off)) pick = b;
     }
     if (!pick) return NULL;
     b = pick;
     if (b->size > size) {
         Blk* n = (Blk*)calloc(1, sizeof(Blk));
         if (!n) return NULL;
-        n->free = 1;
-        n->next = b->next;
-        b->next = n;
+        blk_insert_after(b, n);
         if (size < POOL_BIG) {
             n->off = b->off + size;
             n->size = b->size - size;
+            n->free = 1;
+            fl_add(pl, n);
             b->size = size;
         } else {
             n->off = b->off + b->size - size;
             n->size = size;
             b->size -= size;
-            n->free = 0;
+            h_add(pl, n);
             pl->used += size;
             return pl->base + n->off;
         }
     }
     b->free = 0;
+    fl_del(pl, b);
+    h_add(pl, b);
     pl->used += size;
     return pl->base + b->off;
 }
@@ -205,25 +257,26 @@ static int pool_owns(const Pool* pl, const void* p) {
 }
 
 static void pool_free(Pool* pl, void* p) {
-    Blk* b;
-    uint32_t off;
+    Blk *b, *n;
     if (!p) return;
-    off = (uint32_t)((uint8_t*)p - pl->base);
-    for (b = pl->blocks; b; b = b->next)
-        if (b->off == off && !b->free) {
-            b->free = 1;
-            pl->used -= b->size;
-            break;
-        }
-    for (b = pl->blocks; b && b->next;) {
-        if (b->free && b->next->free) {
-            Blk* n = b->next;
-            b->size += n->size;
-            b->next = n->next;
-            free(n);
-        } else {
-            b = b->next;
-        }
+    b = h_take(pl, (uint32_t)((uint8_t*)p - pl->base));
+    if (!b) return;
+    b->free = 1;
+    pl->used -= b->size;
+    if ((n = b->next) && n->free) {   /* merge the next block into this one */
+        fl_del(pl, n);
+        b->size += n->size;
+        b->next = n->next;
+        if (n->next) n->next->prev = b;
+        free(n);
+    }
+    if ((n = b->prev) && n->free) {   /* and this one into the one before */
+        n->size += b->size;
+        n->next = b->next;
+        if (b->next) b->next->prev = n;
+        free(b);
+    } else {
+        fl_add(pl, b);
     }
 }
 
@@ -262,6 +315,16 @@ static void pb_open(void) {
     P = pb_begin();
     s_pb_mark = P;
     s_pb_open = 1;
+    /* The NV2A caches vertex data by address, and a draw's fetch reads
+     * ahead of its last vertex. Once a batch is kicked the GPU can run it
+     * before the CPU writes the next vertices into the ring right behind
+     * it, and the next draw then takes its first vertices from the stale
+     * read-ahead. HSD's shadow maps showed it on the console: each EFB copy
+     * waits for idle, and the next map's background quad lost its first
+     * triangle (black wedges above the diagonal, flashing black on the
+     * surfaces near fighters). Every batch after a kick starts by dropping
+     * that cache (xemu has none). */
+    put1(NV097_BREAK_VERTEX_BUFFER_CACHE, 0);
 }
 
 static void pb_close(void) {
@@ -378,7 +441,9 @@ static int s_ndeferred;
 
 static void release_deferred(void) {
     int i;
-    for (i = 0; i < s_ndeferred; i++) pool_free(pool_owns(&s_vb, s_deferred[i]) ? &s_vb : &s_tp, s_deferred[i]);
+    for (i = 0; i < s_ndeferred; i++)
+        pool_free(pool_owns(&s_vb, s_deferred[i]) ? &s_vb : pool_owns(&s_tp2, s_deferred[i]) ? &s_tp2 : &s_tp,
+                  s_deferred[i]);
     s_ndeferred = 0;
 }
 
@@ -420,24 +485,9 @@ static void swz_tables(int w, int h) {
 static int pot(int v) { int p = 1; while (p < v) p <<= 1; return p; }
 static int log2i(int v) { int l = 0; while ((1 << l) < v) l++; return l; }
 
-/* bilinear resample of one ARGB level to pw x ph (NPOT -> POT, so every
- * wrap mode keeps working and texcoords need no rescale) */
-static uint32_t sample_bilinear(const uint32_t* src, int w, int h, float fx, float fy) {
-    int x0 = (int)fx, y0 = (int)fy, x1 = x0 + 1 < w ? x0 + 1 : x0, y1 = y0 + 1 < h ? y0 + 1 : y0;
-    float tx = fx - x0, ty = fy - y0;
-    uint32_t a = src[y0 * w + x0], b = src[y0 * w + x1], c = src[y1 * w + x0], d = src[y1 * w + x1], out = 0;
-    int k;
-    for (k = 0; k < 32; k += 8) {
-        float top = ((a >> k) & 0xFF) * (1 - tx) + ((b >> k) & 0xFF) * tx;
-        float bot = ((c >> k) & 0xFF) * (1 - tx) + ((d >> k) & 0xFF) * tx;
-        out |= (uint32_t)(top * (1 - ty) + bot * ty + 0.5f) << k;
-    }
-    return out;
-}
-
 static void write_level_direct(void* dstv, const void* srcv, int w, int h, int pw, int ph, int bpp);
 
-/* One level into swizzled (Morton) order; ARGB8 NPOT images are resampled.
+/* One level into swizzled (Morton) order; NPOT images are resampled.
  * Texture memory is write-combined, and swizzled stores land all over it,
  * which defeats write combining: swizzle into a cached buffer first, then
  * copy it over in order. */
@@ -458,22 +508,49 @@ static void write_level(void* dstv, const void* srcv, int w, int h, int pw, int 
     memcpy(dstv, scratch, bytes);
 }
 
+/* Bilinear resample of one level to pw x ph (NPOT -> POT, so every wrap
+ * mode keeps working and texcoords need no rescale), per 8-bit channel:
+ * A8R8G8B8, AY8, A8Y8. Fixed point with per-column tables: movie frames
+ * (640x480 Y/U/V planes, a new one every frame) went through it as floats. */
+static void resample_level(uint8_t* dst, const uint8_t* src, int w, int h, int pw, int ph, int bpp) {
+    static uint16_t cx0[1024], cx1[1024];
+    static uint8_t cfx[1024];
+    int x, y, k;
+    for (x = 0; x < pw; x++) {
+        int fx = ((2 * x + 1) * w * 128) / pw - 128;   /* ((x + 0.5) * w / pw - 0.5) * 256 */
+        if (fx < 0) fx = 0;
+        cx0[x] = (uint16_t)(fx >> 8);
+        cx1[x] = (uint16_t)((fx >> 8) + 1 < w ? (fx >> 8) + 1 : fx >> 8);
+        cfx[x] = (uint8_t)(fx & 255);
+    }
+    for (y = 0; y < ph; y++) {
+        int fy = ((2 * y + 1) * h * 128) / ph - 128, y0, y1;
+        uint32_t ty, yo = swz_y[y];
+        const uint8_t *r0, *r1;
+        if (fy < 0) fy = 0;
+        y0 = fy >> 8;
+        y1 = y0 + 1 < h ? y0 + 1 : y0;
+        ty = (uint32_t)(fy & 255);
+        r0 = src + (size_t)y0 * (size_t)w * (size_t)bpp;
+        r1 = src + (size_t)y1 * (size_t)w * (size_t)bpp;
+        for (x = 0; x < pw; x++) {
+            const uint8_t *a = r0 + cx0[x] * bpp, *b = r0 + cx1[x] * bpp, *c = r1 + cx0[x] * bpp,
+                          *d = r1 + cx1[x] * bpp;
+            uint32_t tx = cfx[x];
+            uint8_t* o = dst + (yo | swz_x[x]) * (uint32_t)bpp;
+            for (k = 0; k < bpp; k++) {
+                uint32_t top = a[k] * (256 - tx) + b[k] * tx, bot = c[k] * (256 - tx) + d[k] * tx;
+                o[k] = (uint8_t)((top * (256 - ty) + bot * ty + 32768) >> 16);
+            }
+        }
+    }
+}
+
 static void write_level_direct(void* dstv, const void* srcv, int w, int h, int pw, int ph, int bpp) {
     int x, y;
     swz_tables(pw, ph);
-    if (bpp == 4 && (w != pw || h != ph)) {
-        const uint32_t* src = (const uint32_t*)srcv;
-        uint32_t* dst = (uint32_t*)dstv;
-        for (y = 0; y < ph; y++) {
-            float fy = ((y + 0.5f) * h / ph) - 0.5f;
-            uint32_t yo = swz_y[y];
-            if (fy < 0) fy = 0;
-            for (x = 0; x < pw; x++) {
-                float fx = ((x + 0.5f) * w / pw) - 0.5f;
-                if (fx < 0) fx = 0;
-                dst[yo | swz_x[x]] = sample_bilinear(src, w, h, fx, fy);
-            }
-        }
+    if (w != pw || h != ph) {
+        resample_level((uint8_t*)dstv, (const uint8_t*)srcv, w, h, pw, ph, bpp);
         return;
     }
     for (y = 0; y < ph; y++) {
@@ -550,7 +627,8 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     ph = pot((int)h);
     if (fmt == XGX_TEX_P8 && !data) return 0;
     if (pw != (int)w || ph != (int)h) {
-        if (fmt != XGX_TEX_ARGB8) return 0;   /* only 32-bit images are resampled */
+        /* resampled per 8-bit channel: palette indices and DXT1 blocks can't be */
+        if (fmt != XGX_TEX_ARGB8 && fmt != XGX_TEX_AY8 && fmt != XGX_TEX_A8Y8) return 0;
         levels = 1;
     }
     if (!data) levels = 1;
@@ -564,10 +642,12 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     bytes += pal_bytes;   /* the palette first: its offset wants 64-byte alignment, the pool gives 128 */
     s_st_tex_kb += bytes / 1024;
     base = (uint8_t*)pool_alloc(&s_tp, bytes);
+    if (!base && s_tp2.base) base = (uint8_t*)pool_alloc(&s_tp2, bytes);
     if (!base && s_ndeferred) {   /* nothing to gain from waiting when nothing is pending */
         wait_idle();
         release_deferred();
         base = (uint8_t*)pool_alloc(&s_tp, bytes);
+        if (!base && s_tp2.base) base = (uint8_t*)pool_alloc(&s_tp2, bytes);
     }
     if (!base) {
         s_st_tex_fail++;
@@ -604,6 +684,39 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     }
     s_tex[id].pal = pal_bytes ? ((uint32_t)base & 0x03FFFFC0) | NV097_SET_TEXTURE_PALETTE_LENGTH_256 << 2 : 0;
     return (uint32_t)id;
+}
+
+/* The Trophy Collection draws every trophy at once: more textures in one
+ * frame than the pool holds, so each frame evicted and re-uploaded most of
+ * them (1.4 fps on the console, 650 ms a frame converting textures). When
+ * only textures of the current frame are left to evict, gx_tex.c asks for
+ * an overflow pool from the RAM that is free right then, keeping
+ * TEX_OVERFLOW_RESERVE for the game's own demand-committed memory; it is
+ * given back at the next scene change (xgx_tex_pool_shrink). */
+#define TEX_OVERFLOW_MAX (8u * 1024 * 1024)
+#define TEX_OVERFLOW_MIN (2u * 1024 * 1024)
+#define TEX_OVERFLOW_RESERVE (6u * 1024 * 1024)
+int xgx_tex_pool_grow(void) {
+    uint32_t free_bytes = xhw_mem_free_kb() * 1024u, bytes;
+    if (s_tp2.base || free_bytes < TEX_OVERFLOW_RESERVE + TEX_OVERFLOW_MIN) return 0;
+    bytes = (free_bytes - TEX_OVERFLOW_RESERVE) & ~(1024u * 1024 - 1);
+    if (bytes > TEX_OVERFLOW_MAX) bytes = TEX_OVERFLOW_MAX;
+    while (bytes >= TEX_OVERFLOW_MIN && !pool_init(&s_tp2, bytes)) bytes -= 1024u * 1024;
+    xhw_logf("[TEX] overflow pool %u KB (free %u KB)", s_tp2.base ? bytes / 1024 : 0, free_bytes / 1024);
+    return s_tp2.base != NULL;
+}
+
+int xgx_tex_in_overflow(uint32_t tex) {
+    return tex && tex < MAX_TEX && s_tex[tex].used && pool_owns(&s_tp2, s_tex[tex].base);
+}
+
+void xgx_tex_pool_shrink(void) {
+    if (!s_tp2.base) return;
+    wait_idle();   /* the last frame may still sample them */
+    release_deferred();
+    if (s_tp2.used) return;   /* something still lives there: next time */
+    pool_release(&s_tp2);
+    xhw_logf("[TEX] overflow pool released (free %u KB)", xhw_mem_free_kb());
 }
 
 uint32_t xgx_tex_bytes(uint32_t tex) {
@@ -1506,6 +1619,15 @@ void xgx_vbuf_free(void* p) {
     if (p) defer_free(p);
 }
 
+/* A buffer no draw of the current frame used: xgx_present waited for the
+ * GPU to go idle before the frame began, so nothing can still read it.
+ * Freeing these at once spares the wait for idle that a full pool otherwise
+ * costs (Pokémon Stadium: ~4 extra a frame, each one stopping the CPU until
+ * the GPU has drawn everything queued). */
+void xgx_vbuf_free_now(void* p) {
+    if (p) pool_free(&s_vb, p);
+}
+
 void xgx_vtx_use(const void* verts) { s_draw_base = (const uint8_t*)verts; }
 
 static uint32_t nv_prim(uint32_t gx) {
@@ -2070,6 +2192,10 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
                      (int)src[2], (int)src[3], pw, ph, mode);
             read_rect(src, pw, ph, dbg);
             xhw_fbdump_file(dbg, (int)pw, (int)ph, 32, (int)pw * 4);
+#ifdef XHW_AUTOPAD
+            /* xemu: the HDD's files are out of reach, COM1 isn't */
+            xhw_fbdump(dbg, (int)pw, (int)ph, 32, (int)pw * 4);
+#endif
         }
     }
 #endif

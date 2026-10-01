@@ -198,6 +198,9 @@ uint32_t xgx_tex_bytes(uint32_t tex); /* pool bytes a live texture holds, 0 othe
 uint32_t xgx_tex_pool_free_kb(void);
 uint32_t xgx_tex_pool_kb(void);
 uint32_t xgx_tex_pool_largest_kb(void);   /* the largest free block: fragmentation */
+int xgx_tex_pool_grow(void);              /* overflow pool from free RAM; 1 if one was made */
+int xgx_tex_in_overflow(uint32_t tex);    /* the texture lives in the overflow pool */
+void xgx_tex_pool_shrink(void);           /* frees the overflow pool once it is empty (waits for the GPU) */
 
 /* Vertex buffers that outlive a frame (gx_vtx.c's display-list cache), in
  * canonical layout, from their own pool. alloc returns NULL when the pool is
@@ -205,6 +208,7 @@ uint32_t xgx_tex_pool_largest_kb(void);   /* the largest free block: fragmentati
  * the next xgx_draw at vertices in such a buffer instead of the ring. */
 void* xgx_vbuf_alloc(uint32_t bytes);
 void xgx_vbuf_free(void* p);
+void xgx_vbuf_free_now(void* p);   /* the same for a buffer no draw of the current frame used: no wait */
 uint32_t xgx_vbuf_offset(const void* p);   /* bytes from the pool's start: draws sit at multiples of their stride */
 uint32_t xgx_vbuf_pool_kb(void);
 uint32_t xgx_vbuf_pool_free_kb(void);

@@ -749,6 +749,7 @@ typedef struct {
     uint32_t sig, hash;
     uint32_t fkey;                 /* fmt_key(fmts) it was made under (part of the key) */
     uint32_t checked, last_used;
+    uint32_t stable;               /* content checks passed in a row (dlc_content_changed) */
     uint8_t* mem;
     uint32_t mem_bytes;
     DlBatch* batch;
@@ -853,8 +854,9 @@ static void dyn_free(DlEntry* e) {
     e->dyn = NULL;
 }
 
-static void dlc_release(DlEntry* e) {
-    xgx_vbuf_free(e->mem);
+static void dlc_release_mem(DlEntry* e, int now) {
+    if (now) xgx_vbuf_free_now(e->mem);
+    else xgx_vbuf_free(e->mem);
     free(e->batch);
     e->mem = NULL;
     e->batch = NULL;
@@ -863,16 +865,37 @@ static void dlc_release(DlEntry* e) {
     dyn_free(e);
 }
 
+static void dlc_release(DlEntry* e) { dlc_release_mem(e, 0); }
+
 /* entries stay in their slot; freed slots go on a stack */
 static int s_dlc_free[DLC_MAX];
 static int s_dlc_nfree;
 
-static void dlc_drop(int idx) {
+static void dlc_drop_mem(int idx, int now) {
     dlc_unlink(idx);
-    dlc_release(&s_dlc[idx]);
+    dlc_release_mem(&s_dlc[idx], now);
     s_dlc[idx].dl = NULL;
     s_dlc_free[s_dlc_nfree++] = idx;
     s_dlc_n--;
+}
+
+static void dlc_drop(int idx) { dlc_drop_mem(idx, 0); }
+
+/* The content check (sampled words of the list and its arrays) runs once a
+ * frame per list; a list that passed DLC_STABLE checks in a row is checked
+ * every fourth frame, staggered by slot. On the console the checks took ~4%
+ * of the CPU in a match, where no list changed content at all. */
+#define DLC_STABLE 120
+static int dlc_content_changed(DlEntry* e, uint32_t frame) {
+    if (e->checked == frame) return 0;
+    if (e->stable >= DLC_STABLE && ((frame + (uint32_t)(e - s_dlc)) & 3)) return 0;
+    e->checked = frame;
+    if (e->hash != content_hash(e)) {
+        e->stable = 0;
+        return 1;
+    }
+    if (e->stable < DLC_STABLE) e->stable++;
+    return 0;
 }
 
 /* evicts the least recently used entry not drawn this frame, other than
@@ -884,7 +907,7 @@ static int dlc_evict_one(uint32_t frame, const DlEntry* keep) {
             (pick < 0 || s_dlc[i].last_used < s_dlc[pick].last_used))
             pick = i;
     if (pick < 0) return 0;
-    dlc_drop(pick);
+    dlc_drop_mem(pick, 1);   /* not drawn this frame: the GPU is done with it */
     return 1;
 }
 
@@ -1140,6 +1163,7 @@ static int dlc_build(DlEntry* e, uint32_t frame) {
     e->sig = vtx_sig(fmts, 1);
     e->fkey = fmt_key(fmts);
     e->hash = content_hash(e);
+    e->stable = 0;
     e->checked = frame;
     s_st_dl_builds++;
     return 1;
@@ -1359,8 +1383,7 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
     e = dlc_find(dl, nbytes);
     if (e && e->dyn) return dyn_call(e, frame);
     if (e && e->is_volatile) return 0;
-    if (e && e->mem && (e->sig != vtx_sig(e->fmts, 1) ||
-                        (e->checked != frame && (e->checked = frame, e->hash != content_hash(e))))) {
+    if (e && e->mem && (e->sig != vtx_sig(e->fmts, 1) || dlc_content_changed(e, frame))) {
         if (e->sig != vtx_sig(e->fmts, 1)) s_st_chg_sig++;
         else s_st_chg_data++;
         dlc_release(e);   /* changed: rebuild below */

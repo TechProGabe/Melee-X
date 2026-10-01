@@ -355,6 +355,24 @@ static int lru_victim(void) {
     return pick >= 0 ? pick : pick_hot;
 }
 
+/* No entry left to evict but ones drawn this frame: the frame's working set
+ * is larger than the pool. */
+static int only_hot_left(void) {
+    int i;
+    for (i = 0; i < s_count; i++)
+        if (!is_bound(s_cache[i].tex) && s_cache[i].last_used != s_frame) return 0;
+    return 1;
+}
+
+/* Scene change: textures in the overflow pool go, then the pool itself
+ * (xgx_tex_pool_grow). The next scene uploads what it draws. */
+void gx_tex_scene_leave(void) {
+    int i;
+    for (i = s_count - 1; i >= 0; i--)
+        if (xgx_tex_in_overflow(s_cache[i].tex)) drop_at(i);
+    xgx_tex_pool_shrink();
+}
+
 /* Evicts until about `bytes` of the pool is released. Returns how many
  * entries went, 0 when there was nothing to evict or the request can never
  * fit (then evicting would only empty the cache). */
@@ -385,7 +403,17 @@ static void evict_one(void) {
  * with a 256-entry A8R8G8B8 palette (C8 as A8R8G8B8 was a quarter of a
  * Pokémon Stadium match's texture memory). Everything else is A8R8G8B8. */
 static uint32_t native_fmt(const TexObj* o) {
-    if (o->w & (o->w - 1) || o->h & (o->h - 1)) return XGX_TEX_ARGB8;
+    if (o->w & (o->w - 1) || o->h & (o->h - 1)) {
+        /* NPOT: resampled to a power of two. Intensity formats are resampled
+         * per channel (the same texels as the A8R8G8B8 path, a quarter or
+         * half the memory: the Trophy Collection's NPOT I4 textures took 8
+         * times their GX size and overflowed the pool). */
+        switch (o->fmt) {
+            case GX_TF_I4: case GX_TF_I8: return XGX_TEX_AY8;
+            case GX_TF_IA4: case GX_TF_IA8: return XGX_TEX_A8Y8;
+            default: return XGX_TEX_ARGB8;
+        }
+    }
     switch (o->fmt) {
         case GX_TF_CMPR: return o->w >= 4 && o->h >= 4 ? XGX_TEX_DXT1 : XGX_TEX_ARGB8;
         case GX_TF_I4: case GX_TF_I8: return XGX_TEX_AY8;
@@ -500,6 +528,8 @@ static uint32_t upload_now(const TexObj* o, const TlutObj* tl, uint32_t levels, 
     /* pool full: evict, wait for the GPU once, retry; each round frees
      * twice as much, since the pool fragments */
     tex = xgx_tex_create(o->w, o->h, levels, xfmt, s_scratch);
+    if (!tex && only_hot_left() && xgx_tex_pool_grow())
+        tex = xgx_tex_create(o->w, o->h, levels, xfmt, s_scratch);
     for (room = need * 4; !tex && gx_tex_make_room(room); room *= 2)
         tex = xgx_tex_create(o->w, o->h, levels, xfmt, s_scratch);
     return tex;

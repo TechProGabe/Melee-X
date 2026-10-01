@@ -692,8 +692,11 @@ void ftParts_80074D7C(FtPartsVis* vis, int idx, DObjList* dobj_list)
                 u8* r29;    // r29
                 r26 = &DP(TempS, lookup[i].x4)[j];
 #ifdef TARGET_XBOX
+                /* a group with no DObjs has a NULL list (Kirby, Samus,
+                 * Game & Watch): skipping it skipped the table's later
+                 * groups, which stayed visible (black shapes on the hats) */
                 if (!ftParts_TableOk(vis, r26, idx) ||
-                    !ftParts_TableOk(vis, DP(u8, r26->x4), idx))
+                    (r26->x0 > 0 && !ftParts_TableOk(vis, DP(u8, r26->x4), idx)))
                 {
                     break;
                 }

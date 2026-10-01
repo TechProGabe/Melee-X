@@ -270,8 +270,17 @@ struct Lower : RecursiveASTVisitor<Lower> {
                 if (k >= i->getNumInits())
                     break;
                 auto* e = i->getInit(k++);
-                if (!f->isBitField())
+                if (!f->isBitField()) {
+                    // The other fields are emitted from their source text
+                    // below, so they need their own big-endian rules.
+                    if (auto* l = dyn_cast<InitListExpr>(e))
+                        initFields(l, f->getType(), be);
+                    else if ((f->getType()->isArithmeticType() ||
+                                 f->getType()->isEnumeralType()) &&
+                             !isa<ImplicitValueInitExpr>(e))
+                        initRule(e, f->getType());
                     continue;
+                }
                 uint64_t v = 0;
                 if (!isa<ImplicitValueInitExpr>(e)) {
                     Expr::EvalResult value;

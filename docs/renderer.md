@@ -50,7 +50,11 @@ by models quantized differently), and one entry per list flipped between
 them until ~100 lists were decoded on every call. Now a 4-CPU match keeps
 ~1400 lists cached, none volatile. An entry is checked against the
 vertex descriptor, formats and arrays on every call, and against a sampled
-hash of the list and of the array ranges it indexed once a frame. A list
+hash of the list and of the array ranges it indexed once a frame; a list
+that passed 120 checks in a row is checked every fourth frame, staggered by
+slot (the checks were ~4% of the console's CPU in a match, where no list
+changed content; a list rewritten in place would show stale for up to three
+frames). A list
 whose arrays keep changing (skinned and morphed models, whose positions and
 normals HSD rewrites or re-points every frame) goes dynamic after four
 rebuilds: its decode plan, every vertex's indices and a decoded template in
@@ -62,7 +66,12 @@ decoded every call (volatile). `[DLC]` lines report both, and `[DLC]
 uncached:` names the first lists that could not be cached and why. A list
 may hold up to 512 draws: Fountain of Dreams' stage is one 104 KB list of
 more than 64, and at the old limit of 64 it was decoded on every call
-(~15 ms of a console frame). The content hashes (display lists and
+(~15 ms of a console frame). When the pool is full, the least recently
+used list not drawn this frame is evicted and its buffer freed at once:
+`xgx_present` waits for the GPU before a frame begins, so nothing reads it
+any more. Freeing them only after the next wait for idle cost Pokémon
+Stadium ~4 extra waits a frame on the console, each one stopping the CPU
+until the GPU had drawn everything queued. The content hashes (display lists and
 textures) run four FNV chains side by side over the same words, so the
 loads and multiplies overlap instead of waiting on one serial chain.
 
@@ -88,6 +97,15 @@ was a render pass of its own (~75 µs of emulation, ~90% of a match frame).
   close an open batch: a finished one already holds its vertices.
 - Quads and fans are sent as triangle lists (`out_prim` in `gx_vtx.c`), and
   the EFB-copy quad as a strip.
+- Every pushbuffer batch starts with `BREAK_VERTEX_BUFFER_CACHE`. The NV2A
+  caches vertex data by address and a draw's fetch reads ahead of its last
+  vertex; once a batch is kicked the GPU can run it before the CPU writes
+  the next draw's vertices into the ring right behind it, and that draw
+  then takes its first vertices from the stale read-ahead. On the console
+  each EFB copy waits for idle, and the next shadow map's white background
+  quad lost its first triangle (black wedges above its diagonal, black
+  flashes on the stage surfaces near fighters that multiply the maps in).
+  xemu has no such cache and drew them right.
 - Array offsets point at the start of the 32768-vertex window of the vertex
   ring or the vertex pool that the draw starts in, and each draw starts at
   its first vertex's index from there (both place draws at a multiple of
@@ -391,8 +409,13 @@ Dolphin:
   I4/I8 -> AY8, IA4/IA8 -> A8Y8, RGB565 -> R5G6B5, C4/C8 -> I8 indices with
   a 256-entry A8R8G8B8 palette (the TLUT decoded; it sits at the start of
   the texture's pool allocation, `SET_TEXTURE_PALETTE`). Everything else
-  becomes A8R8G8B8; non-power-of-two images are resampled to the next power
-  of two. On Pokémon Stadium, C8 as A8R8G8B8 took 2.1 MB of the pool. A
+  becomes A8R8G8B8; non-power-of-two images are resampled (bilinear, fixed
+  point, per 8-bit channel) to the next power of two, I4/I8 and IA4/IA8 in
+  AY8/A8Y8 like the power-of-two ones (the same texels as the A8R8G8B8 path
+  at a quarter or half the memory), the rest in A8R8G8B8: palette indices
+  and DXT1 blocks can't be blended. The Trophy Collection's non-power-of-two
+  I4 textures took eight times their GX size, and movie frames (640x480 Y/U/V
+  planes, a new one each frame) were resampled as A8R8G8B8 floats. On Pokémon Stadium, C8 as A8R8G8B8 took 2.1 MB of the pool. A
   texture unit is re-sent whenever a different texture binds, even one made
   at a freed texture's address with the same format and size, so a P8
   palette is always loaded again (xemu reads palettes at each draw).
@@ -421,6 +444,19 @@ Dolphin:
   in the `[TEX]` line, the first of each interval gets a `[TEX] drop:` line
   (size, pool free, largest free block), and `-DXGX_DEBUG_MAGENTA` draws
   them magenta.
+- When only textures drawn this frame are left to evict, the frame's working
+  set is bigger than the pool: an overflow pool is taken from the RAM free
+  at that moment (up to 8 MB, keeping 6 MB free for the game's
+  demand-committed memory; `[TEX] overflow pool N KB`), and given back at
+  the next scene change after its textures are dropped (`[TEX] overflow
+  pool released`). The Trophy Collection, which draws every trophy at once,
+  ran at 1.4 fps on the console re-uploading most textures every frame
+  (650 ms a frame in texture conversion).
+- Pool blocks are kept in address order, the free ones also on a list of
+  their own and the allocated ones in a hash by offset; placement is
+  unchanged (small requests take the lowest free block that fits, big ones
+  the top of the highest). Walking every block per allocation and twice per
+  free took ~5% of the console's CPU on Pokémon Stadium (~2000 blocks).
 - Cache lookups go through a hash of the data pointer. Binding the object a
   texture map already holds this frame skips the lookup entirely. Textures
   are revalidated (sampled hash) once a frame; `GXInvalidateTexAll`, which

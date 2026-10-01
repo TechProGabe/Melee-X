@@ -296,7 +296,10 @@ int xsdk_fputs(const char* s, FILE* f) {
  * console that freezes during a transition leaves where and how full it was. */
 unsigned xsdk_frame_count(void);
 
+void gx_tex_scene_leave(void);
+
 void xsdk_scene_log(const char* what, int mode, int state, int scene) {
+    if (!strcmp(what, "leave")) gx_tex_scene_leave();   /* the overflow texture pool goes back */
     xhw_logf("[SCENE] %s: mode %d state %d scene %d (retrace %u, presented %u)", what, mode, state, scene,
              xsdk_frame_count(), xgx_present_count());
     xhw_logf("[MEM] scene %s: free %u KB, MEM1+ARAM %u KB (ARAM on disc %u KB), tex pool %u of %u KB free, "

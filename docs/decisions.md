@@ -25,7 +25,13 @@ upstream commit is recorded in `src/UPSTREAM_COMMIT`.
 `scalar_storage_order`, and nxdk is clang-only. `tools/lower/disc_lower`
 (LibTooling, taken from melee-pc's browser build) rewrites those accesses
 into explicit big-endian loads and stores. `tools/lower/test_lower.py`
-compares the result with GCC.
+compares the result with GCC. Static initializers of disc structs are
+stored big-endian too; for structs with bit-fields only the bit-fields were
+(`tests/lower/disc_bitfield_init.c`), so every other field of such a static
+table was byte-swapped garbage. `ityaku.c`'s `ItemAttr` for stage items (the
+Great Fox's gun, Green Greens' blocks) read `x60_scale` 1.0 as ~4.6e-41,
+and each hitbox was scaled by its inverse: Corneria's gun hit every fighter
+on the stage from the start (console and xemu).
 
 **The game triple is `i686-pc-windows-gnu -mno-ms-bitfields`.** It gives
 GameCube bit-field layout and 8-byte `long long` alignment, and it has the
@@ -159,6 +165,17 @@ accuracy change for later). The cost: generating a program takes ~40 µs on
 the host (~8x the old generator; once per new key, 64 cached), and the
 attenuation shortcut relies on rcp(1.0) being exactly 1 on the NV2A.
 
+**Vertex cache breaks, overflow texture pool, cheaper pools** (v26,
+`docs/renderer.md`). Each pushbuffer batch starts with
+`BREAK_VERTEX_BUFFER_CACHE` (shadow-map wedges on the console). A scene
+whose textures outgrow the pool gets an overflow pool from free RAM until
+the next scene change (Trophy Collection). Display lists evicted when not
+drawn this frame are freed without waiting for the GPU; the pool allocator
+keeps a free list and an offset hash; stable display lists are checked
+every fourth frame. Non-power-of-two intensity textures stay AY8/A8Y8.
+The cost: up to 8 MB more RAM while the overflow pool exists, and a list
+rewritten in place may draw stale for up to three frames.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 
@@ -244,7 +261,11 @@ marked `PORT:`:
   fighter-parts visibility group whose table or index list points outside
   MEM1/ARAM is skipped and logged once per fighter kind (`[WARN] ftParts:`).
   A 4-player Fountain of Dreams match (Pichu, Game & Watch, Ness, Kirby)
-  crashed there reading 0x07080900.
+  crashed there reading 0x07080900. A group with no DObjs has a NULL index
+  list and is legal; the guard took it for a bad pointer and stopped at it,
+  leaving the table's later groups visible (Kirby, Samus, Game & Watch:
+  black shapes on Kirby's copy hats), so the list is checked only when the
+  group has entries.
 - `src/melee/ft/fighter.c` (knockback): under `TARGET_XBOX` the first 32
   hits that didn't come from a fighter (or had no source) or whose
   knockback magnitude exceeds 200 are logged (`[WARN] hit:` with the
@@ -279,7 +300,8 @@ To sync a newer melee-pc:
 - **Rendering gaps**: no indirect texturing (water and reflections), fog
   per vertex (long polygons get less fog mid-span; no range adjustment),
   TEV swap tables only for the alpha broadcast; non-power-of-two textures
-  are resampled; the texture pool is short on busy stages.
+  are resampled; the texture pool is short on busy stages (an overflow pool
+  takes free RAM for a scene that outgrows it).
 - **Netplay** is not built; the online/LAN lobby returns to the menu.
 - **The demand-commit fault handler** relies on the Xbox kernel sending
   kernel-mode access violations on reserved memory to the thread's SEH

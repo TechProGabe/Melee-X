@@ -52,6 +52,7 @@ tools/xbox/vp_policy.py --check   # vertex-program residency policy
 tools/xbox/test_tex_convert.py    # native texture formats vs the GX decoder
 tools/xbox/test_fog.py            # GX fog on the NV2A vs GX's fog factor
 tools/xbox/test_card_endian.py    # memory-card files: big-endian on the card, native in memory
+tools/xbox/test_pool.py           # texture and vertex pool allocator
 ```
 
 Builds and tests run locally; the GitHub workflow runs only when started by

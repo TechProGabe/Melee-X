@@ -10,6 +10,7 @@ tools/xbox/vp_policy.py --check  # program-memory residency (nv2a_vpmem.c) vs it
 tools/xbox/test_tex_convert.py   # native texture formats vs the GX decoder
 tools/xbox/test_fog.py           # GX fog on the NV2A vs GX's fog factor (libogc registers, Dolphin's formula)
 tools/xbox/test_card_endian.py   # memory-card files: field tables vs the game's structs, big-endian <-> native
+tools/xbox/test_pool.py          # nv2a.c's pool allocator: random allocations and frees, block-list invariants
 ```
 
 CI (`.github/workflows/build.yml`, started by hand only: builds and tests
@@ -271,7 +272,7 @@ report.
 | `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU instead of drawn by the GPU |
 | `-DXGX_DEPTH_CULL=1` | cull pixels whose depth falls outside the clip range instead of clamping it (the pre-v15 behaviour) |
 | `-DXGX_DEBUG_EFBLOG` | log the first 200 EFB copies (source rect, size, format) as `[EFB]` lines |
-| `-DXGX_DEBUG_TRACE` | log every draw (TEV stages, textures, texgens, blend, fog) of the frame an autopad `SHOT` or a console BACK screenshot captures, as `[DRAW]` lines (~400 KB of log each); on a BACK frame each EFB copy's source is also written as a `shotNN.bmp` (up to 8, announced by a `[DRAW] efb copy` line) |
+| `-DXGX_DEBUG_TRACE` | log every draw (TEV stages, textures, texgens, blend, fog) of the frame an autopad `SHOT` or a console BACK screenshot captures, as `[DRAW]` lines (~400 KB of log each); on a BACK frame each EFB copy's source is also written as a `shotNN.bmp` (up to 8, announced by a `[DRAW] efb copy` line), and with `-DXHW_AUTOPAD=1` also streamed as `[FBDUMP]` (an autopad `BACK` in xemu, whose HDD is out of reach) |
 | `-DXGX_DEBUG_VPTRACE[=<n>]` | log the vertex-program selects of two consecutive frames every n (default 600) as `[VPT]` lines: each program (key hash, instructions, key bytes), then the selects in order with `L` where one was loaded; replay with `tools/xbox/vp_policy.py boot.log` |
 | `-DXGX_DEBUG_NOMIP` | bind only the base level of every texture |
 | `-DXHW_FBDUMP_EVERY=<n>` | screenshot every n presented frames |
