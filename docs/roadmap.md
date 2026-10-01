@@ -99,10 +99,17 @@ released on leaving). Open, in order:
 2. **Kirby's copy hats**: right most of the time, but the hat's texture
    sometimes disappears. logs28 `shot31.bmp` (Fountain, ~1:19 left): the
    blue Kirby's Captain Falcon helmet is flat grey-white (untextured look)
-   while Falcon's own helmet beside it is red and yellow. Its `[DRAW]` trace
-   was lost (boot.log hit the cap at shot30). Falcon's hat is a parts hat
-   (`ftKb_LoadHatParts`, which loads part visibility and the hat's costume
-   texture list into `u.kb.x44`). Suspects: the texture-revalidation stagger (a hat
+   while Falcon's own helmet beside it is red and yellow. `shot63.bmp`
+   (Stadium, 1:53): the yellow Kirby's Falcon helmet is grey too, while the
+   blue Kirby's Pikachu hat is right. So it looks consistent for Falcon's
+   hat (a parts hat), not random. Neither `[DRAW]` trace survived (boot.log
+   hit the cap at shot30). Parts hats go through `ftKb_LoadHatParts`, whose
+   part visibility and costume texture list (`u.kb.x44`,
+   `ftAnim_80070200`, with Kirby's `costume_id`) were added under PORT in
+   v19 (b7e3ec2): compare with upstream doldecomp, check the hat's texture
+   list for Kirby's costume, and test the other parts hats (Ganondorf,
+   Yoshi, Jigglypuff, Dr. Mario). Reproduce in xemu if a debug VS can give
+   Kirby Falcon's ability. Other suspects: the texture-revalidation stagger (a hat
    texture loaded where another one lived, same pointer/size/format, served
    stale for up to 3 frames: try `TEX_STABLE` off), the hat's costume
    texture list (`u.kb.x44`, `ftAnim_80070200`, TObj image switching), or a
