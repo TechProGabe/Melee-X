@@ -69,7 +69,29 @@ Found and fixed on the console in v17-v25 (details in `renderer.md`,
 
 ## Next
 
-v32 round (in progress): fixes for the two v31 console problems, below.
+v32 on the console (2026-10-01, `~/xemu/hw/logs32`, map `melee_x.v32.map`,
+commit b55012d, `-DXHW_PROF=1`): **sound fixed** (boot.log: one `AC97
+polled` line, no halt, stuck or cold reset); the Data -> title hang could
+not be reproduced and no SFX overflow was logged; stable, no texture
+problems. Fountain of Dreams, the open performance item: 75 five-second
+`[PERF]` windows of a match average 21.6 fps (18-24), sim 12.3 ms a frame
+at 2.7 ticks per render (~4.5 ms a tick), render 17-19 ms (draw 8.3,
+dlist 4.6), ~885 draws and 79k verts a frame; the user saw 15 fps
+sustained in busy moments and 9 fps when a fighter flew off stage (the
+camera pulls back; five-second windows hide such dips). The profile is
+flat: game-side HSD animation/matrix/material setup about half, our
+`xgx_draw` + `emit_vc` 7%, texture bind/lookup 7% (by caller), the cull's
+content recheck (`sample_hash`, `dlc_content_changed`) ~5%. A slow frame
+runs more sim ticks before the next render, so dips feed themselves.
+The CPUs were on high level and fighting hard, which explains sim at
+~4.5 ms a tick against ~3.5 ms in v31's matches: the v32 numbers are a
+heavier scene, not a regression.
+Ideas, in order: cheaper cull recheck (hash a sample less often or only
+lists that were culled last frame), texture bind fast path, cap sim ticks
+per render on a slow frame, then the HSD setup paths. The FPS counter's
+options-menu toggle is still to do.
+
+v32 round: fixes for the two v31 console problems, below.
 Check audio first on the console (`[AUDIO]` lines; rule: every console
 build gets an audio review of what changed since the last good boot).
 
