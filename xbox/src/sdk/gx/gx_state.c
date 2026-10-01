@@ -225,9 +225,15 @@ void GXLoadNrmMtxImm3x3(const void* mtx, u32 id) {
     DIRTY(XGX_DIRTY_POSMTX);
 }
 
+/* HSD loads every texture's matrix before each draw, mostly unchanged: the
+ * new rows are compared first, and nothing is flushed or marked dirty when
+ * they match (it marked TEXMTX and POSMTX dirty on ~77% of a match's draws,
+ * each rebuilding the texgen rows). POSMTX only when a position matrix slot
+ * is written: texgens that read one rebuild on it. */
 void GXLoadTexMtxImm(const void* mtx, u32 id, GXTexMtxType type) {
     float(*dst)[4];
-    FLUSH();
+    float m[3][4];
+    u32 bits = XGX_DIRTY_TEXMTX, pos = 0;
     if (id >= GX_PTTEXMTX0) {
         u32 k = (id - GX_PTTEXMTX0) / 3;
         if (k >= XGX_NUM_PTMTX) return;
@@ -235,19 +241,25 @@ void GXLoadTexMtxImm(const void* mtx, u32 id, GXTexMtxType type) {
     } else if (id >= GX_TEXMTX0 && id < GX_IDENTITY) {
         dst = g_xgx.texmtx[(id - GX_TEXMTX0) / 3];
     } else if (id < GX_TEXMTX0) {
+        if (id / 3 >= XGX_NUM_POSMTX) return;
         dst = g_xgx.posmtx[id / 3];   /* texgens may read position matrices */
-        g_xgx.posmtx_mask |= 1u << (id / 3);
+        bits |= XGX_DIRTY_POSMTX;
+        pos = 1;
     } else {
         return;
     }
     if (type == GX_MTX2x4) {
-        memcpy(dst, mtx, sizeof(float) * 8);
-        dst[2][0] = dst[2][1] = dst[2][3] = 0.0f;
-        dst[2][2] = 1.0f;
+        memcpy(m, mtx, sizeof(float) * 8);
+        m[2][0] = m[2][1] = m[2][3] = 0.0f;
+        m[2][2] = 1.0f;
     } else {
-        memcpy(dst, mtx, sizeof(float) * 12);
+        memcpy(m, mtx, sizeof(float) * 12);
     }
-    DIRTY(XGX_DIRTY_TEXMTX | XGX_DIRTY_POSMTX);
+    if (memcmp(dst, m, sizeof m) == 0) return;
+    FLUSH();
+    memcpy(dst, m, sizeof m);
+    if (pos) g_xgx.posmtx_mask |= 1u << (id / 3);
+    DIRTY(bits);
 }
 
 void GXSetCurrentMtx(u32 id) {

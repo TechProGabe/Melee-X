@@ -94,7 +94,9 @@ for the first five items of v25's list; check each on the console:
    floats). Check it plays smoothly.
 6. **Performance** (v26, unmeasured on the console): no waits for idle
    when the vertex pool evicts (Stadium: ~4 a frame), O(1) pool frees,
-   stable display lists checked every fourth frame. Compare `[PERF]` and
+   stable display lists and textures checked every fourth frame,
+   `GXLoadTexMtxImm` no longer dirties unchanged matrices (texmtx dirty on
+   ~9% of draws, was ~77%), kicks every 32 KB. Compare `[PERF]` and
    `[NV2A] ... idle waits` on Stadium and Fountain with v25.
 7. **Texture accuracy**: indirect texturing (Fountain's water), TEV swap
    tables, item crates, fog checks against Dolphin.

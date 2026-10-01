@@ -172,9 +172,11 @@ whose textures outgrow the pool gets an overflow pool from free RAM until
 the next scene change (Trophy Collection). Display lists evicted when not
 drawn this frame are freed without waiting for the GPU; the pool allocator
 keeps a free list and an offset hash; stable display lists are checked
-every fourth frame. Non-power-of-two intensity textures stay AY8/A8Y8.
+every fourth frame, and so are stable textures; `GXLoadTexMtxImm` changes
+nothing when the matrix is the same; kicks every 32 KB. Non-power-of-two
+intensity textures stay AY8/A8Y8.
 The cost: up to 8 MB more RAM while the overflow pool exists, and a list
-rewritten in place may draw stale for up to three frames.
+or texture rewritten in place may draw stale for up to three frames.
 
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.

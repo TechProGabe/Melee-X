@@ -44,6 +44,7 @@ typedef struct {
     uint32_t hash, tlut_hash;
     uint32_t tex;
     uint32_t last_used, checked;
+    uint32_t stable;            /* revalidations passed in a row (tex_due) */
     int next;                   /* bucket chain by data pointer, -1: end */
 } Entry;
 
@@ -58,6 +59,7 @@ static uint32_t* s_scratch;
 static uint32_t s_scratch_texels;   /* in 32-bit words */
 static uint32_t s_st_uploads, s_st_evicts, s_st_evicts_hot, s_st_drops, s_st_drop_kb, s_st_fast, s_st_new_copies;
 static uint32_t s_drop_logged;
+static uint32_t s_st_chg_data, s_st_chg_tlut, s_chg_logged;   /* revalidation found new texels / a new palette */
 
 /* The last object bound to each texture map this frame: binding it again
  * (HSD loads the same texture for every pobj of a material) skips the
@@ -568,6 +570,20 @@ static int bind_unchanged(uint32_t map, const TexObj* o) {
            memcmp(&b->obj, o, sizeof *o) == 0;
 }
 
+/* Revalidation (sampled hash of the texels and palette) runs at most once a
+ * frame per texture; one that passed TEX_STABLE in a row is checked every
+ * fourth frame, staggered by address. The hashes were ~4% of the console's
+ * CPU in a match (some 230 textures a frame, scattered reads of MEM1), and
+ * no texture changed there; one rewritten in place shows stale for up to
+ * three frames. Movie planes change every other frame and never get there. */
+#define TEX_STABLE 120
+static int tex_due(Entry* e) {
+    if (e->checked == s_frame) return 0;
+    if (e->stable >= TEX_STABLE && ((s_frame + ((uint32_t)(uintptr_t)e->data >> 5)) & 3)) return 0;
+    e->checked = s_frame;
+    return 1;
+}
+
 void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
     const TexObj* o = (const TexObj*)obj;
     const TlutObj* tl = NULL;
@@ -603,13 +619,21 @@ void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
 #endif
     bytes = GXGetTexBufferSize(o->w, o->h, o->fmt, o->mipmap, (u8)levels);
     e = find(o->data, o->w, o->h, o->fmt, (uint8_t)levels, tl ? tl->data : NULL);
-    if (e && !e->efb && e->checked != s_frame) {
-        e->checked = s_frame;
+    if (e && !e->efb && tex_due(e)) {
         hash = hash_bytes(o->data, bytes);
         if (tl) thash = hash_bytes(tl->data, (tl->entries ? tl->entries : 256) * 2);
         if (hash != e->hash || thash != e->tlut_hash) {
+            if (hash != e->hash) s_st_chg_data++;
+            else s_st_chg_tlut++;
+            if (!s_chg_logged) {
+                s_chg_logged = 1;
+                xhw_logf("[TEX] changed: %ux%u fmt %u, %u levels, %s at %p", o->w, o->h, o->fmt, levels,
+                         hash != e->hash ? "texels" : "palette only", (const void*)o->data);
+            }
             drop(e);
             e = NULL;
+        } else if (e->stable < TEX_STABLE) {
+            e->stable++;
         }
     }
     if (!e) {
@@ -734,9 +758,9 @@ void gx_tex_frame_end(void) {
             }
         len = snprintf(line, sizeof line,
                        "[TEX] %d cached, %u used last frame; per %u: %u uploads, %u evictions (%u of this frame's), "
-                       "%u drops (%u KB), %u rebinds skipped; fmt n/KB/pool KB:",
+                       "%u drops (%u KB), %u rebinds skipped, %u changed (%u palette only); fmt n/KB/pool KB:",
                        s_count, live, XGX_STATS_EVERY, s_st_uploads, s_st_evicts, s_st_evicts_hot, s_st_drops,
-                       s_st_drop_kb, s_st_fast);
+                       s_st_drop_kb, s_st_fast, s_st_chg_data + s_st_chg_tlut, s_st_chg_tlut);
         for (k = 0; k < 16; k++)
             if (n[k]) len += snprintf(line + len, sizeof line - (size_t)len, " %x:%u/%u/%u", k, n[k], kb[k], pkb[k]);
         xhw_log(line);
@@ -744,6 +768,7 @@ void gx_tex_frame_end(void) {
                  "destination", pool_n[0], pool_kb[0], pool_n[1], pool_kb[1], XGX_STATS_EVERY, s_st_new_copies);
         s_st_uploads = s_st_evicts = s_st_evicts_hot = s_st_drops = s_st_drop_kb = s_st_fast = s_st_new_copies = 0;
         s_drop_logged = 0;
+        s_st_chg_data = s_st_chg_tlut = s_chg_logged = 0;
     }
     s_frame++;
     for (i = 0; i < s_count; i++)

@@ -97,6 +97,13 @@ was a render pass of its own (~75 µs of emulation, ~90% of a match frame).
   close an open batch: a finished one already holds its vertices.
 - Quads and fans are sent as triangle lists (`out_prim` in `gx_vtx.c`), and
   the EFB-copy quad as a strip.
+- `GXLoadTexMtxImm` compares the new rows first and changes nothing when
+  they match: HSD loads every texture's matrix before each draw, and it
+  marked the texture and position matrices dirty on ~77% of a match's draws
+  (rebuilding the texgen rows); now ~9%.
+- The pushbuffer is kicked every 32 KB (was 16 KB): each kick runs pbkit's
+  `pb_start`, which flushes the NV2A's write-combine cache and spins until
+  it is done (~2% of the console's CPU).
 - Every pushbuffer batch starts with `BREAK_VERTEX_BUFFER_CACHE`. The NV2A
   caches vertex data by address and a draw's fetch reads ahead of its last
   vertex; once a batch is kicked the GPU can run it before the CPU writes
@@ -459,7 +466,12 @@ Dolphin:
   free took ~5% of the console's CPU on Pokémon Stadium (~2000 blocks).
 - Cache lookups go through a hash of the data pointer. Binding the object a
   texture map already holds this frame skips the lookup entirely. Textures
-  are revalidated (sampled hash) once a frame; `GXInvalidateTexAll`, which
+  are revalidated (sampled hash) once a frame, and every fourth frame
+  (staggered by address) once one has passed 120 checks in a row: the
+  hashes were ~4% of the console's CPU in a match, where no texture changed
+  (one rewritten in place shows stale for up to three frames; `[TEX] ...
+  N changed (M palette only)` and one `[TEX] changed:` line per interval
+  report revalidation failures); `GXInvalidateTexAll`, which
   HSD calls after each of its four shadow copies, no longer forces another
   round.
 - EFB copies (`GXCopyTex`) are drawn by the GPU (`efb_copy_gpu`): the back

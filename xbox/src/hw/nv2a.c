@@ -303,7 +303,10 @@ static uint32_t* P;
 static int s_pb_open;
 static uint32_t* s_pb_mark;
 static uint32_t* s_pb_base;
-#define PB_KICK 4096
+/* words per kick: each one runs pbkit's pb_start, which flushes the NV2A's
+ * write-combine cache and spins until it's done (pb_cache_flush, ~2% of the
+ * console's CPU in a match at 4096) */
+#define PB_KICK 8192
 #define PB_GUARD (PB_BYTES - 192 * 1024)
 #define PCRTC_START_REG (*(volatile uint32_t*)0xFD600800)
 
