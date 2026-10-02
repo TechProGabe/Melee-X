@@ -117,6 +117,10 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   (`lb_800122F0`: an EFB copy read through TEV swap tables 1-3, new in
   v41). Likely the same family as the winner portrait: a captured image
   drawn back black. Tester runs 480 (32-bit), so not the 16-bit path.
+- Pokémon Stadium (same tester, RC1, 480): the big screen shows corrupted
+  graphics for a few frames when it switches to the fight camera. The
+  screen is an EFB copy (640x406 -> copy_dim); a stale or wrong-size copy
+  target on the switch is the first suspect. Third copy-related report.
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
