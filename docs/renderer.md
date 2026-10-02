@@ -125,6 +125,13 @@ was a render pass of its own (~75 µs of emulation, ~90% of a match frame).
   batch they join may be open already, and a stale read of their four
   vertices puts the quad anywhere. Both are the v40 candidate fix for the
   console's `LIMIT_COLOR` stall on the copy quad's `END` (`roadmap.md`).
+- The EFB copy's depth side points at the copy target through the
+  whole-RAM DMA object (3), not pbkit's zeta object (10, only the screen's
+  compressed depth buffer at the back buffer's shape); depth is neither
+  tested nor written. v42 still stalled on the copy quad's `END`, then with
+  `LIMIT_ZETA` as well as `LIMIT_COLOR`: v43's attempt. The first fault now
+  also logs PGRAPH 0x400700-0x4008FC and the last eight copies with where
+  each one's `END` sits in the pushbuffer.
 - An EFB copy reads exactly its source rect: a target pixel's centre
   samples the source pixel under it (`efb_copy_gpu`'s corners, `pix_x`/
   `pix_y` in `read_rect_cpu`). Until v40 both paths sampled one pixel right

@@ -403,6 +403,12 @@ static volatile uint32_t s_gf_first[9], s_gf_first_logged;
  * LIMIT_COLOR/LIMIT_ZETA), and the last EFB copy's target (offset, w, h, frame) */
 static volatile uint32_t s_gf_limit[4];
 static uint32_t s_last_copy[4];
+/* at the first fault: PGRAPH 0x400700-0x4008FC as they were (surface, zeta,
+ * clip, limit and trap state; decode against xemu's nv2a_regs), and the last
+ * eight EFB copies with where each one's END sits in the pushbuffer, so the
+ * copy at the faulting GET can be told from the ones the CPU queued after */
+static volatile uint32_t s_gf_regs[128];
+static uint32_t s_copy_ring[8][4], s_copy_n;
 static void log_first_fault(void);
 
 /* A GPU that stops fetching (bad method or state) otherwise hangs the game
@@ -510,6 +516,19 @@ static void log_first_fault(void) {
             xhw_logf("[NV2A]  first fault get%+d: %08x %08x %08x %08x %08x %08x %08x %08x", i * 4, w[i], w[i + 1],
                      w[i + 2], w[i + 3], w[i + 4], w[i + 5], w[i + 6], w[i + 7]);
     }
+    {
+        int i;
+        for (i = 0; i < 128; i += 8)
+            xhw_logf("[NV2A]  first fault pgraph %06x: %08x %08x %08x %08x %08x %08x %08x %08x", 0x400700 + i * 4,
+                     (unsigned)s_gf_regs[i], (unsigned)s_gf_regs[i + 1], (unsigned)s_gf_regs[i + 2],
+                     (unsigned)s_gf_regs[i + 3], (unsigned)s_gf_regs[i + 4], (unsigned)s_gf_regs[i + 5],
+                     (unsigned)s_gf_regs[i + 6], (unsigned)s_gf_regs[i + 7]);
+        for (i = 0; i < 8 && i < (int)s_copy_n; i++) {
+            const uint32_t* c = s_copy_ring[(s_copy_n - 1 - (uint32_t)i) & 7];
+            xhw_logf("[NV2A]  copy -%d: to %08x %ux%u, END at %08x, frame %u", i, c[0], c[1] & 0xFFFF, c[1] >> 16,
+                     c[2], c[3]);
+        }
+    }
 }
 
 void ocx_pb_gpu_fault(unsigned kind, unsigned a, unsigned b, unsigned c, unsigned d) {
@@ -527,6 +546,10 @@ void ocx_pb_gpu_fault(unsigned kind, unsigned a, unsigned b, unsigned c, unsigne
         s_gf_limit[1] = *(volatile uint32_t*)(0xFD400804u);
         s_gf_limit[2] = *(volatile uint32_t*)(0xFD400808u);
         s_gf_limit[3] = *(volatile uint32_t*)(0xFD40080Cu);
+        {
+            int i;
+            for (i = 0; i < 128; i++) s_gf_regs[i] = *(volatile uint32_t*)(0xFD400700u + (uint32_t)i * 4);
+        }
     }
     s_gf_last[0] = kind;
     s_gf_last[1] = a;
@@ -2845,6 +2868,15 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
 
     /* target: the texture, through pbkit's DMA object over all of RAM (3) */
     put1(NV097_SET_CONTEXT_DMA_COLOR, 3);
+    /* depth too: the surface format below names a depth format, and pbkit's
+     * zeta object (10) only spans the screen's compressed depth buffer, at
+     * offset 0 with the back buffer's pitch. The copy's swizzled surface
+     * pointed at that left the zeta side out of shape (the console's stall
+     * on this quad's END reported LIMIT_ZETA with LIMIT_COLOR). Depth is
+     * neither tested nor written here: the zeta side just takes the target's
+     * own memory, outside any compressed tile. */
+    put1(NV097_SET_CONTEXT_DMA_ZETA, 3);
+    put1(NV097_SET_SURFACE_ZETA_OFFSET, (uint32_t)t->mem & 0x03FFFFFF);
     put1(NV097_SET_SURFACE_FORMAT, (s_bpp == 16 ? NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5 |
                                                       NV097_SET_SURFACE_FORMAT_ZETA_Z16 << 4
                                                 : NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8 |
@@ -2905,10 +2937,19 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     *P++ = 1u << 18 | NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_DRAW_ARRAYS);
     *P++ = 3u << 24;   /* 4 vertices from 0 */
     put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
+    {
+        uint32_t* c = s_copy_ring[s_copy_n++ & 7];
+        c[0] = (uint32_t)t->mem & 0x03FFFFFF;
+        c[1] = pw | ph << 16;
+        c[2] = (uint32_t)P & 0x03FFFFFF;
+        c[3] = s_frame;
+    }
     put1(NV097_WAIT_FOR_IDLE, 0);   /* the copy is in memory before anything samples it */
 
     /* back to the back buffer and the game's state */
     put1(NV097_SET_STENCIL_TEST_ENABLE, 1);   /* as pbkit leaves it */
+    put1(NV097_SET_SURFACE_ZETA_OFFSET, 0);   /* pbkit's depth buffer again (retarget sends the rest) */
+    put1(NV097_SET_CONTEXT_DMA_ZETA, 10);
     pb_close();
     ocx_pb_retarget_back_buffer();
     {   /* the back buffer is the target before the next clear or draw starts */
