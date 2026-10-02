@@ -145,10 +145,13 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   screen goes back to the fight after ~10 s on other views the display
   binds the 640x406 destination before that frame's copy, so it uploads
   the destination's memory, which the GPU copy never writes (garbage, or
-  black in xemu). Same for the 124x80 corner view. Candidate fix, not yet
-  run in xemu: keep EFB copies past the idle release (they still go under
-  pool pressure and at a scene change once idle) and drop one only when a
-  sampled hash of its destination memory shows the CPU wrote there.
+  black in xemu). Same for the 124x80 corner view. A first fix (keep EFB
+  copies past the idle release, drop one only when a sampled hash of its
+  destination memory shows the CPU wrote there) broke the 1P Stage Clear
+  freeze frame in xemu (black again): that copy's destination memory
+  changes after the copy, so the hash dropped a live copy. Not merged;
+  next try: keep copies past the idle release without the hash test, and
+  check Stage Clear, Stadium (>40 s) and the texture pool.
 - Trophy transition (same tester, RC1, 480; the trophy-to-table view,
   e.g. after Classic): lighting looks wrong, the trophy's body dark
   (Fox's jacket near black, the stand black) under the spotlight, and
