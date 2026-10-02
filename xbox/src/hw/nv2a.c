@@ -52,6 +52,7 @@ enum { GX_TG_MTX3x4 = 0, GX_TG_MTX2x4 = 1, GX_TG_BUMP0 = 2, GX_TG_BUMP7 = 9 };
 enum { GX_TG_TEXCOORD0 = 12, GX_TG_TEXCOORD6 = 18 };
 enum { GX_AF_SPEC = 0, GX_AF_SPOT = 1, GX_AF_NONE = 2 };
 enum { GX_COLOR0A0 = 4, GX_COLOR1A1 = 5 };
+enum { GX_ITF_8 = 0, GX_ITM_OFF = 0, GX_ITM_2 = 3, GX_ITW_OFF = 0, GX_ITBA_OFF = 0 };
 #define GX_TEXMTX0 30
 #define GX_IDENTITY 60
 #define GX_PTTEXMTX0 64
@@ -875,8 +876,11 @@ int xgx_tex_in_overflow(uint32_t tex) {
     return tex && tex < MAX_TEX && s_tex[tex].used && pool_owns(&s_tp2, s_tex[tex].base);
 }
 
+static void ind_tex_flush(void);
+
 void xgx_tex_pool_shrink(void) {
     if (!s_tp2.base) return;
+    ind_tex_flush();   /* rebuilt on demand; one may sit in the overflow pool */
     wait_idle();   /* the last frame may still sample them */
     release_deferred();
     if (s_tp2.used) return;   /* something still lives there: next time */
@@ -902,6 +906,7 @@ static int s_frame_open;
 static uint32_t s_frame;
 static uint32_t s_draws, s_approx, s_pf_verts;
 static uint32_t s_st_swz, s_st_swz_stages;   /* draws whose combiners extract swizzled channels */
+static uint32_t s_st_ind, s_st_ind_approx;   /* draws with indirect stages: offset / drawn direct */
 static volatile int s_fbdump_once;
 
 unsigned xgx_present_count(void) { return s_frame; }
@@ -1195,10 +1200,10 @@ void xgx_present(int black) {
                  "%u, points %u", XGX_STATS_EVERY, s_st_prim[0], s_st_prim[2], s_st_prim[3], s_st_prim[4], s_st_prim[5],
                  s_st_prim[6], s_st_prim[7]);
         memset(s_st_prim, 0, sizeof s_st_prim);
-        if (s_st_swz)
-            xhw_logf("[NV2A] per %u frames: %u draws through swap tables (%u combiner stages added)", XGX_STATS_EVERY,
-                     s_st_swz, s_st_swz_stages);
-        s_st_swz = s_st_swz_stages = 0;
+        if (s_st_swz || s_st_ind || s_st_ind_approx)
+            xhw_logf("[NV2A] per %u frames: %u draws through swap tables (%u combiner stages added), %u indirect "
+                     "(%u more drawn direct)", XGX_STATS_EVERY, s_st_swz, s_st_swz_stages, s_st_ind, s_st_ind_approx);
+        s_st_swz = s_st_swz_stages = s_st_ind = s_st_ind_approx = 0;
         xhw_logf("[NV2A] per %u frames: %u vertex programs loaded (%u instructions), %u program switches",
                  XGX_STATS_EVERY, s_st_vp_loads, s_st_vp_ins, s_st_vp_sel);
         s_st_vp_loads = s_st_vp_ins = s_st_vp_sel = 0;
@@ -1492,6 +1497,9 @@ static const float* texgen_src_mtx(const XgxState* st, uint32_t id, float out[3]
 /* rows for unit u: texgen tg; the post matrix is folded in unless the
  * texgen normalizes first */
 static int s_d_unit_map[4];   /* (defined with the other derived state below) */
+enum { UNIT_PLAIN, UNIT_IND, UNIT_BUMP };
+static int s_d_unit_kind[4];
+static float s_d_unit_off[4][2];
 
 static void build_texgen(const XgxState* st, int u, const XgxTexGen* tg) {
     float m[3][4], pt[3][4], out[3][4];
@@ -1514,6 +1522,17 @@ static void build_texgen(const XgxState* st, int u, const XgxTexGen* tg) {
                 pt[0][c] *= (float)t->w;
                 pt[1][c] *= (float)t->h;
             }
+    }
+    if (s_d_unit_kind[u] == UNIT_IND) {   /* GXSetIndTexCoordScale */
+        for (c = 0; c < 4; c++) {
+            pt[0][c] *= s_d_unit_off[u][0];
+            pt[1][c] *= s_d_unit_off[u][1];
+        }
+    } else if (s_d_unit_kind[u] == UNIT_BUMP) {   /* the bias's constant offset: s + c q, t + c q */
+        for (c = 0; c < 4; c++) {
+            pt[0][c] += s_d_unit_off[u][0] * pt[2][c];
+            pt[1][c] += s_d_unit_off[u][1] * pt[2][c];
+        }
     }
     if (tg->normalize) {
         memcpy(out, m, 48);
@@ -1721,6 +1740,11 @@ static void emit_combiners(const XgxState* st, const RcProg* rp) {
  * ====================================================================== */
 static uint32_t s_tex_shadow[4][9];
 static uint32_t s_tex_prog = 0xFFFFFFFFu;   /* NV097_SET_SHADER_STAGE_PROGRAM sent last */
+static uint32_t s_tex_in = 0xFFFFFFFFu;     /* NV097_SET_SHADER_OTHER_STAGE_INPUT sent last */
+static uint32_t s_bump_shadow[4][4];        /* SET_TEXTURE_SET_BUMP_ENV_MAT per unit, as sent */
+static uint32_t s_d_unit_tex[4];            /* derive_units: a unit's texture when not its map's (an indirect map) */
+static int s_d_unit_in[4], s_d_nbump;       /* a bump unit's input unit; bump units this draw */
+static float s_d_unit_bump[4][4];           /* a bump unit's matrix: 00 01 10 11 */
 
 static uint32_t wrap_mode(uint32_t gx) {
     switch (gx) {
@@ -1738,8 +1762,10 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
         const Tex* t = NULL;
         const XgxMap* m = NULL;
         if (u < nunits) {
+            uint32_t id;
             m = &st->map[unit_map[u]];
-            if (m->tex && m->tex < MAX_TEX && s_tex[m->tex].used) t = &s_tex[m->tex];
+            id = s_d_unit_tex[u] ? s_d_unit_tex[u] : m->tex;
+            if (id && id < MAX_TEX && s_tex[id].used) t = &s_tex[id];
         }
         if (t) {
             uint32_t minf = m->min_filter + 1, magf = m->mag_filter == 0 ? 1 : 2;
@@ -1763,7 +1789,7 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
              * may keep the one it has) */
             v[5] = t->gen;
             v[6] = t->pal;   /* DMA A: bit 0 clear */
-            prog |= 1u << (u * 5);   /* 2D_PROJECTIVE */
+            prog |= (s_d_unit_kind[u] == UNIT_BUMP ? 6u : 1u) << (u * 5);   /* BUMPENVMAP, 2D_PROJECTIVE */
         }
         if (memcmp(v, s_tex_shadow[u], sizeof v) != 0) {
             uint32_t b = (uint32_t)u * 64;
@@ -1788,6 +1814,28 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
         put1(NV097_SET_SHADER_STAGE_PROGRAM, prog);
         s_tex_prog = prog;
     }
+    if (s_d_nbump) {   /* indirect: which earlier unit each bump unit reads, and its matrix */
+        uint32_t in = 0;
+        for (u = 1; u < nunits; u++) {
+            uint32_t w[4];
+            if (s_d_unit_kind[u] != UNIT_BUMP) continue;
+            if (u >= 2) in |= (uint32_t)s_d_unit_in[u] << (16 + (u - 2) * 4);   /* unit 1 reads unit 0 */
+            /* the method takes 00 01 11 10 (xemu's swizzle; 00 01 10 11 are s from du, t from du,
+             * s from dv, t from dv) */
+            memcpy(&w[0], &s_d_unit_bump[u][0], 8);
+            memcpy(&w[2], &s_d_unit_bump[u][3], 4);
+            memcpy(&w[3], &s_d_unit_bump[u][2], 4);
+            if (memcmp(w, s_bump_shadow[u], sizeof w) != 0) {
+                uint32_t k;
+                for (k = 0; k < 4; k++) put1(NV097_SET_TEXTURE_SET_BUMP_ENV_MAT + (uint32_t)u * 64 + k * 4, w[k]);
+                memcpy(s_bump_shadow[u], w, sizeof w);
+            }
+        }
+        if (in != s_tex_in) {
+            put1(NV097_SET_SHADER_OTHER_STAGE_INPUT, in);
+            s_tex_in = in;
+        }
+    }
 }
 
 /* ======================================================================
@@ -1806,6 +1854,8 @@ static void state_reset_shadows(void) {
     memset(s_fixed, 0xFF, sizeof s_fixed);
     memset(s_tex_shadow, 0xFF, sizeof s_tex_shadow);
     s_tex_prog = 0xFFFFFFFFu;
+    s_tex_in = 0xFFFFFFFFu;
+    memset(s_bump_shadow, 0xFF, sizeof s_bump_shadow);
     s_rc_valid = 0;
     s_vc_valid = 0;
     s_vp_cur = -1;
@@ -2178,6 +2228,133 @@ static uint32_t s_d_spec_lights, s_d_layout = 0xFFFFFFFFu;
 #define DIRTY_TG (DIRTY_UNITS | XGX_DIRTY_TEXGEN | XGX_DIRTY_TEXMTX)
 #define DIRTY_FIXED (XGX_DIRTY_PIXEL | XGX_DIRTY_SCISSOR | XGX_DIRTY_FOG)
 
+/* ======================================================================
+ * Indirect texturing (GXSetTevIndirect)
+ * ====================================================================== */
+#ifndef XGX_NO_INDIRECT
+#define XGX_NO_INDIRECT 0   /* 1: indirect stages draw as direct ones (as up to v40) */
+#endif
+
+/* A GX indirect stage offsets a TEV stage's texture coordinate, in texels,
+ * by a 2x3 matrix times (s, t, u) - bias, read from the indirect texture's
+ * alpha, blue and green (bias -128 for GX_ITF_8). The NV2A's BUMPENVMAP unit
+ * offsets its coordinate by a 2x2 matrix times (du, dv), read from an
+ * earlier unit's blue and green as two's complement bytes / 127 (xemu's
+ * sign3). So the indirect map is drawn from a copy with s / 2 in blue and
+ * t / 2 in green (0..127): no texel crosses the two's complement wrap, so
+ * filtering between texels stays linear as on GX, the bias becomes a
+ * constant offset folded into the perturbed unit's texgen
+ * (s_d_unit_off), and the lowest bit of s and t is lost (half a step,
+ * offset by a quarter on average). The copies are small (Melee's are 32x32
+ * IA8) and kept per source texture and generation. */
+typedef struct { uint32_t src, gen, tex, used; } IndTex;
+static IndTex s_ind_tex[4];
+
+/* GX alpha (s) and blue (t) of texel i of a texture as the pool holds it */
+static int ind_texel(const Tex* t, uint32_t i, uint8_t* a, uint8_t* b) {
+    const uint8_t* m = (const uint8_t*)t->mem;
+    uint32_t w;
+    switch (t->nvfmt) {
+        case NV097_SET_TEXTURE_FORMAT_COLOR_SZ_AY8: *a = *b = m[i]; return 1;
+        case NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8Y8:   /* luminance, alpha */
+            w = ((const uint16_t*)m)[i];
+            *b = (uint8_t)w;
+            *a = (uint8_t)(w >> 8);
+            return 1;
+        case NV097_SET_TEXTURE_FORMAT_COLOR_SZ_R5G6B5:
+            w = ((const uint16_t*)m)[i] & 31u;
+            *a = 255;
+            *b = (uint8_t)(w << 3 | w >> 2);
+            return 1;
+        case NV097_SET_TEXTURE_FORMAT_COLOR_SZ_I8_A8R8G8B8:
+            w = ((const uint32_t*)t->base)[m[i]];   /* the palette precedes the levels */
+            *a = (uint8_t)(w >> 24);
+            *b = (uint8_t)w;
+            return 1;
+        case NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8R8G8B8:
+            w = ((const uint32_t*)m)[i];
+            *a = (uint8_t)(w >> 24);
+            *b = (uint8_t)w;
+            return 1;
+        default: return 0;   /* DXT: not as an indirect map */
+    }
+}
+
+static void ind_tex_flush(void) {
+    int k;
+    for (k = 0; k < 4; k++)
+        if (s_ind_tex[k].tex) xgx_tex_destroy(s_ind_tex[k].tex);
+    memset(s_ind_tex, 0, sizeof s_ind_tex);
+    s_draw_force |= XGX_DIRTY_MAPS;   /* units bound to them are derived again */
+}
+
+/* the BUMPENVMAP input copy of texture src; 0: none (format, size or pool) */
+static uint32_t ind_tex(uint32_t src) {
+    const Tex* t;
+    uint32_t i, n, id, *out;
+    uint8_t a, b;
+    int k, lru = 0;
+    if (!src || src >= MAX_TEX || !s_tex[src].used) return 0;
+    t = &s_tex[src];
+    for (k = 0; k < 4; k++)
+        if (s_ind_tex[k].tex && s_ind_tex[k].src == src && s_ind_tex[k].gen == t->gen) {
+            s_ind_tex[k].used = s_frame;
+            return s_ind_tex[k].tex;
+        }
+    n = (uint32_t)t->w * t->h;
+    if (t->rect || n > 65536 || !ind_texel(t, 0, &a, &b)) return 0;
+    for (k = 1; k < 4; k++)
+        if (s_ind_tex[k].used < s_ind_tex[lru].used) lru = k;
+    if (s_ind_tex[lru].tex) xgx_tex_destroy(s_ind_tex[lru].tex);
+    memset(&s_ind_tex[lru], 0, sizeof s_ind_tex[lru]);
+    id = xgx_tex_create(t->w, t->h, 1, XGX_TEX_ARGB8, NULL);   /* same size: same swizzled texel order */
+    if (!id) return 0;
+    out = (uint32_t*)s_tex[id].mem;
+    for (i = 0; i < n; i++) {   /* reads the pool (uncached), writes in order (write-combined) */
+        ind_texel(t, i, &a, &b);
+        out[i] = (uint32_t)(b >> 1) << 8 | (uint32_t)(a >> 1);   /* green t, blue s */
+    }
+    s_ind_tex[lru].src = src;
+    s_ind_tex[lru].gen = t->gen;
+    s_ind_tex[lru].tex = id;
+    s_ind_tex[lru].used = s_frame;
+    return id;
+}
+
+/* the TEV stage reads an indirect offset at all / one the NV2A draws:
+ * static matrix, no wrap, no add-previous, no bump alpha, 8-bit format */
+static int ind_active(const XgxState* st, const XgxTevStage* t) {
+    return t->ind_stage < st->nind && t->ind_stage < 4 &&
+           (t->ind_mtx != GX_ITM_OFF || t->ind_wrap_s != GX_ITW_OFF || t->ind_wrap_t != GX_ITW_OFF || t->ind_add_prev);
+}
+
+static int ind_exact(const XgxTevStage* t) {
+    return t->ind_mtx > GX_ITM_OFF && t->ind_mtx <= GX_ITM_2 && t->ind_wrap_s == GX_ITW_OFF &&
+           t->ind_wrap_t == GX_ITW_OFF && !t->ind_add_prev && t->ind_alpha == GX_ITBA_OFF && t->ind_format == GX_ITF_8;
+}
+
+/* bump unit u for TEV stage t: the matrix and the texgen offset. With
+ * du = (v >> 1) / 127 the GX value is v ~ 254 du + 0.5 (the dropped bit's
+ * mean), and s = v - 128 when biased. The offset is in texels of the GX
+ * texture: a swizzled texture is sampled over [0, 1], so divide by its
+ * size; a linear one is sampled in texels. The u column has no NV2A
+ * counterpart (approximated when used). */
+static int bump_setup(const XgxState* st, const XgxTevStage* t, int u) {
+    const float(*m)[3] = st->ind_mtx[t->ind_mtx - 1];
+    const XgxMap* mp = &st->map[t->texmap];
+    const Tex* tx = mp->tex < MAX_TEX && s_tex[mp->tex].used ? &s_tex[mp->tex] : NULL;
+    float w = tx && tx->rect ? 1.0f : mp->w ? (float)mp->w : 1.0f;
+    float h = tx && tx->rect ? 1.0f : mp->h ? (float)mp->h : 1.0f;
+    float cs = 0.5f - ((t->ind_bias & 1) ? 128.0f : 0.0f), ct = 0.5f - ((t->ind_bias & 2) ? 128.0f : 0.0f);
+    s_d_unit_bump[u][0] = 254.0f * m[0][0] / w;   /* s from du */
+    s_d_unit_bump[u][1] = 254.0f * m[1][0] / h;   /* t from du */
+    s_d_unit_bump[u][2] = 254.0f * m[0][1] / w;   /* s from dv */
+    s_d_unit_bump[u][3] = 254.0f * m[1][1] / h;   /* t from dv */
+    s_d_unit_off[u][0] = (m[0][0] * cs + m[0][1] * ct) / w;
+    s_d_unit_off[u][1] = (m[1][0] * cs + m[1][1] * ct) / h;
+    return m[0][2] == 0.0f && m[1][2] == 0.0f;
+}
+
 /* a swap table as RcStage's tex_swz/ras_swz: two bits per channel */
 static uint8_t swap_bits(const uint8_t t[4]) {
     return (uint8_t)((t[0] & 3) | (t[1] & 3) << 2 | (t[2] & 3) << 4 | (t[3] & 3) << 6);
@@ -2189,7 +2366,12 @@ static void derive_units(const XgxState* st) {
     int s, i, nunits = 0, nstages = st->ntev > RC_MAX_TEV ? RC_MAX_TEV : st->ntev ? (int)st->ntev : 1;
     memset(rc, 0, offsetof(RcCfg, st) + (size_t)nstages * sizeof(RcStage));   /* rc_used() */
     uint8_t emboss = 0;
+    int ind_unit[4] = { -1, -1, -1, -1 };   /* per indirect stage: the unit its map is drawn on */
+    uint8_t ind_use = 0;                    /* TEV stages drawn with their indirect offset */
     s_d_unit_miss = 0;
+    s_d_nbump = 0;
+    memset(s_d_unit_kind, 0, sizeof s_d_unit_kind);
+    memset(s_d_unit_tex, 0, sizeof s_d_unit_tex);
     rc->nstages = (uint8_t)nstages;
     /* HSD's emboss bump: "prev + height(tc) * ras" then "prev - height(bump
      * of tc) * ras". The bump texgen is drawn as tc itself (unit_texgen), so
@@ -2203,6 +2385,40 @@ static void derive_units(const XgxState* st) {
             a->texmap == b->texmap && bg && bg->type >= GX_TG_BUMP0 && bg->type <= GX_TG_BUMP7 &&
             bg->src == GX_TG_TEXCOORD0 + a->texcoord)
             emboss |= (uint8_t)(3u << s);
+    }
+    /* Indirect maps get the first units: a BUMPENVMAP unit reads an earlier
+     * unit's texture (NV097_SET_SHADER_OTHER_STAGE_INPUT), and unit 0
+     * can't be one. A stage the NV2A can't offset exactly draws direct. */
+    if (st->nind && !XGX_NO_INDIRECT) {
+        for (s = 0; s < rc->nstages; s++) {
+            const XgxTevStage* t = &st->tev[s];
+            uint32_t k = t->ind_stage, imap, itc;
+            if (!ind_active(st, t)) continue;
+            imap = st->ind_order[k & 3][1];
+            itc = st->ind_order[k & 3][0];
+            if (t->texmap >= XGX_MAX_MAPS || t->texcoord >= XGX_MAX_TEXGEN || !st->map[t->texmap].tex ||
+                (emboss >> s & 1))
+                continue;   /* no texture to offset */
+            if (!ind_exact(t) || imap >= XGX_MAX_MAPS || itc >= XGX_MAX_TEXGEN) {
+                s_d_unit_miss++;
+                continue;
+            }
+            if (ind_unit[k] < 0) {
+                uint32_t tex = nunits < 3 ? ind_tex(st->map[imap].tex) : 0;   /* and room for a bump unit */
+                if (!tex) {
+                    s_d_unit_miss++;
+                    continue;
+                }
+                ind_unit[k] = nunits++;
+                s_d_unit_map[ind_unit[k]] = (int)imap;
+                s_d_unit_tc[ind_unit[k]] = (int)itc;
+                s_d_unit_kind[ind_unit[k]] = UNIT_IND;
+                s_d_unit_tex[ind_unit[k]] = tex;
+                s_d_unit_off[ind_unit[k]][0] = 1.0f / (float)(1u << (st->ind_scale[k][0] & 15));
+                s_d_unit_off[ind_unit[k]][1] = 1.0f / (float)(1u << (st->ind_scale[k][1] & 15));
+            }
+            ind_use |= (uint8_t)(1u << s);
+        }
     }
     for (s = 0; s < rc->nstages; s++) {
         const XgxTevStage* t = &st->tev[s];
@@ -2227,8 +2443,20 @@ static void derive_units(const XgxState* st) {
         r->ras_swz = r->ras == 2 ? RC_SWZ_ID : swap_bits(st->swap[t->ras_swap & 3]);
         if (!(emboss >> s & 1) && t->texmap != GX_NULL && t->texmap < XGX_MAX_MAPS && t->texcoord != GX_NULL &&
             st->map[t->texmap].tex) {
-            for (i = 0; i < nunits; i++)
-                if (s_d_unit_map[i] == (int)t->texmap && s_d_unit_tc[i] == (int)t->texcoord) { u = i; break; }
+            if ((ind_use >> s & 1) && nunits < 4) {   /* a unit of its own, offset by its indirect map's */
+                u = nunits++;
+                s_d_unit_map[u] = (int)t->texmap;
+                s_d_unit_tc[u] = (int)t->texcoord;
+                s_d_unit_kind[u] = UNIT_BUMP;
+                s_d_unit_in[u] = ind_unit[t->ind_stage];
+                if (!bump_setup(st, t, u)) s_d_unit_miss++;
+                s_d_nbump++;
+            } else if (ind_use >> s & 1) {
+                s_d_unit_miss++;   /* no unit left: drawn direct */
+            }
+            for (i = 0; i < nunits && u < 0; i++)
+                if (s_d_unit_kind[i] == UNIT_PLAIN && s_d_unit_map[i] == (int)t->texmap &&
+                    s_d_unit_tc[i] == (int)t->texcoord) { u = i; break; }
             if (u < 0 && nunits < 4) {
                 u = nunits++;
                 s_d_unit_map[u] = (int)t->texmap;
@@ -2307,6 +2535,7 @@ static void derive_vk(const XgxState* st, const XgxLayout* layout) {
         const XgxTexGen* tg = unit_texgen(st, (uint32_t)s_d_unit_tc[i]);
         vk->tex[i].src = (uint8_t)tg->src;
         vk->tex[i].proj = tg->type == GX_TG_MTX3x4;
+        if (vk->tex[i].proj && s_d_unit_kind[i] == UNIT_BUMP) vk->tex[i].proj = VP_PROJ_DIVIDE;
         vk->tex[i].normalize = (uint8_t)(tg->normalize != 0);
         if (tg->mtx < GX_TEXMTX0) s_d_tg_posmtx = 1;
     }
@@ -2387,6 +2616,8 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         s_st_swz++;
         s_st_swz_stages += (uint32_t)s_d_rp->swizzled;
     }
+    if (s_d_nbump) s_st_ind++;
+    else if (st->nind && s_d_unit_miss) s_st_ind_approx++;
 #ifdef XGX_DEBUG_TRACE
     if (s_fbdump_once || s_shot_once) trace_draw(prim, count, st, s_d_rp->approximated, layout);   /* autopad SHOT or BACK */
 #endif

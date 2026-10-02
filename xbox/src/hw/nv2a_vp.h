@@ -39,9 +39,11 @@ typedef struct {
 
 typedef struct {
     uint8_t src;                  /* GXTexGenSrc */
-    uint8_t proj;                 /* MTX3x4: q is used */
+    uint8_t proj;                 /* MTX3x4: q is used; VP_PROJ_DIVIDE: and s, t divided by it here */
     uint8_t normalize;            /* then post matrix */
 } VpTexGen;
+
+#define VP_PROJ_DIVIDE 2
 
 /* Everything the program's code depends on; constants are separate. */
 typedef struct {

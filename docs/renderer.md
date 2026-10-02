@@ -433,9 +433,65 @@ Current limits:
 - signed TEV colours (`GXSetTevColorS10` below 0) and unclamped stages
   work only in the movie recipe;
 - TEV swap tables: permutations are approximated by the identity;
-- indirect texturing is ignored (some stage effects);
+- indirect texturing: only what the NV2A's BUMPENVMAP can do (below);
 - destination alpha is missing at 720p (R5G6B5 has no alpha);
 - texture-matrix index attributes (TEXnMTXIDX) are ignored.
+
+## Indirect texturing (`nv2a.c`)
+
+GX's indirect stages (`GXSetNumIndStages`, `GXSetIndTexOrder`,
+`GXSetIndTexCoordScale`, `GXSetIndTexMtx`, `GXSetTevIndirect`) offset a TEV
+stage's texture coordinate, in texels, by a 2x3 matrix times (s, t, u)
+minus a bias, read per pixel from an indirect texture's alpha, blue and
+green. The one user in Melee's code is `lbRefract` (`lbrefract.c`): a
+cloaked fighter (the Cloaking Device, Invisible Melee) is drawn as the
+stage behind it, a half-size copy of the frame (`lbRefract_80022560`)
+sampled at the fighter's projected position and offset by a 32x32 IA8
+lens map looked up by the view-space normal (`GX_ITF_8`, `GX_ITB_ST`,
+matrix 0 = -1, no wrap). No stage uses it: Fountain of Dreams' reflection
+and water are geometry (`[NV2A]` counts no indirect draws there), and
+HSD's texture objects have no indirect path (`TEX_BUMP` is the emboss
+handled under Textures).
+
+The NV2A's texture shader has the counterpart: a `BUMPENVMAP` unit adds a
+2x2 matrix times (du, dv), read from an earlier unit's blue and green, to
+its coordinate. `derive_units` maps a TEV stage with an indirect offset
+onto two units:
+
+- the indirect map gets one of the first units (`UNIT_IND`, 2D projective),
+  since a bump unit reads an earlier unit (`SET_SHADER_OTHER_STAGE_INPUT`
+  for units 2 and 3; unit 1 reads unit 0) and unit 0 can't be one. Its
+  texgen is scaled by `GXSetIndTexCoordScale`.
+- the stage's own texture gets a unit of its own (`UNIT_BUMP`, program 6),
+  with the matrix in `SET_TEXTURE_SET_BUMP_ENV_MAT`. `BUMPENVMAP` reads s
+  and t without dividing by q, so a projective texgen on that unit divides
+  in the vertex program (`VP_PROJ_DIVIDE`; per vertex, so the coordinate is
+  interpolated as s/q, which differs from GX's per-pixel divide by the
+  perspective across one triangle: small at a fighter's size;
+  `test_vp_opt.py` checks the divide against the projective program).
+  The matrix method takes 00, 01, 11, 10 (xemu's register order).
+
+The unit reads du and dv as two's-complement bytes / 127 (xemu's `sign3`).
+The indirect map is drawn from a copy (`ind_tex`: A8R8G8B8, s / 2 in blue
+and t / 2 in green, made from the pool's texels once per texture and
+generation; AY8, A8Y8, R5G6B5, A8R8G8B8 and P8 sources, up to 64K texels):
+halved, no texel crosses the two's complement wrap, so filtering between
+texels stays linear as GX's does, and GX's -128 bias becomes a constant
+added to the bump unit's texgen rows (s + c q). The matrix is the GX matrix
+times 254 over the GX texture's size (a swizzled texture is sampled over
+[0, 1]; a linear one in texels). Halving loses the lowest bit: the offset
+is within half a step of GX's (`2^scale` texels per step; Melee's lens
+map: half a texel of the 320x240 copy, a pixel on screen).
+
+Drawn direct (and counted as approximated, `[NV2A] per N frames: ...
+indirect (M more drawn direct)`): dynamic matrices (`GX_ITM_S*`,
+`GX_ITM_T*`), wrapping, `add_prev` (accumulated offsets), bump alpha,
+the 5/4/3-bit formats, DXT maps, a stage without a free unit pair, and the
+matrix's u column (ignored when not zero). Draws without an indirect stage
+send exactly what they did before; `-DXGX_NO_INDIRECT=1` draws every
+indirect stage direct (v40's behaviour) for bisecting on the console.
+`tools/xbox/scenarios/inv` (`MELEE_DEBUG_VS_INVISIBLE=3`) is Fountain of
+Dreams with two of four CPUs cloaked.
 
 ## Fog (`nv2a_fog.c`)
 

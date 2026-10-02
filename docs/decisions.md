@@ -248,6 +248,18 @@ swizzle compile to the same combiner words as before
 (`tools/xbox/test_rc.py`). The front end's default tables were all
 identity; they are GXInit's now.
 
+**Indirect texturing as BUMPENVMAP (after v40).** The refraction of a
+cloaked fighter (`lbRefract`, Melee's only indirect user) maps onto the
+NV2A's bump-environment unit: the indirect map on an earlier unit, drawn
+from a copy that holds its offsets halved so filtering never crosses the
+unit's two's-complement wrap (GX's -128 bias becomes a texgen constant),
+and the perturbed texture on a bump unit whose projective coordinate is
+divided per vertex. The alternatives were a dependent read (`DEPENDENT_AR`
+replaces the coordinate instead of offsetting it) or dot-product stages
+(three units for one offset). What BUMPENVMAP can't do (dynamic matrices,
+wrap, accumulation) draws direct, as before; `-DXGX_NO_INDIRECT=1` turns
+it all off.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 
@@ -402,8 +414,9 @@ marked `PORT:`:
   in by a konst alpha (Kirby's Falcon helmet during Falcon Punch, whose K1
   RGB is the glow and K1 alpha the texture blend).
 - `src/melee/gm/gmvsmode.c` (`onEnterDebugVs`): `MELEE_DEBUG_VS_CHARS`
-  (fighter kinds, costumes, human or CPU) and `MELEE_DEBUG_VS_ITEMS` (item mask, top
-  frequency) for scripted xemu runs; `src/melee/ft/kinds/ftKirby/ftkirby.c`
+  (fighter kinds, costumes, human or CPU), `MELEE_DEBUG_VS_ITEMS` (item mask, top
+  frequency) and `MELEE_DEBUG_VS_INVISIBLE` (cloaked players, as Invisible Melee)
+  for scripted xemu runs; `src/melee/ft/kinds/ftKirby/ftkirby.c`
   (`ftKb_Init_OnDeath`): `MELEE_DEBUG_KIRBY_HAT` loads that hat's archive
   and spawns Kirby with the copy ability. All under `TARGET_PC`, inert without the variables.
 - `src/melee/lb/lbaudio_ax.c` (`lbAudioAx_80027648`): when a needed SSM
@@ -470,7 +483,10 @@ To sync a newer melee-pc:
 - **Performance.** Matches draw 30-60 fps on the console (busy 4-CPU
   stages in the low 30s) while the simulation keeps 60 ticks
   (`docs/roadmap.md`).
-- **Rendering gaps**: no indirect texturing (water and reflections), fog
+- **Rendering gaps**: indirect texturing only as BUMPENVMAP does it (the
+  cloak's refraction: offsets to half a step, s/q per vertex; checked in
+  xemu, whose BUMPENVMAP reads unsigned textures as two's complement: the
+  console is unchecked), fog
   per vertex (long polygons get less fog mid-span; no range adjustment),
   TEV swap-table permutations; the texture pool and the
   display-list vertex pool run full in long sessions (they evict and

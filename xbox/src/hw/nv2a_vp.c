@@ -448,6 +448,13 @@ static void texgen(Gen* g, const VpKey* k, int u) {
         DP4(T(RT, MW), R(RS), C(VPC_POSTMTX + u * 3 + 2));
         MOV(T(RT, MZ), K0());
     }
+    if (t->proj == VP_PROJ_DIVIDE) {
+        /* a BUMPENVMAP unit (indirect texturing) reads s and t without
+         * dividing by q: divide here, per vertex */
+        RCP(T(RD, MW), sw(R(RT), WWWW));
+        MUL(T(RT, MX | MY), R(RT), sw(R(RD), WWWW));
+        MOV(T(RT, MW), K1());
+    }
     MOV(O(O_T0 + u, MXYZW), R(RT));
 }
 
@@ -1103,7 +1110,8 @@ static int legacy_len(const VpKey* k) {
         n++;
     }
     for (i = 0; i < k->ntex && i < 4; i++)
-        n += (k->tex[i].src >= 4 && k->tex[i].src <= 11 ? 2 : 1) + 6 + (k->tex[i].normalize ? 9 : 0);
+        n += (k->tex[i].src >= 4 && k->tex[i].src <= 11 ? 2 : 1) + 6 + (k->tex[i].normalize ? 9 : 0) +
+             (k->tex[i].proj == VP_PROJ_DIVIDE ? 3 : 0);
     return n;
 }
 

@@ -306,6 +306,42 @@ int main(int argc, char** argv) {
             }
         }
     }
+    /* VP_PROJ_DIVIDE (a BUMPENVMAP unit, indirect texturing) has no
+     * reference program: the optimized program must match the generator's
+     * own, and its s, t the projective program's s / q, t / q, with q 1 */
+    {
+        int dfails = 0, dn = 0;
+        for (t = 0; t < nkeys / 10; t++) {
+            VpKey k, kp;
+            VpIn in;
+            VpOut co, uo, po;
+            int u, nun, j;
+            rand_key(&k);
+            if (!k.ntex) k.ntex = 1;
+            u = (int)(rnd() % k.ntex);
+            k.tex[u].proj = 1;
+            vp_canon(&k);
+            kp = k;
+            k.tex[u].proj = VP_PROJ_DIVIDE;
+            vp_generate(&k, &cur);
+            vp_generate(&kp, &ref);
+            if (cur.approximated || ref.approximated) continue;
+            nun = vp_test_unoptimized(&k, unopt, 512);
+            rand_input(&in, &k);
+            run(cur.words, (int)cur.n, &in, 3000u + (unsigned)t, 0, &co);
+            run(unopt, nun, &in, 4000u + (unsigned)t, 0, &uo);
+            run(ref.words, (int)ref.n, &in, 5000u + (unsigned)t, 0, &po);
+            dn++;
+            j = 9 + u;   /* oT0 + u */
+            if (co.bad || uo.bad || !out_eq(&co, &uo) || co.o[j][3] != 1.0f ||
+                fabsf(co.o[j][0] - po.o[j][0] / po.o[j][3]) > 1e-4f * (1.0f + fabsf(co.o[j][0])) ||
+                fabsf(co.o[j][1] - po.o[j][1] / po.o[j][3]) > 1e-4f * (1.0f + fabsf(co.o[j][1]))) {
+                if (dfails++ < 5) printf("divide key %d unit %d differs\n", t, u);
+            }
+        }
+        printf("%d keys with a unit divided by q (VP_PROJ_DIVIDE): %d failed\n", dn, dfails);
+        fails += dfails;
+    }
     printf("%d keys (%d longer than 136 before, %d of them cut by the old generator and skipped): %d failed\n", nkeys,
            overflowed, degenerate, fails);
     printf("instructions per program: %.1f before, %.1f now (%.1f as generated), %.1f%% of instructions paired\n",

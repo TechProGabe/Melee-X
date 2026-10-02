@@ -59,6 +59,7 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `corn`, `gg`, `gj` | Corneria, Green Greens 20 s, stage 12 |
 | `movie` | intro movie shots |
 | `settings` | title screen: the settings menu (BACK), a few rows changed, saved, reopened, Save and restart; read `[MENU]`/`[SETTINGS]` |
+| `inv` | Fountain of Dreams 4-CPU, players 1-2 cloaked (`MELEE_DEBUG_VS_INVISIBLE=3`: indirect refraction) |
 
 ## Working notes (from the agent's memory)
 
@@ -108,6 +109,7 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 - **Autopad buttons** name Duke buttons: Duke A = GC A, Duke X = GC B
   (specials), Duke B = GC X (jump), Duke Y = GC Y. Repro switches:
   `MELEE_DEBUG_VS_CHARS=<ckind>[:<color>][h],...`, `MELEE_DEBUG_VS_ITEMS=<hex>`,
+  `MELEE_DEBUG_VS_INVISIBLE=<hex>`,
   `MELEE_DEBUG_KIRBY_HAT=<FighterKind>`, `XGX_SKIP=<a>-<b>` (trace builds).
   Shot timing differs between builds.
 - **Console**: FTP at the console's IP (`MX_FTP_HOST`), `xbox`/`xbox`,

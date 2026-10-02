@@ -241,6 +241,15 @@ void onEnterDebugVs(GameModeState* state)
         start->rules.item_freq = 4;
         start->rules.x20 = strtoull(getenv("MELEE_DEBUG_VS_ITEMS"), NULL, 16);
     }
+    /* PORT: MELEE_DEBUG_VS_INVISIBLE=<hex mask of players>: those fighters
+     * cloaked for the whole match, as Special Melee's Invisible Melee does
+     * (lbRefract's indirect-texture refraction, docs/renderer.md). */
+    if (getenv("MELEE_DEBUG_VS_INVISIBLE") != NULL) {
+        unsigned long mask = strtoul(getenv("MELEE_DEBUG_VS_INVISIBLE"), NULL, 16);
+        for (i = 0; i < 4; i++) {
+            start->players[i].vs_invisible = (mask >> i) & 1;
+        }
+    }
     /* PORT: MELEE_DEBUG_VS_TIME=<seconds>: a timed match, so a run reaches
      * the TIME! ending (docs/testing.md). */
     if (getenv("MELEE_DEBUG_VS_TIME") != NULL) {

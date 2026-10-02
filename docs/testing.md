@@ -349,6 +349,7 @@ report.
 | `-DXGX_OVERLAP=0` | `xgx_present` waits for the GPU before the flip, as up to v32, instead of the next frame's first GPU use (v33) |
 | `-DXGX_DEBUG_VPTRACE[=<n>]` | log the vertex-program selects of two consecutive frames every n (default 600) as `[VPT]` lines: each program (key hash, instructions, key bytes), then the selects in order with `L` where one was loaded; replay with `tools/xbox/vp_policy.py boot.log` |
 | `-DXGX_DEBUG_NOMIP` | bind only the base level of every texture |
+| `-DXGX_NO_INDIRECT=1` | GX indirect stages draw direct (no BUMPENVMAP units, as up to v40): the cloak's refraction shows the frame copy unshifted |
 | `-DXHW_FBDUMP_EVERY=<n>` | screenshot every n presented frames |
 | `-DXGX_STATS_EVERY=<n>` | `[NV2A]` / `[TEX]` stats period, in frames (default 600) |
 | `-DXHW_WATCHDOG=0`, `-DXHW_HEARTBEAT_SECS=<n>` | hang dumper off; `[BEAT]` period (0 = off) |
@@ -374,6 +375,7 @@ env MELEE_DEBUG_VS=cpu4        # Link, Mario, Fox and DK as four CPUs
 env MELEE_DEBUG_VS_TIME=20     # a 20-second timed match: ends on TIME!
 env MELEE_DEBUG_VS_CHARS=4:1h,0 # CKind[:costume][h] (yellow Kirby on port 1, Falcon CPU)
 env MELEE_DEBUG_VS_ITEMS=3     # items on, hex ItemKind mask (capsules, crates)
+env MELEE_DEBUG_VS_INVISIBLE=3 # players 1 and 2 cloaked all match (Invisible Melee: indirect refraction)
 env MELEE_DEBUG_KIRBY_HAT=2    # Kirby spawns with that FighterKind's copy
 env XGX_SKIP=569-570           # -DXGX_DEBUG_TRACE: the traced frame leaves those draws out
 300 SHOT
