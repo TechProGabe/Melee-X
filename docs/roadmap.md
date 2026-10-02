@@ -116,7 +116,7 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   list is black; it should be the sepia freeze frame of the clear
   (`lb_800122F0`: an EFB copy read through TEV swap tables 1-3, new in
   v41). Likely the same family as the winner portrait: a captured image
-  drawn back black. Ask which video mode (16-bit 720p copies differ).
+  drawn back black. Tester runs 480 (32-bit), so not the 16-bit path.
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
