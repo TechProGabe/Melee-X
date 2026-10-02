@@ -109,6 +109,9 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
 - Fountain of Dreams runs ~40 fps on the console in a 1v1 (v2 report:
   ~55k vertices and ~540 draws a frame, render 11-12 ms). Frame rate work
   is in "Next".
+- Results screen (console, v43, 480i): the winner's portrait box (1st
+  place, under the crown) draws black; the 2nd-4th portraits are fine.
+  Not looked into yet; the results screen also does ~6 EFB copies a frame.
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
