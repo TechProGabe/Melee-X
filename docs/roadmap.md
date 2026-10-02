@@ -86,6 +86,9 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   with `MELEE_BOOT_SCENE=classic`, `MELEE_CLASSIC_STAGE_OVERRIDE=8`,
   `MELEE_CLASSIC_TEAM=dk`.
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
+- 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
+  55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
+  free. Experimental and opt-in only; a dashboard set to 720p gets 480.
 - 16:9 at 480p (console, v38): the in-match counter (the timer at the top)
   is not centred. Everything else in the widescreen HUD looked right.
 
