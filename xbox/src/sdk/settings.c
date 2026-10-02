@@ -17,11 +17,12 @@
  *   ...
  *
  * Written with the defaults on first boot so it is there to edit, and by the
- * settings menu (menu.c). A save writes settings.tmp and reads it back; only
- * a copy that parses to the same settings replaces settings.ini
- * (xhw_replace_file), so a failed write or a power cut leaves the old file.
- * A settings.tmp found without a settings.ini is a verified save whose
- * rename didn't finish, and is taken. The writer regenerates the whole
+ * settings menu (menu.c). A save writes settings.tmp, ending in an END_MARK
+ * line, and reads it back; only a copy that is complete and parses to the
+ * same settings replaces settings.ini (xhw_replace_file), so a failed write
+ * or a power cut leaves the old file. A settings.tmp found without a
+ * settings.ini is taken if it is complete: a save whose rename was cut off
+ * after settings.ini had been deleted. The writer regenerates the whole
  * file: comments and keys it doesn't know are not kept. */
 #include <dolphin/pad.h>
 #include <ctype.h>
@@ -111,7 +112,8 @@ static char* trim(char* s) {
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 static int pct(float f) { return (int)(f * 100.0f + 0.5f); }
 
-enum { SAW_FPS = 1, SAW_PROGRESSIVE = 2, SAW_RAM128 = 4, SAW_PORT4 = 8 };
+enum { SAW_FPS = 1, SAW_PROGRESSIVE = 2, SAW_RAM128 = 4, SAW_END = 8 };
+#define END_MARK "; end of settings"   /* the writer's last line: the file is whole */
 
 /* the file's keys over the defaults into *st; returns the SAW_* found */
 static int parse(FILE* f, xsdk_settings* st) {
@@ -120,7 +122,9 @@ static int parse(FILE* f, xsdk_settings* st) {
     defaults(st);
     while (fgets(line, sizeof line, f)) {
         char *s = trim(line), *eq, *key, *val;
-        char* semi = strchr(s, ';');
+        char* semi;
+        if (strcmp(s, END_MARK) == 0) saw |= SAW_END;
+        semi = strchr(s, ';');
         if (semi) *semi = '\0';
         s = trim(s);
         if (!*s) continue;
@@ -128,7 +132,6 @@ static int parse(FILE* f, xsdk_settings* st) {
             char* end = strchr(s, ']');
             if (end) *end = '\0';
             snprintf(section, sizeof section, "%s", s + 1);
-            if (_stricmp(section, "port4") == 0) saw |= SAW_PORT4;
             continue;
         }
         if (!(eq = strchr(s, '='))) continue;
@@ -184,6 +187,8 @@ static void log_summary(const char* what) {
              pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click);
 }
 
+static xsdk_settings s_scratch;   /* read-backs and recovery */
+
 void xsdk_settings_load(void) {
     char p[260], t[260];
     FILE* f;
@@ -200,11 +205,14 @@ void xsdk_settings_load(void) {
 #endif
     f = fopen(p, "r");
     if (!f && (f = fopen(t, "r")) != NULL) {
-        /* xsdk_settings_save only removes settings.ini once settings.tmp
-         * has been read back whole: a power cut between the two */
+        /* settings.ini is only deleted once settings.tmp has been read back
+         * whole (xhw_replace_file's fallback): a power cut between the two.
+         * A settings.tmp cut off mid-write has no END_MARK and is left. */
+        int whole = (parse(f, &s_scratch) & SAW_END) != 0;
         fclose(f);
         f = NULL;
-        if (xhw_replace_file(t, p)) {
+        if (!whole) xhw_logf("[SETTINGS] settings.tmp is incomplete: not used");
+        else if (xhw_replace_file(t, p) == XHW_REPLACE_OK) {
             xhw_logf("[SETTINGS] %s taken from settings.tmp (an unfinished save)", p);
             f = fopen(p, "r");
         }
@@ -223,6 +231,12 @@ void xsdk_settings_load(void) {
     if (!(saw & SAW_PROGRESSIVE)) {
         g_xsdk_settings.video_720p = 0;
         xhw_logf("[SETTINGS] file from v1: 720p turned off (experimental now)");
+    }
+    /* a hand-edited ram128 = 1 on a 64 MB console: off (written as 0 by
+     * the next save) */
+    if (g_xsdk_settings.ram128 && !xhw_mem_has_upper()) {
+        g_xsdk_settings.ram128 = 0;
+        xhw_logf("[SETTINGS] ram128 = 1 ignored: this console has 64 MB");
     }
     log_summary("in use");
     if ((saw & (SAW_FPS | SAW_PROGRESSIVE | SAW_RAM128)) != (SAW_FPS | SAW_PROGRESSIVE | SAW_RAM128))
@@ -248,13 +262,13 @@ static void write_all(FILE* f, const xsdk_settings* st) {
         for (i = 0; i < N_XBOX; i++) fprintf(f, "%s = %s\n", k_xbox[i].name, gc_name(ps->bind[i].gc));
         fprintf(f, "\n");
     }
+    fprintf(f, END_MARK "\n");
 }
 
 int xsdk_settings_save(void) {
-    static xsdk_settings s_check;   /* the read-back */
     char p[260], t[260];
     FILE* f;
-    int ok;
+    int ok, r = XHW_REPLACE_FAILED;
     path(p, sizeof p);
     tmp_path(t, sizeof t);
     f = fopen(t, "w");
@@ -268,12 +282,18 @@ int xsdk_settings_save(void) {
     if (fclose(f) != 0) ok = 0;
     /* only a complete copy replaces settings.ini */
     if (ok && (f = fopen(t, "r")) != NULL) {
-        ok = (parse(f, &s_check) & SAW_PORT4) && xsdk_settings_equal(&s_check, &g_xsdk_settings);
+        ok = (parse(f, &s_scratch) & SAW_END) && xsdk_settings_equal(&s_scratch, &g_xsdk_settings);
         fclose(f);
     } else {
         ok = 0;
     }
-    if (!ok || !xhw_replace_file(t, p)) {
+    if (ok) r = xhw_replace_file(t, p);
+    if (r == XHW_REPLACE_LOST_TO) {
+        /* settings.ini is gone, settings.tmp is complete: the next boot takes it */
+        xhw_logf("[SETTINGS] save failed (rename): %s deleted, settings.tmp kept for the next boot", p);
+        return 0;
+    }
+    if (r != XHW_REPLACE_OK) {
         xhw_logf("[SETTINGS] save failed (%s): %s left as it was", ok ? "rename" : "write or read-back", p);
         remove(t);
         return 0;

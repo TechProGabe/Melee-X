@@ -107,6 +107,8 @@ uint32_t xhw_mem_free_kb(void);
  * kernel run in the low 64 MB as on a stock console (settings.ini
  * ram128 = 0, the default). Returns the KB held; 0 on a 64 MB console. */
 uint32_t xhw_mem_hold_upper(void);
+/* 1: the console has RAM above 64 MB (MmQueryStatistics' physical pages). */
+int xhw_mem_has_upper(void);
 
 /* ---- files and paths ---- */
 /* The folder default.xbe runs from, mounted as D:\ ("D:\\"). */
@@ -118,7 +120,8 @@ int xhw_mkdir(const char* path);
 /* Copies a file, replacing the destination; 0 on failure. */
 int xhw_copy_file(const char* from, const char* to);
 /* Renames `from` over `to` (same volume) and flushes the volume's directory
- * entries; 0 on failure. */
+ * entries. LOST_TO: failed after `to` was deleted, `from` is still there. */
+enum { XHW_REPLACE_FAILED = 0, XHW_REPLACE_OK = 1, XHW_REPLACE_LOST_TO = 2 };
 int xhw_replace_file(const char* from, const char* to);
 typedef struct xhw_dir_entry { char name[64]; int is_dir; uint32_t size; } xhw_dir_entry;
 /* pattern like "E:\\dir\\*.gci"; returns a handle (NULL: nothing found).

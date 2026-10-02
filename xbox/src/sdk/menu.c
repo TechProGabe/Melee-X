@@ -52,18 +52,22 @@ static unsigned s_seen;      /* xsdk_frame_count() at the last title frame */
 static int s_release;        /* frames left to wait for the closing press to be let go */
 static int s_rumble;         /* frames left of the rumble preview */
 static int s_msg_frames;
+static int s_unsaved;        /* closed without saving: s_at_open still holds what settings.ini has */
 static char s_msg[XGX_OVERLAY_COLS];
 static int s_dash_720p, s_dash_480p, s_dash_wide;   /* the dashboard's video settings */
+static int s_has_128;        /* RAM above 64 MB: the 128 MB row can be turned on */
 static xsdk_settings s_at_open;
 static xgx_overlay s_ovl;
 
 static int pct(float f) { return (int)(f * 100.0f + 0.5f); }
 
-/* one step of `inc` to the next multiple of it; clamped, or wrapped round */
+/* one step of `inc` to the next multiple of it; clamped (never against
+ * `dir`: a file value below `lo` stays put on Left), or wrapped round */
 static int step(int v, int dir, int inc, int lo, int hi, int wrap) {
+    int old = v;
     v = dir > 0 ? (v / inc + 1) * inc : ((v + inc - 1) / inc - 1) * inc;
-    if (v > hi) v = wrap ? lo : hi;
-    if (v < lo) v = wrap ? hi : lo;
+    if (v > hi) v = wrap ? lo : old > hi ? old : hi;
+    if (v < lo) v = wrap ? hi : old < lo ? old : lo;
     return v;
 }
 
@@ -97,7 +101,7 @@ static void row_text(int r, char* out, size_t cap) {
             break;
         case ROW_FPS: snprintf(v, sizeof v, "%s", g->fps ? "On" : "Off"); break;
         case ROW_RAM:
-            snprintf(v, sizeof v, "%s", g->ram128 ? "On" : "Off");
+            snprintf(v, sizeof v, "%s", !s_has_128 ? "Off (64 MB console)" : g->ram128 ? "On" : "Off");
             boot_only = g->ram128 != g_xsdk_settings_boot.ram128;
             break;
         case ROW_RUMBLE:
@@ -134,7 +138,9 @@ static void info_text(char* out, size_t cap) {
             else snprintf(out, cap, "At 480 lines; 720p is always 16:9");
             break;
         case ROW_FPS: snprintf(out, cap, "Frames per second, top-left corner"); break;
-        case ROW_RAM: snprintf(out, cap, "Upgraded consoles only (untested)"); break;
+        case ROW_RAM:
+            snprintf(out, cap, "%s", s_has_128 ? "Upgraded consoles only (untested)" : "This console has 64 MB");
+            break;
         case ROW_RUMBLE: snprintf(out, cap, "Controller motor strength"); break;
         case ROW_PORT: snprintf(out, cap, "The three settings below are per port"); break;
         case ROW_STICK:
@@ -176,7 +182,10 @@ static void draw_menu(void) {
     add_row("", 0);
     for (r = 0; r < N_ROWS; r++) {
         row_text(r, line, sizeof line);
-        add_row(line, r == s_sel ? 0xFFE070 : r >= ROW_RESTART ? 0xB0C0E0 : 0xE0E4F0);
+        add_row(line, r == s_sel                      ? 0xFFE070
+                      : r == ROW_RAM && !s_has_128 ? 0x707890   /* can't be changed */
+                      : r >= ROW_RESTART           ? 0xB0C0E0
+                                                   : 0xE0E4F0);
     }
     add_row("", 0);
     info_text(line, sizeof line);
@@ -222,12 +231,13 @@ static void open_menu(void) {
     s_open = 1;
     s_sel = 0;
     s_port = 0;
-    s_at_open = g_xsdk_settings;
+    if (!s_unsaved) s_at_open = g_xsdk_settings;
     s_msg_frames = 0;
     /* the dashboard's settings don't change while the game runs */
     s_dash_720p = xhw_video_720p_allowed();
     s_dash_480p = xhw_video_480p_allowed();
     s_dash_wide = xhw_video_widescreen_set();
+    s_has_128 = xhw_mem_has_upper();
     xhw_logf("[MENU] settings menu opened");
 }
 
@@ -237,6 +247,7 @@ static int save_if_changed(void) {
     if (xsdk_settings_equal(&g_xsdk_settings, &s_at_open)) return 1;
     if (!xsdk_settings_save()) return 0;
     s_at_open = g_xsdk_settings;
+    s_unsaved = 0;
     return 2;
 }
 
@@ -248,7 +259,10 @@ static void close_menu(int save) {
     }
     s_open = 0;
     s_release = RELEASE_FRAMES;
-    if (!save) return;
+    if (!save) {
+        s_unsaved = !xsdk_settings_equal(&g_xsdk_settings, &s_at_open);   /* saved at the next close */
+        return;
+    }
     ok = save_if_changed();
     if (!ok) set_msg("settings.ini could not be saved");
     else if (restart_needed()) set_msg("Saved: restart Melee-X to apply");
@@ -272,7 +286,10 @@ static void change(int dir, int wrap) {
             g->fps = !g->fps;
             xgx_set_fps_overlay(g->fps);
             break;
-        case ROW_RAM: g->ram128 = !g->ram128; break;
+        case ROW_RAM:
+            if (!s_has_128) return;   /* 64 MB: stays off */
+            g->ram128 = !g->ram128;
+            break;
         case ROW_RUMBLE:
             g->rumble = step(pct(g->rumble), dir, 25, 0, 100, wrap) / 100.0f;
             s_rumble = 20;   /* a third of a second at the new strength */
@@ -354,7 +371,7 @@ int xsdk_menu_block(uint32_t raw_buttons) {
     if (s_open && xsdk_frame_count() - s_seen > 30) {
         /* the title went away under the menu (it shouldn't: it stands
          * still). No file writes from inside PADRead: the changes stay in
-         * memory, unsaved. */
+         * memory and are written when the menu next closes. */
         xhw_logf("[MENU] title screen gone, menu closed without saving");
         close_menu(0);
     }

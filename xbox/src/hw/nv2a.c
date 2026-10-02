@@ -1109,7 +1109,7 @@ void xgx_set_overlay(const xgx_overlay* o) {
     if (s_ovl.rows > XGX_OVERLAY_ROWS) s_ovl.rows = XGX_OVERLAY_ROWS;
     if (s_ovl.cols < 0 || s_ovl.cols > XGX_OVERLAY_COLS) s_ovl.cols = XGX_OVERLAY_COLS;
     for (r = 0; r < s_ovl.rows; r++) s_ovl.text[r][XGX_OVERLAY_COLS - 1] = '\0';
-    s_ovl_ttl = 3;
+    s_ovl_ttl = 2;   /* lingers at most one present after the last refresh */
 }
 
 void xgx_present(int black) {

@@ -174,9 +174,13 @@ Writing (`settings.c`): the file goes to `settings.tmp` first, is flushed,
 read back and parsed, and only a copy that holds the same settings is
 renamed over `settings.ini` (`xhw_replace_file`: the kernel's rename with
 replace, else delete and rename; then the volume's directory entries are
-flushed). A failed write leaves the old file and logs `[SETTINGS] save
-failed`. A `settings.tmp` with no `settings.ini` next to it is a verified
-save whose rename was cut off, and the next boot takes it. The writer
+flushed). The writer ends the file with `; end of settings`, and the
+read-back requires it. A failed write leaves the old file and logs
+`[SETTINGS] save failed`. If FATX refused the replace and the delete went
+through but the rename didn't, `settings.ini` is gone and the complete
+`settings.tmp` is kept; a boot that finds `settings.tmp` with no
+`settings.ini` takes it, but only with the end line (a copy cut off
+mid-write is left and the defaults are written). The writer
 regenerates the whole file, so comments and keys it doesn't know are
 dropped (as before). `[SETTINGS] in use: ...` and `[SETTINGS] saved: ...`
 log the values.
@@ -189,18 +193,24 @@ hint line at the top of the title says so. `gmtitle.c` calls
 the title stands still (START does nothing, the attract demo's timer is
 held) and `PADRead` hands the game connected controllers with nothing
 pressed, also until the closing press is let go (one second at most).
+The in-game reset (L + R + BACK + BLACK) still works with the menu up.
+The console's RAM comes from the kernel's physical page count
+(`xhw_mem_has_upper`, `MmQueryStatistics`, as `xhw_mem_hold_upper` uses
+it). On a 64 MB console a `ram128 = 1` in the file is ignored at boot
+(`[SETTINGS] ram128 = 1 ignored: this console has 64 MB`) and written as 0
+by the next save.
 
 | row | values | applies |
 |---|---|---|
 | Video output | 480i, 480p, 720p (experimental) | after a restart |
 | Widescreen (16:9) | On, Off | after a restart |
 | Frame-rate counter | On, Off | at once |
-| Use 128 MB RAM | On, Off | after a restart |
+| Use 128 MB RAM | On, Off; on a 64 MB console "Off (64 MB console)", greyed, can't be changed | after a restart |
 | Rumble | Off, 25-100% | at once, with a short pulse |
 | Controller | Port 1-4: the three rows below edit that port | |
 | Stick / C-stick dead zone | 0-60% in steps of 5, live stick readout | when the menu closes |
 | Trigger click | 5-255 in steps of 5, live trigger readout | when the menu closes |
-| Save and restart | writes `settings.ini`, relaunches the XBE by the name it was started with (`xhw_reboot_self`, also the game's own reset; the dashboard if that fails) | |
+| Save and restart | writes `settings.ini`, relaunches this XBE by the kernel's path for it (`XeImageFileName`, e.g. `\Device\Harddisk0\Partition6\Applications\Melee-X\default.xbe`; `xhw_reboot_self`, also the game's own reset) | |
 | Save and close | writes `settings.ini` (B or BACK does too) | |
 
 Up/Down (D-pad or left stick) select, Left/Right or A change; every

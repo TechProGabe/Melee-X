@@ -221,7 +221,7 @@ Everything is written to `E:\UDATA\4d580001\` (the title ID is `4d580001`):
 | `trace.log` | the `[DRAW]` lines of a `-DXGX_DEBUG_TRACE` build (COM1 still gets them), restarted at 64 MB |
 | `hang.log` | written by the watchdog: the log tail and a dump of every thread (also appended to `boot.log`) |
 | `crash.log` | written on a CPU exception: the last log lines, the fault, registers, XBE addresses found on the stack |
-| `shot00.bmp` .. `shot99.bmp` | screenshots, test builds only (`XHW_TEST_BUILD`): BACK on any controller (unmapped by default in `settings.ini`) writes the next frame as a 24-bit BMP and logs `[SHOT] wrote ...`; numbering restarts at 00 each boot. An autopad `BACK` line does the same in xemu. On the title screen BACK also opens the settings menu (in every build) Y pressed while BACK is held drops every cached texture and display list at the frame end (`[DEBUG] ... caches flushed`): a surface that comes back right afterwards had its cached copy corrupted |
+| `shot00.bmp` .. `shot99.bmp` | screenshots, test builds only (`XHW_TEST_BUILD`): BACK on any controller (unmapped by default in `settings.ini`) writes the next frame as a 24-bit BMP and logs `[SHOT] wrote ...`; numbering restarts at 00 each boot. An autopad `BACK` line does the same in xemu. On the title screen BACK also opens the settings menu (in every build). Y pressed while BACK is held drops every cached texture and display list at the frame end (`[DEBUG] ... caches flushed`): a surface that comes back right afterwards had its cached copy corrupted |
 | `settings.ini` | options (`docs/platform.md`) |
 | `card_a\*.gci` | memory card saves |
 

@@ -495,13 +495,18 @@ uint32_t xhw_mem_free_kb(void) {
  * given back: the kernel and the game then only get pages in the low
  * 64 MB. Big blocks first, then smaller ones for what is left between the
  * kernel's own allocations up there. */
-uint32_t xhw_mem_hold_upper(void) {
-    static const uint32_t sizes[] = { 4096u * 1024, 1024u * 1024, 64u * 1024, 4096u };
+/* the kernel's count of physical pages: more than 64 MB is a 128 MB board */
+int xhw_mem_has_upper(void) {
     MM_STATISTICS st;
-    uint32_t held = 0, i;
     memset(&st, 0, sizeof st);
     st.Length = sizeof st;
-    if (MmQueryStatistics(&st) < 0 || st.TotalPhysicalPages * 4096ull <= 64ull * 1024 * 1024) return 0;
+    return MmQueryStatistics(&st) >= 0 && st.TotalPhysicalPages * 4096ull > 64ull * 1024 * 1024;
+}
+
+uint32_t xhw_mem_hold_upper(void) {
+    static const uint32_t sizes[] = { 4096u * 1024, 1024u * 1024, 64u * 1024, 4096u };
+    uint32_t held = 0, i;
+    if (!xhw_mem_has_upper()) return 0;
     for (i = 0; i < sizeof sizes / sizeof sizes[0]; i++)
         while (MmAllocateContiguousMemoryEx(sizes[i], 0x04000000u, 0x07FFFFFFu, 0, PAGE_READWRITE)) held += sizes[i];
     return held / 1024;
@@ -534,9 +539,11 @@ int xhw_copy_file(const char* from, const char* to) {
 }
 
 /* nxdk's MoveFileA never replaces (ReplaceIfExists = FALSE). The kernel's
- * rename is asked to replace first; if FATX refuses, the destination is
- * deleted and the rename tried again, so at worst `to` is missing and
- * `from` holds the new contents (settings.c recovers from that). */
+ * rename is asked to replace first; only if the rename itself is refused
+ * (not when `from` can't be opened) is the destination deleted and the
+ * rename tried again, so at worst `to` is missing and `from` holds the new
+ * contents (XHW_REPLACE_LOST_TO; settings.c recovers from that).
+ * rename_file: 1 renamed, 0 the rename failed, -1 `from` can't be opened. */
 static int rename_file(const char* from, const char* to, BOOLEAN replace) {
     ANSI_STRING name;
     OBJECT_ATTRIBUTES oa;
@@ -548,7 +555,7 @@ static int rename_file(const char* from, const char* to, BOOLEAN replace) {
     InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, ObDosDevicesDirectory(), NULL);
     if (!NT_SUCCESS(NtOpenFile(&h, DELETE | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT)))
-        return 0;
+        return -1;
     ri.ReplaceIfExists = replace;
     ri.RootDirectory = ObDosDevicesDirectory();
     RtlInitAnsiString(&ri.FileName, to);
@@ -558,15 +565,17 @@ static int rename_file(const char* from, const char* to, BOOLEAN replace) {
 }
 
 int xhw_replace_file(const char* from, const char* to) {
-    int ok = rename_file(from, to, TRUE);
-    if (!ok) {
+    int r = rename_file(from, to, TRUE), deleted = 0;
+    if (r == 0) {
         SetFileAttributesA(to, FILE_ATTRIBUTE_NORMAL);
-        DeleteFileA(to);
-        ok = rename_file(from, to, FALSE);
-        xhw_logf("[FILE] %s -> %s: replace refused, deleted and renamed (%s)", from, to, ok ? "ok" : "failed");
+        deleted = DeleteFileA(to) != 0;
+        r = rename_file(from, to, FALSE);
+        xhw_logf("[FILE] %s -> %s: replace refused, %s and renamed (%s)", from, to,
+                 deleted ? "deleted" : "not deleted", r == 1 ? "ok" : "failed");
     }
     if (to[0] && to[1] == ':') xhw_flush_volume(to[0]);   /* FATX caches directory entries */
-    return ok;
+    if (r == 1) return XHW_REPLACE_OK;
+    return deleted ? XHW_REPLACE_LOST_TO : XHW_REPLACE_FAILED;
 }
 
 int xhw_mkdir(const char* path) { return CreateDirectoryA(path, NULL) || GetLastError() == ERROR_ALREADY_EXISTS; }

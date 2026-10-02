@@ -181,7 +181,7 @@ void xgx_set_fps_overlay(int on);   /* frame-rate counter in the corner (setting
 
 /* Text over the frame: the settings menu (xbox/src/sdk/menu.c), drawn by the
  * CPU once the GPU has finished the frame (xhw_overlay.c). Rows of plain
- * ASCII, each in one colour. It stays up for 3 presented frames after the
+ * ASCII, each in one colour. It stays up for 2 presented frames after the
  * last xgx_set_overlay, so whoever stops calling it takes it down. */
 #define XGX_OVERLAY_ROWS 20
 #define XGX_OVERLAY_COLS 52

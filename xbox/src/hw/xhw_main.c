@@ -127,23 +127,20 @@ void xhw_quit_to_dashboard(void) {
     for (;;) Sleep(1000);
 }
 
-/* D: is the XBE's own folder: relaunch it under the name it was started
- * with (OpenCrossing's xbox_restart). XLaunchXBE only returns when it
- * couldn't set up the launch; then the dashboard, then a reboot. */
+/* Relaunch this XBE by the kernel's own path for it
+ * (\Device\Harddisk0\Partition6\...\default.xbe, \Device\CdRom0\...):
+ * XLaunchXBE takes \Device\ paths as they are, while a DOS path like
+ * D:\default.xbe would become \??\D:;default.xbe in the launch data. It
+ * quick-reboots and doesn't come back; it returns only when the path has
+ * no folder in it, and then the console reboots. */
 void xhw_reboot_self(void) {
     char path[300];
     const ANSI_STRING* img = &XeImageFileName[0];
-    const char* base = img->Buffer;
-    int i;
-    for (i = 0; i < img->Length; i++)
-        if (img->Buffer[i] == '\\') base = img->Buffer + i + 1;
-    snprintf(path, sizeof path, "D:\\%.*s", (int)(img->Length - (base - img->Buffer)), base);
+    snprintf(path, sizeof path, "%.*s", (int)img->Length, img->Buffer);
     xhw_logf("[BOOT] restart: %s", path);
     xhw_audio_shutdown();
     xhw_pad_shutdown();
     XLaunchXBE(path);
-    xhw_logf("[BOOT] restart failed, going to the dashboard");
-    XLaunchXBE(NULL);
     HalReturnToFirmware(HalRebootRoutine);
     for (;;) Sleep(1000);
 }

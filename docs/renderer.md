@@ -178,7 +178,7 @@ misses in lookups and revalidation rather than useful work. v33:
   The settings menu on the title screen (`xgx_set_overlay`,
   `xhw_overlay.c`) is the exception: its text is CPU writes into the
   finished frame, so a present that shows it waits for the GPU before
-  writing (only there; the overlay lapses three presents after the title
+  writing (only there; the overlay lapses two presents after the title
   stops refreshing it).
 - Display-list eviction scans a packed array of every slot's last use
   (8 KB) instead of a word from each 180-byte entry: 2048 cache misses per

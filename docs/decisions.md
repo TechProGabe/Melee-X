@@ -234,7 +234,9 @@ waits for a restart (the mode, the NV2A's buffers and the pools are set up
 at boot; OpenCrossing-Xbox does the same), and "Save and restart"
 relaunches the XBE. `settings.ini` is written to a temporary file, read
 back and then renamed over the old one, so a failed write can't leave an
-empty or half file.
+empty or half file. `ram128` can only be on where the kernel counts more
+than 64 MB of physical pages: the menu row is locked off on a 64 MB
+console, and a hand-edited `ram128 = 1` there is ignored at boot.
 
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
