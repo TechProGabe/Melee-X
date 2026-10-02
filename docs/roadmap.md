@@ -86,6 +86,8 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   with `MELEE_BOOT_SCENE=classic`, `MELEE_CLASSIC_STAGE_OVERRIDE=8`,
   `MELEE_CLASSIC_TEAM=dk`.
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
+- 16:9 at 480p (console, v38): the in-match counter (the timer at the top)
+  is not centred. Everything else in the widescreen HUD looked right.
 
 ## Next
 
