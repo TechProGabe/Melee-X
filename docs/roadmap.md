@@ -137,6 +137,12 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   corrupted graphics flash in the background for a moment. Suspects: GX
   spot/distance attenuation (GX_AF_SPOT, nv2a lights), and another EFB
   copy for the background.
+- Peach's Castle (console, v43, 480i, 4 CPUs, burn-in): ~30 min in, the
+  stage or camera shakes a lot, more than usual; the game keeps running.
+  Not looked into. Check first whether it is the game's own screen shake
+  (Bullet Bill/Bob-omb explosions, heavy hits) or something that grows
+  with uptime (a frame counter or accumulated float in the camera or the
+  stage's animation); compare a fresh boot on the same stage.
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
