@@ -170,16 +170,22 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   out after ~3 hours. Next: log a per-subsystem memory breakdown each
   minute and run 15-20 min in xemu.
 - 100-Man Melee (Multi-Man Melee) freezes (tester, RC1 = v42, 128 MB
-  console, 480; not reproduced on the 64 MB console). The hang report
-  (photo) at 830 s: the game thread in `wait_idle` under `xgx_clear`
-  (GPU never idle), PGRAPH intr 0 / nsource 0 (no fault), trapped method
-  0x1D94 (`CLEAR_SURFACE`) data 3 (Z + stencil); the words at GET
-  (0436186c 22200ff8 00800b00 00000000 00e0601b ...) don't look like
-  commands, so the pusher may have run off into other data (as in issue
-  #6). The GPU stall family; v42 predates v43's zeta fix. Needs the
-  tester's `hang.log` and `boot.log` (the photo lacks the top lines:
-  GET/PUT, pushbuffer base, first fault). Parked: the tester runs an
-  older build; retest 100-Man on the next tester build before digging.
+  with `ram128 = 1`, 480 at 32 bits; not reproduced on the 64 MB console).
+  The GPU stall family, logs in `~/xemu/hw/logs-tester-100man/`. First
+  fault at 825 s, frame 42672 draw 82: `LIMIT_ZETA` (nsource 0x20) on
+  `CLEAR_SURFACE` data 3 (Z + stencil), right after an EFB copy to
+  035fc000 (256x256) in the same frame. The pushbuffer before it:
+  retarget to the back buffer (`SET_SURFACE_PITCH` 0a000a00, offsets 0,
+  clip 640x480, format 0x128), `WAIT_FOR_IDLE`, then the copy's
+  clear-after-copy of the source rect (x 28..261, y 0..255): colour clear
+  (0xF0), then the Z/stencil clear that faulted. PGRAPH 0x400800:
+  4a500200 0008c0d5 0000054a 00000000. The first `ZETA` limit fault seen
+  (the earlier ones were `LIMIT_COLOR` on the copy quad's `END`). v42
+  predates v43's zeta-side fix (the copy's zeta moved onto the target,
+  then put back to DMA 10 / offset 0 before the retarget), which v43 ran
+  113 min without a stall; retest 100-Man on the next tester build. If it
+  comes back: check the zeta DMA context and limit at the clear after a
+  copy.
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
