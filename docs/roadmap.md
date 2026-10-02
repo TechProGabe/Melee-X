@@ -81,6 +81,21 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
 
 ## Known issues (after v1, GitHub #5/#6)
 
+Fix order after RC2 (2026-10-02), details in the entries below:
+
+1. Memory leak since v39: add a per-subsystem memory breakdown to the
+   log each minute, run 15-20 min in xemu, find what grows.
+2. Long-uptime whole-system freeze: check whether it follows the leak
+   (free memory at the freeze, v39 had no leak and froze at ~82 min).
+3. Pokémon Stadium flicker on the fight-camera switch: keep EFB copies
+   past the idle release without the hash test (the first try,
+   `~/xemu/tools/stadium-copy-lifetime.patch`, broke Stage Clear);
+   check `scenarios/clear`, `ps2` (>40 s) and the texture pool.
+4. Peach's Castle Bullet Bill stuck + endless quake.
+5. Fire Flower flame not drawn; Adventure Corneria Arwing cutscene
+   silent with Falco's face frozen; trophy transition lighting.
+6. 100-Man freeze: wait for the tester's RC2 retest.
+
 - Fixed on dev: the v1 release hung on the intro movie (GitHub #5, #6,
   reddit), at any video mode. `xgx_present` called pbkit's `pb_finished`
   with the frame's tail still open, so the flip overwrote unsent commands
@@ -196,7 +211,9 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   barely moves (+64 KB), no overflow texture pool, no new allocation in
   the v39..v43 diff; "ARAM on disc" was 12 MB vs 9.6 MB in v39. Would run
   out after ~3 hours. Next: log a per-subsystem memory breakdown each
-  minute and run 15-20 min in xemu.
+  minute and run 15-20 min in xemu. 192 KB is three 64 KB allocation
+  granules, so look at kernel-side allocations (virtual memory, handles,
+  threads, contiguous memory) as well as the game's heaps.
 - 100-Man Melee (Multi-Man Melee) freezes (tester, RC1 = v42, 128 MB
   with `ram128 = 1`, 480 at 32 bits; not reproduced on the 64 MB console).
   The GPU stall family, logs in `~/xemu/hw/logs-tester-100man/`. First
