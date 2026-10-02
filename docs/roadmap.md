@@ -106,8 +106,10 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
   free. Experimental and opt-in only; a dashboard set to 720p gets 480.
-- 16:9 at 480p (console, v38): the in-match counter (the timer at the top)
-  is not centred. Everything else in the widescreen HUD looked right.
+- Fixed on dev: at 16:9 (console, v38, 480p; 720p too) the in-match timer
+  sat right of centre. melee-pc's wide HUD anchored it to the right edge,
+  but its joint is at x = 0, top centre, which hor+ already keeps centred
+  (`src/melee/if/ifall.c`). Checked in xemu at 480p 16:9; 4:3 unchanged.
 
 ## Next
 

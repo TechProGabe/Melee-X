@@ -298,6 +298,10 @@ marked `PORT:`:
   `-ftrivial-auto-var-init=zero` (it zeroed them a second time per call).
 - `src/melee/lb/lb_00B0.c` (`memzero`): `memset` instead of the byte loop,
   which `-ffreestanding` keeps as written (~1% of a console match frame).
+- `src/melee/if/ifall.c` (`ifAll_802F370C`): the wide HUD doesn't move the
+  match timer. `pc_widescreen_hud_timer_x` anchors it to the right edge,
+  but its joint sits at x = 0, top centre, so at 16:9 it landed ~100
+  pixels (of 640) right of centre; hor+ keeps x = 0 centred by itself.
 - `src/melee/gm/gmscene.c` (`gm_801A4D34`): the render pass is bracketed
   with `xsdk_perf_render_begin/end` (`xbox/src/sdk/vi.c`), so `[PERF]`
   separates simulation ticks from rendering and counts ticks per render.

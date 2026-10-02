@@ -219,7 +219,11 @@ static void ifAll_802F370C(SceneDesc* scene)
     HSD_GObjFree(gobj);
 
     if (pc_get_hud_mode() == 1) {
-        ifAll_804A0FD8.xC.x = pc_widescreen_hud_timer_x(ifAll_804A0FD8.xC.x);
+        /* PORT: the timer stays where it is. Its joint (0xD) sits at x = 0,
+         * top centre, and hor+ widening keeps x = 0 at the screen centre;
+         * pc_widescreen_hud_timer_x anchors to the right edge, which moved
+         * it ~13.5 units right of centre at 16:9 (and the 5-second
+         * countdown with it, which shares this position). */
         for (i = 0; i < 4; i++) {
             ifAll_804A0FD8.x18[i].x =
                 pc_widescreen_hud_player_x(i, 4, ifAll_804A0FD8.x18[i].x);

@@ -234,7 +234,8 @@ the interval's peak and mid-frame restarts.
 - melee-pc's `widescreen.c` handles hor+ widescreen above this: it widens
   the camera and anchors the HUD. It asks for the render size through
   `AuroraGetRenderSize` and `AuroraSetPresentationAspect`, and the SDK side
-  answers them from `xgx_content_size`.
+  answers them from `xgx_content_size`. The player HUDs are spread toward
+  the edges; the match timer is left at the top centre (`ifall.c`, `PORT:`).
 - **The flip is `GXCopyDisp`**, where a GameCube frame ends: the EFB is
   copied to the XFB and cleared. `VIWaitForRetrace` only paces the game to
   60.000 Hz and runs the alarms (`vi.c`).
