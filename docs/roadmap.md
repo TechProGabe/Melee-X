@@ -169,11 +169,16 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   the v39..v43 diff; "ARAM on disc" was 12 MB vs 9.6 MB in v39. Would run
   out after ~3 hours. Next: log a per-subsystem memory breakdown each
   minute and run 15-20 min in xemu.
-- 100-Man Melee (Multi-Man Melee) locks up (report, v43-era). Where
-  (loading, start, mid-run) and video mode not known yet; no log pulled.
-  Many Fighting Wire Frames spawn and respawn: suspect memory (fighter
-  heap, texture or vertex pools), a stuck spawn loop, or the same
-  long-uptime freeze. Reproduce in xemu (Stadium -> Multi-Man Melee).
+- 100-Man Melee (Multi-Man Melee) freezes (tester, RC1 = v42, 128 MB
+  console, 480; not reproduced on the 64 MB console). The hang report
+  (photo) at 830 s: the game thread in `wait_idle` under `xgx_clear`
+  (GPU never idle), PGRAPH intr 0 / nsource 0 (no fault), trapped method
+  0x1D94 (`CLEAR_SURFACE`) data 3 (Z + stencil); the words at GET
+  (0436186c 22200ff8 00800b00 00000000 00e0601b ...) don't look like
+  commands, so the pusher may have run off into other data (as in issue
+  #6). The GPU stall family; v42 predates v43's zeta fix. Needs the
+  tester's `hang.log` and `boot.log` (the photo lacks the top lines:
+  GET/PUT, pushbuffer base, first fault).
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
