@@ -228,6 +228,11 @@ misses in lookups and revalidation rather than useful work. v33:
   and no hardware prefetcher); v35 reuses an envelope's matrices when a
   later PObj of the same DObj uses the same joints and weights (~1250
   envelope matrices a frame in a 4-CPU match, ~630 distinct).
+- After v45, per draw: a texture unit built from the same inputs as the
+  registers it last sent (texture handle, the map's wrap, filters and LOD
+  bias, the unit kind, and an epoch every texture made or freed bumps)
+  skips the `s_tex` read and the register build (`emit_textures`): most
+  draws that rebuild the units rebind one map, not all of them.
 
 `xgx.h` is compiled by both triples (game and nxdk), so its structs hold only
 32-bit scalars, floats and byte arrays: no bit-fields, no 64-bit members.

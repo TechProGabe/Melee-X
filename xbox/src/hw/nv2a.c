@@ -587,6 +587,7 @@ typedef struct {
     uint32_t gen;           /* bumped per texture made: a new one at a freed one's address differs */
 } Tex;
 static Tex s_tex[MAX_TEX];
+static uint32_t s_tex_epoch;   /* bumped whenever an s_tex entry changes (emit_textures' memo) */
 static int s_tex_next = 1;
 static void* s_deferred[4096];
 static int s_ndeferred;
@@ -800,6 +801,7 @@ static uint32_t tex_create_rect(uint32_t w, uint32_t h, uint32_t fmt, const uint
     base = (uint8_t*)tex_pool_alloc(bytes);
     if (!base) return 0;
     for (y = 0; y < h; y++) memcpy(base + y * pitch, src + y * row, row);   /* in order: write-combined */
+    s_tex_epoch++;
     s_tex[id].used = 1;
     s_tex[id].rect = 1;
     s_tex[id].pitch = (uint16_t)pitch;
@@ -867,6 +869,7 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
         lh = lh > 1 ? lh / 2 : 1;
     }
     if (pal_bytes) memcpy(base, src, pal_bytes);   /* after the levels in `data` */
+    s_tex_epoch++;
     s_tex[id].used = 1;
     s_tex[id].rect = 0;
     s_tex[id].pitch = 0;
@@ -928,6 +931,7 @@ uint32_t xgx_tex_bytes(uint32_t tex) {
 void xgx_tex_destroy(uint32_t tex) {
     if (!tex || tex >= MAX_TEX || !s_tex[tex].used) return;
     defer_free(s_tex[tex].base);
+    s_tex_epoch++;
     s_tex[tex].used = 0;
     s_tex[tex].mem = s_tex[tex].base = NULL;
 }
@@ -1826,6 +1830,23 @@ static void emit_combiners(const XgxState* st, const RcProg* rp) {
  * ====================================================================== */
 static uint32_t s_tex_shadow[4][9];
 static uint32_t s_tex_prog = 0xFFFFFFFFu;   /* NV097_SET_SHADER_STAGE_PROGRAM sent last */
+/* What each unit's registers in s_tex_shadow were built from: the texture
+ * handle, s_tex_epoch, the map's sampling fields and the unit kind. The same
+ * inputs build the same registers, so such a unit skips its s_tex read and
+ * the register build (most DIRTY_UNITS draws rebind some map, few change
+ * every unit). valid 0: rebuild (the shadow was reset). */
+typedef struct {
+    uint32_t valid, tex, epoch, wrap_s, wrap_t, min_filter, mag_filter, lod_bias, kind;
+} UnitMemo;
+static UnitMemo s_unit_memo[4];
+static uint32_t s_unit_prog[4];             /* the unit's NV097_SET_SHADER_STAGE_PROGRAM bits */
+
+/* the GPU's texture units are unknown: everything is sent again */
+static void tex_shadow_reset(void) {
+    memset(s_tex_shadow, 0xFF, sizeof s_tex_shadow);
+    memset(s_unit_memo, 0, sizeof s_unit_memo);
+    s_tex_prog = 0xFFFFFFFFu;
+}
 static uint32_t s_tex_in = 0xFFFFFFFFu;     /* NV097_SET_SHADER_OTHER_STAGE_INPUT sent last */
 static uint32_t s_bump_shadow[4][4];        /* SET_TEXTURE_SET_BUMP_ENV_MAT per unit, as sent */
 static uint32_t s_d_unit_tex[4];            /* derive_units: a unit's texture when not its map's (an indirect map) */
@@ -1847,12 +1868,24 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
         uint32_t v[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
         const Tex* t = NULL;
         const XgxMap* m = NULL;
+        UnitMemo key = { 1, 0, s_tex_epoch, 0, 0, 0, 0, 0, 0 };
         if (u < nunits) {
-            uint32_t id;
             m = &st->map[unit_map[u]];
-            id = s_d_unit_tex[u] ? s_d_unit_tex[u] : m->tex;
-            if (id && id < MAX_TEX && s_tex[id].used) t = &s_tex[id];
+            key.tex = s_d_unit_tex[u] ? s_d_unit_tex[u] : m->tex;
+            key.wrap_s = m->wrap_s;
+            key.wrap_t = m->wrap_t;
+            key.min_filter = m->min_filter;
+            key.mag_filter = m->mag_filter;
+            memcpy(&key.lod_bias, &m->lod_bias, 4);
+            key.kind = (uint32_t)s_d_unit_kind[u];
         }
+        if (memcmp(&key, &s_unit_memo[u], sizeof key) == 0) {   /* the registers as sent */
+            prog |= s_unit_prog[u];
+            continue;
+        }
+        s_unit_memo[u] = key;
+        s_unit_prog[u] = 0;
+        if (key.tex && key.tex < MAX_TEX && s_tex[key.tex].used) t = &s_tex[key.tex];
         if (t) {
             uint32_t minf = m->min_filter + 1, magf = m->mag_filter == 0 ? 1 : 2;
             if (t->levels <= 1 && minf > 2) minf = minf == 3 || minf == 5 ? 1 : 2;   /* no mips: drop the mip part */
@@ -1875,7 +1908,8 @@ static void emit_textures(const XgxState* st, const int unit_map[4], int nunits)
              * may keep the one it has) */
             v[5] = t->gen;
             v[6] = t->pal;   /* DMA A: bit 0 clear */
-            prog |= (s_d_unit_kind[u] == UNIT_BUMP ? 6u : 1u) << (u * 5);   /* BUMPENVMAP, 2D_PROJECTIVE */
+            s_unit_prog[u] = (s_d_unit_kind[u] == UNIT_BUMP ? 6u : 1u) << (u * 5);   /* BUMPENVMAP, 2D_PROJECTIVE */
+            prog |= s_unit_prog[u];
         }
         if (memcmp(v, s_tex_shadow[u], sizeof v) != 0) {
             uint32_t b = (uint32_t)u * 64;
@@ -1938,8 +1972,7 @@ static void state_reset_shadows(void) {
     s_draw_force = XGX_DIRTY_ALL;
     s_fog_force = 1;
     memset(s_fixed, 0xFF, sizeof s_fixed);
-    memset(s_tex_shadow, 0xFF, sizeof s_tex_shadow);
-    s_tex_prog = 0xFFFFFFFFu;
+    tex_shadow_reset();
     s_tex_in = 0xFFFFFFFFu;
     memset(s_bump_shadow, 0xFF, sizeof s_bump_shadow);
     s_rc_valid = 0;
@@ -3020,8 +3053,7 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
         pb_end(p);
     }
     memset(s_fixed, 0xFF, sizeof s_fixed);
-    memset(s_tex_shadow, 0xFF, sizeof s_tex_shadow);
-    s_tex_prog = 0xFFFFFFFFu;
+    tex_shadow_reset();
     s_rc_valid = 0;
     s_vp_cur = -1;
     s_draw_force = XGX_DIRTY_ALL;
@@ -3124,8 +3156,7 @@ int xgx_ztex_mask(const int32_t src[4], uint32_t z24, int clears) {
 
     /* the game's state goes back at the next draw */
     memset(s_fixed, 0xFF, sizeof s_fixed);
-    memset(s_tex_shadow, 0xFF, sizeof s_tex_shadow);
-    s_tex_prog = 0xFFFFFFFFu;
+    tex_shadow_reset();
     s_rc_valid = 0;
     s_vp_cur = -1;
     s_draw_force = XGX_DIRTY_ALL;
