@@ -2200,7 +2200,7 @@ static void derive_units(const XgxState* st) {
     /* GXSetZTexture: the last stage's texture is the mask xgx_ztex_mask put
      * in the depth copy; one more stage multiplies the alpha by it
      * (APREV * TEXA, colour passed on), and the alpha test drops the 0s */
-    if (st->ztex && rc->nstages < RC_MAX_TEV && rc->st[rc->nstages - 1].unit >= 0) {
+    if (st->ztex && rc->nstages < RC_MAX_STAGES && rc->st[rc->nstages - 1].unit >= 0) {
         const RcStage* last = &rc->st[rc->nstages - 1];
         RcStage* r = &rc->st[rc->nstages];
         memset(r, 0, sizeof *r);
