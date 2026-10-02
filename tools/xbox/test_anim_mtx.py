@@ -14,7 +14,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 # the game's floating-point contract (tools/xbox/compile_game.py), and the
 # Xbox paths of the code under test (TARGET_XBOX, SSE)
 FLAGS = ["-O2", "-w", "-ffp-contract=off", "-fno-fast-math", "-fno-strict-aliasing", "-fwrapv",
-         "-ftrivial-auto-var-init=zero", "-DTARGET_PC=1", "-DMELEE_PC=1", "-DTARGET_XBOX=1"]
+         "-ftrivial-auto-var-init=zero", "-DTARGET_PC=1", "-DMELEE_PC=1", "-DTARGET_XBOX=1",
+         # xbox_game_prelude.h's, which the host build doesn't include
+         "-DHSD_PREFETCH(p)=__builtin_prefetch((const void*)(p))"]
 LIBM = ["pc_sinf.c", "pc_cosf.c", "pc_sindf.c", "pc_cosdf.c", "pc_rem_pio2f.c",
         "pc_rem_pio2_large.c", "pc_sincosf.c", "pc_tanf.c", "pc_tandf.c"]
 
