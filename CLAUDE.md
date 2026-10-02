@@ -23,6 +23,8 @@ Read first: `docs/handoff.md` (current state, Windows setup, working notes),
 ```sh
 tools/xbox/docker/build.sh                        # -> build-xbox/xbe/default.xbe + build-xbox/melee_x.map
 XBOX_CFLAGS="-DXHW_PROF=1" tools/xbox/docker/build.sh   # extra platform flags (switch table: docs/testing.md)
+tools/xbox/msys/build.sh                          # Windows without Docker (MSYS2; docs/toolchain.md), same knobs
+python3 tools/xbox/package_release.py <name>      # plain build only -> dist/Melee-X-<name>.zip
 python3 tools/xbox/test_tex_convert.py            # host tests (tests/xbox/*.c)
 python3 tools/xbox/test_vp_encoder.py
 python3 tools/xbox/test_fog.py                    # GX fog math (nv2a_fog.c) vs GX's fog factor
@@ -54,8 +56,10 @@ read `[PERF]`/`[NV2A]`/`[DLC]` and compare the shots with the last good run
 
 Hardware: FTP at the console's IP (`MX_FTP_HOST`, `xbox`/`xbox`), deploy to `/F/Applications/Melee-X/`
 (`default.xbe` and `default.tbn`, the dashboard icon, next to the disc image; `TitleImage.xbx` and `TitleMeta.xbx` to `/E/UDATA/4d580001/` for UnleashX's icon cache), logs in `/E/UDATA/4d580001/` (`boot.log`, `shotNN.bmp`,
-`crash.log`, `hang.log`): `tools/xbox/console.py stage|deploy|pull vNN`. Keep each deployed build's `melee_x.map` in `~/xemu/hw/` so
-`tools/xbox/sym.py` and `tools/xbox/prof_report.py` can symbolize its logs.
+`crash.log`, `hang.log`): `tools/xbox/console.py stage|deploy|pull vNN`. Keep each deployed build's `melee_x.map` in `~/xemu/hw/` (`MX_HW`) so
+`tools/xbox/sym.py` and `tools/xbox/prof_report.py` can symbolize its logs. Each boot deletes the previous
+boot's logs and `deploy` deletes them too: pull first. BACK screenshots and the counter are test-build only
+(`-DXHW_PROF=1`/`-DXHW_AUTOPAD=1`); a plain build is a release.
 
 ## Rules
 
@@ -65,7 +69,7 @@ Hardware: FTP at the console's IP (`MX_FTP_HOST`, `xbox`/`xbox`), deploy to `/F/
   `PORT:` comment and a line in `docs/decisions.md` ("Edits to imported code").
 - New build switches or behavior changes: update `docs/renderer.md`, `docs/testing.md`
   (switch table) and `docs/decisions.md`.
-- xemu is slow (TCG on Apple Silicon) and differs from hardware in timing, audio and
+- xemu is slow (TCG, SSE in softfloat) and differs from hardware in timing, audio and
   memory; prefer reasoning from code plus one smoke run over testing each change there.
 - Code style: C, match the surrounding comment density and idiom; `xgx.h`/`xhw.h`
   structs must lay out identically on both triples.

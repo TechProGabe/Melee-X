@@ -1,287 +1,148 @@
 # Roadmap
 
 - [x] Toolchain: nxdk + LLVM 21, `disc_lower` for DISC_STRUCT, game triple chosen and
-      ABI-checked against nxdk (`docs/toolchain.md`)
+      ABI-checked against nxdk (`docs/toolchain.md`); native Windows build (MSYS2)
 - [x] All 1008 game translation units compile to i386 COFF
-- [x] Platform layer, first pass
+- [x] Platform layer
   - [x] OS: MEM1 at a fixed VA, SDK heaps, alarms, time, interrupts (recursive lock)
   - [x] DVD: FST over the user's .iso/.gcm/.ciso, async reads on a worker
-  - [x] AR/ARQ: ARAM buffer
+  - [x] AR/ARQ: ARAM buffer, disc-backed pages
   - [x] PAD: four ports by physical port, GC-like layout, dead zones, rumble, settings.ini
   - [x] VI: 60.000 Hz pacing; 720p / 480p / 480i chosen from the dashboard
   - [x] AX/AI: melee-pc's mixer -> AC97 (OpenCrossing's polled driver; APU voice in xemu)
-  - [x] CARD: slot A as .gci files in `E:\UDATA\4d580001\card_a\`
-  - [x] MTX: aurora's C implementations
-- [x] GX -> NV2A, first pass
-  - [x] state, immediate mode, display lists (big-endian, indexed arrays)
+  - [x] CARD: slot A as big-endian .gci files in `E:\UDATA\4d580001\card_a\`
+  - [x] MTX: aurora's C implementations (`C_MTXConcat` in SSE)
+- [x] GX -> NV2A
+  - [x] state, immediate mode, display lists (big-endian, indexed arrays), cached
   - [x] generated vertex programs: a0-indexed skinning, GX lighting (spot, distance,
         specular), texgen; encoder checked bit for bit against nv2a-vsh
   - [x] TEV -> register combiners (from OpenCrossing's compiler, 8 stages, 4 units)
-  - [x] textures: CMPR -> DXT1, I/IA -> AY8/A8Y8, RGB565 native, C4/C8 -> I8 +
-        palette, the rest A8R8G8B8 (NPOT resampled), EFB copies (drawn by the GPU)
+  - [x] textures: CMPR -> DXT1/DXT3, I/IA -> AY8/A8Y8, RGB565 native, C4/C8 -> I8 +
+        palette, the rest A8R8G8B8, NPOT as linear textures, EFB copies on the GPU
   - [x] 720p 16:9 content rect for melee-pc's hor+ widescreen
-- [x] default.xbe links
-- [x] boots to the title screen in xemu ("TechProGabe Presents..." card first)
-- [x] attract-demo VS matches run in xemu (slowly: about 5 fps there)
-- [x] memory fit, first pass: native texture formats; MEM1 and ARAM committed on demand
-- [x] memory fit measured on hardware (boot.log `[MEM]`); disc-backed ARAM pages
-- [x] 4-CPU VS matches stable on hardware (Pokémon Stadium with transformations,
-      Fountain of Dreams, Green Greens), audio, saves, 100% save file loads
-- [x] fog: every GX fog type, per vertex from GX's registers (`nv2a_fog.c`); not yet
-      compared with Dolphin on the console; no range adjustment
-- [ ] indirect texturing, TEV swap tables beyond alpha broadcast
-- [ ] VS mode with 4 players on hardware at 60 fps
+  - [x] fog: every GX fog type, per vertex from GX's registers (`nv2a_fog.c`); not yet
+        compared with Dolphin on the console; no range adjustment
+  - [ ] indirect texturing, TEV swap tables beyond alpha broadcast
 - [x] movie frames decoded (`thp.c`)
+- [x] memory fit on hardware: native texture formats, MEM1 and ARAM committed on demand
+- [x] 4-CPU VS matches stable on hardware, audio, saves, the 100% save loads
 - [x] dashboard icon (`$$XTIMAGE` + `default.tbn`, own title ID 4D580001)
-- [x] console screenshots (BACK -> `shotNN.bmp`) and a cache-flush diagnostic (BACK+Y)
-- [ ] release packaging
+- [x] console screenshots (BACK -> `shotNN.bmp`, test builds) and a cache-flush
+      diagnostic (BACK+Y)
+- [x] release packaging (`package_release.py`, `tools/make-xiso`), release builds
+      without the test tools
+- [ ] VS mode with 4 players on hardware at 60 fps
+- [ ] first public release (v36 is the candidate)
 
-## Where it stands (2026-09-30, build v25, tested)
+## Where it stands (2026-10-01, v36)
 
-On the console (`-DXHW_PROF=1` builds, `[PERF]` lines): menus and
-character select run at 60 fps. A 4-CPU match keeps the simulation at 60
-ticks a second and draws ~28 fps on Pokémon Stadium and ~23-28 fps on
-Fountain of Dreams (15 before its 104 KB stage list could be cached:
-`DLC_MAX_BATCH` was 64, now 4096 with scratch that grows). Fog, shorter
-vertex programs with a forecast residency policy, and big-endian memory
-card files (GameCube/Dolphin saves load; all characters unlocked with the
-user's 100% save) are in.
+Fully playable on the console. Menus run at 60 fps; matches run 30-60
+fps depending on the stage and how busy it is, and the simulation keeps
+60 ticks a second (Melee runs extra ticks before a slow frame's render, so
+the game never slows down).
 
-Found and fixed on the console in v17-v25 (details in `renderer.md`,
-`platform.md`, `decisions.md`):
+The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
+14 minutes survived, see `docs/handoff.md`):
 
-- Fountain of Dreams decoded its stage list every frame (more than 64
-  draws in one list): ~25% of the CPU;
-- texture and display-list content hashes: four FNV chains (same words);
-- nxdk's pdclib printf has no `%f`: a `%f` followed by `%s` crashed (my
-  own log did, in sudden death); `xsdk_vsnprintf` formats floats;
-- black flashes on surfaces near fighters (Fountain's corner and
-  platforms, Corneria's nameplate, Stadium's floor): the four shadow maps
-  are drawn in one corner, copied and cleared one after another, and the
-  next map's white background quad lost its first triangle to the clear
-  (BACK on a `-DXGX_DEBUG_TRACE` build writes the EFB copies: black wedges
-  above the quad's diagonal). v23 waits for idle after every clear and
-  after the copy's retarget; **v24 still showed black on the console**:
-  check the v25 BACK dumps (`[DRAW] efb copy` lines) before trying more.
-- trophy gallery: the save's trophy count was byte-swapped (see the memory
-  card PR); the user's console save had been rewritten by older builds and
-  was replaced with the Dolphin original.
+- No crash or hang, exactly one `[AUDIO] AC97 polled` line.
+- A 10-minute match: 30.0-53.9 fps over 129 five-second windows, 36.7 on
+  average, never below 30. Per frame ~8 ms of simulation (1.6 ticks) and
+  ~12 ms of render pass (draw 5.3, dlist 1.5), ~600 draws and ~45k
+  vertices. The GPU waits are ~0: the frame is CPU-bound.
+- The session's first match dipped to 24-30 fps for its first ~20 s while
+  ~400 textures uploaded per 10 s and the texture pool ran down to 79 KB
+  free.
+- Memory in a match: ~7-9 MB of RAM free with ~24 MB of MEM1+ARAM
+  committed; steady across five matches.
+- The texture pool (8 MB) runs nearly full from the second match on (0.3-3
+  MB free). First tries that fail are retried after evicting
+  (`pool allocations failed`, up to 15 per 10 s); no texture was dropped.
+- The display-list cache is at capacity in a long session: all 2048 slots
+  in use and the 4 MB vertex pool down to 4-60 KB free, with 36-550
+  rebuilds per 10 s from LRU evictions (no failures). A bigger pool or more
+  slots would cut rebuilds, if RAM allows.
+- Pushbuffer peak 630 of 1024 KB, no restarts. 0-19 approximated draws
+  per frame (TEV setups the combiners can't do exactly).
+- `[CARD] save data looks mixed (be 930, le 161)`: the console's copy of
+  the 100% save has fields older builds wrote little-endian (`docs/platform.md`).
+- `[WARN] hit` lines: the knockback diagnostic from the Corneria bug still
+  logs its first 32 hits a boot (`docs/decisions.md`); harmless.
 
 ## Next
 
-v32 on the console (2026-10-01, `~/xemu/hw/logs32`, map `melee_x.v32.map`,
-commit b55012d, `-DXHW_PROF=1`): **sound fixed** (boot.log: one `AC97
-polled` line, no halt, stuck or cold reset); the Data -> title hang could
-not be reproduced and no SFX overflow was logged; stable, no texture
-problems. Fountain of Dreams, the open performance item: 75 five-second
-`[PERF]` windows of a match average 21.6 fps (18-24), sim 12.3 ms a frame
-at 2.7 ticks per render (~4.5 ms a tick), render 17-19 ms (draw 8.3,
-dlist 4.6), ~885 draws and 79k verts a frame; the user saw 15 fps
-sustained in busy moments and 9 fps when a fighter flew off stage (the
-camera pulls back; five-second windows hide such dips). The profile is
-flat: game-side HSD animation/matrix/material setup about half, our
-`xgx_draw` + `emit_vc` 7%, texture bind/lookup 7% (by caller), the cull's
-content recheck (`sample_hash`, `dlc_content_changed`) ~5%. A slow frame
-runs more sim ticks before the next render, so dips feed themselves.
-The CPUs were on high level and fighting hard, which explains sim at
-~4.5 ms a tick against ~3.5 ms in v31's matches: the v32 numbers are a
-heavier scene, not a regression.
-Ideas, in order: cheaper cull recheck (hash a sample less often or only
-lists that were culled last frame), texture bind fast path, cap sim ticks
-per render on a slow frame, then the HSD setup paths. The FPS counter's
-options-menu toggle is still to do.
+1. Release: a plain build of the current `main`, `package_release.py`, a
+   GitHub release (only when the user asks).
+2. Frame rate: the CPU is the limit everywhere (render pass ~60%, sim
+   ~40%). See the plan below.
+3. Rendering gaps: indirect texturing (Fountain of Dreams' reflection,
+   water), TEV swap tables, fog against Dolphin.
+4. Cache headroom: the display-list vertex pool and the texture pool both
+   run full in long sessions; measure what more RAM for them buys before
+   taking it from the game's ~7 MB.
+5. Open questions: why bank 2's real SFX fill can outgrow the game's SSM
+   accounting (the overflow line logs the numbers if it happens again); the
+   FPS counter's options-menu toggle (now `settings.ini` `[video] fps`).
 
-v32 round: fixes for the two v31 console problems, below.
-Check audio first on the console (`[AUDIO]` lines; rule: every console
-build gets an audio review of what changed since the last good boot).
+## Console history
 
-- **No sound for the whole boot** (v31, v27 before it): `AC97 stuck: civ 0
-  lvi 6 sr 00/00`, restarts and 31 cold resets never recovered. The run bit
-  could be set while descriptor 0 was still empty (boot raced the pump
-  thread; a restart only toggled the run bit; a cold reset zeroed the
-  descriptors and ran at once). Now every start resets the bus masters,
-  queues seven buffers, then runs (`aci_start`, `docs/platform.md`). In xemu
-  with `-DXHW_AUDIO_APU=0` the AC97 started once with no `halted` restart
-  (every earlier console boot logged one).
-- **Hang going from the Data menu back to the title** (hang.log: the title's
-  `lbAudioAx_80027648` waiting on `HSD_SynthSFXWaitForLoadCompletion`):
-  `Can't load SFX file; bank(id=2) buffer overflow`, then its callback
-  queued the same SSM again, overflowing again on the DVD thread forever.
-  The v30 reload guard therefore never ran (the v29 Jungle Japes hang was
-  the same loop). Overflows now drop the load without the callback, the
-  guard reloads bank 2 from empty, and the report gives the bank's use
-  (look for it, and for `[WARN] SFX bank 2 load failed`, in v32's log). The
-  sound test also waits for in-flight loads before emptying bank 2. Why the
-  bank's real fill outgrew the game's accounting is still open; the
-  per-SSM size table is never smaller than the US files (checked against
-  the disc), so it isn't that.
+Short; the details are in `renderer.md`, `platform.md` and `decisions.md`.
 
-v31 on the console (2026-10-01, `~/xemu/hw/logs31`, map `melee_x.v31.map`):
-Kirby's Falcon helmet, capsules and crates fixed; Mute City 30-40 fps (was
-the slowest stage), Onett 40-50, Fountain of Dreams looks right but dips to
-~15 fps at moments (to look at); no crashes over many matches; "with audio
-fixed, almost a release candidate". To do later: the FPS counter's
-options-menu toggle (now `settings.ini` `[video] fps`).
-
-v31 round: fixed in xemu: Kirby's grey Falcon helmet during
-Falcon Punch (`HSD_TExpSetReg` konst halves), black capsules (same), crate
-fronts (bump texgen + emboss pair), CMPR transparent texels (DXT3);
-off-screen rigid DObjs culled (Mute City 5.6 -> 15.5 fps in xemu). To do
-before the v31 hardware build: an on-screen FPS counter, toggled in
-`settings.ini` (done: `[video] fps`, default on; an options-menu toggle
-later). Fountain of Dreams: a 4-CPU frame in xemu has no indirect stages at
-all (`nind` 0 in every draw), so the "blocky reflection" needs a console
-BACK shot of it before anything is changed.
-
-v29 on the console (2026-10-01, `~/xemu/hw/logs29`, map `melee_x.v29.map`):
-a 5-minute Pokémon Stadium run was stable (no GPU stall). Jungle Japes hung
-on entry after four matches: `Can't load SFX file; bank(id=2) buffer
-overflow`, then `onEnterVs` -> `lbAudioAx_80027648` waited forever for the
-SSM (v30's reload guard never ran: see v32 above). Shots: shot20 = Kirby's
-grey Falcon helmet (trace section 3 of `trace.log`), shot61 = the capsule
-drawn near black (section 9; draws #372/#501: texgen NRM x TEXMTX0,
-normalized, post PTTEXMTX0 -> env map 64x64 DXT1, TEV konst x ras x tex),
-shot66/shot81 = crates with dark, black-striped faces. The Falcon helmet
-is an ordinary hat (`ftKb_LoadHat`): the parts hats are DK, Jigglypuff,
-Mewtwo, Falco and G&W (our `hats[k]` is upstream's `copies[k + 1]`), so
-the costume matanim idea doesn't apply. Mute City runs at a lower frame
-rate than the other stages.
-
-v28 on the console (2026-10-01, logs in `~/xemu/hw/logs28`, map
-`melee_x.v28.map`): intro movie perfect, audio back (no cold reset was
-needed: the AC97 started after its usual first restart), frame rate "great"
-(4-player Fountain ~30 fps: render 14.5 ms, sim 3.8 ms a tick x 2, draw 6.5,
-dlist 2.6; menus 55-60), no stage texture problems, Corneria fixed, rumble
-strength right, Trophy Collection smooth (`[TEX] overflow pool 6144 KB`,
-released on leaving). Open, in order:
-
-1. **GPU hang on Pokémon Stadium** (~500 s into the session, VS match):
-   the game thread spins in `xgx_present` -> `wait_idle` -> `pb_busy`, and
-   the retrace stopped too (`[WDOG] frames stopped`, hang.log). No `[NV2A]
-   GPU stalled` line survived: boot.log had hit its 2 MB cap at ~145 s
-   (the `-DXGX_DEBUG_TRACE` `[DRAW]` dumps fill it). v27 had the same kind
-   of stop once (PGRAPH error source 0x20, LIMIT_ZETA, then `pgraph
-   18000001`). Neither appears in any log before v26, so suspect what v26
-   changed on the GPU side: `BREAK_VERTEX_BUFFER_CACHE` at every batch
-   start, vertex-pool buffers freed at once on eviction
-   (`xgx_vbuf_free_now`), kicks every 32 KB. One theory: a draw reading
-   garbage vertices (huge or NaN positions) makes the rasterizer run past
-   the depth surface (LIMIT_ZETA). Plan: (a) keep boot.log usable: send
-   `[DRAW]` trace lines to a separate trace.log, raise or ring-buffer the
-   boot.log cap; (b) build switches to undo each v26 GPU change
-   (`-DXGX_VB_CACHE_BREAK=0`, `-DXGX_VBUF_FREE_NOW=0`, `-DXGX_PB_KICK=4096`)
-   so the console can bisect; (c) a debug check that every position in a
-   built display list is finite; (d) on a stall, log PGRAPH's trapped
-   method/data (v28 added) plus the surface and clip registers. Ship the
-   next test build without `-DXGX_DEBUG_TRACE` unless BACK dumps are needed.
-   **Done for v29** (one bundled console round): (a) `[DRAW]` lines go to
-   `trace.log` (64 MB, restarted), `boot.log` keeps 4 MB and continues in
-   `boot2.log`/`boot3.log` (2 MB each, alternating); (b)
-   `-DXGX_PB_KICK`, `-DXGX_VB_CACHE_BREAK=0`, `-DXGX_VBUF_FREE_NOW=0`
-   (not used in v29: bisect only if the stall comes back); (c)
-   `-DXGX_CHECK_VERTS` (`[WARN] dlist`); (d) the stall report adds PGRAPH
-   intr/nsource/trap/surface/clear/window-clip/raster. v29 is built with
-   `-DXHW_PROF=1 -DXGX_DEBUG_TRACE -DXGX_CHECK_VERTS`, so BACK on the grey
-   Kirby hat and the capsule gives their `[DRAW]` traces in the same round.
-   Checked meanwhile: `xgx_vbuf_free_now` only frees lists not drawn since
-   the last `xgx_present` (which waits for idle), and the EFB copy's zeta
-   extent (pitch pw*4 x ph <= 1 MB) stays inside the 640x480x4 depth
-   surface, so neither explains LIMIT_ZETA on its own.
-2. **Kirby's copy hats**: right most of the time, but the hat's texture
-   sometimes disappears. logs28 `shot31.bmp` (Fountain, ~1:19 left): the
-   blue Kirby's Captain Falcon helmet is flat grey-white (untextured look)
-   while Falcon's own helmet beside it is red and yellow. `shot63.bmp`
-   (Stadium, 1:53): the yellow Kirby's Falcon helmet is grey too, while the
-   blue Kirby's Pikachu hat is right. So it looks consistent for Falcon's
-   hat (a parts hat), not random. Neither `[DRAW]` trace survived (boot.log
-   hit the cap at shot30). Parts hats go through `ftKb_LoadHatParts`, whose
-   part visibility and costume texture list (`u.kb.x44`,
-   `ftAnim_80070200`, with Kirby's `costume_id`) were added under PORT in
-   v19 (b7e3ec2): compare with upstream doldecomp, check the hat's texture
-   list for Kirby's costume, and test the other parts hats (Ganondorf,
-   Yoshi, Jigglypuff, Dr. Mario). Reproduce in xemu if a debug VS can give
-   Kirby Falcon's ability. Checked against the DOL (0x800F0FC0): the game
-   passes the hat itself as the FtPartsDesc, hat+8 to ftAnim_80070200 and
-   Kirby's costume_id, exactly as the PORT code does, so the data setup is
-   right; both grey hats were on non-default Kirby costumes (blue, yellow).
-   Other suspects: the texture-revalidation stagger (a hat
-   texture loaded where another one lived, same pointer/size/format, served
-   stale for up to 3 frames: try `TEX_STABLE` off), the hat's costume
-   texture list (`u.kb.x44`, `ftAnim_80070200`, TObj image switching), or a
-   dropped texture (`[TEX] drop`). A BACK trace with the hat missing shows
-   the hat's draws and whether their texture is bound (`tex 0x0`).
-3. **Capsule item ("pill canister") texture looks off**: get a BACK shot
-   and its `[DRAW]` lines; check its TEV setup (swap tables, approximated
-   stages), texture format and the new linear (non-power-of-two) path.
-4. **Fountain of Dreams' reflection** is blocky: indirect texturing isn't
-   implemented (the 80x60 -> 64x64 scene copy is drawn straight).
-5. **Texture accuracy**: indirect texturing, TEV swap tables, item crates,
-   fog checks against Dolphin.
-6. **Performance**: 4-player matches ~30 fps on the console; per frame the
-   render pass (HSD scene walk, GX setters) is ~14.5 ms, the simulation
-   ~3.8 ms a tick (2 ticks a render at 30 fps), draw submission ~6.5 ms,
-   display lists ~2.6 ms. Plan below.
+| build | result |
+|---|---|
+| v6 (09-29) | first matches on hardware, ~14 fps, ~2750 draws a frame |
+| v17-v25 | Fountain of Dreams' 104 KB stage list cached (was decoded every frame, ~25% of the CPU); four-chain content hashes; pdclib `%f` crash fixed (`xsdk_vsnprintf`); shadow-map black flashes (vertex-cache read-ahead, `BREAK_VERTEX_BUFFER_CACHE`); trophy count byte order; Stadium ~28 fps, Fountain 23-28 |
+| v26-v29 | GPU hang on Pokémon Stadium (v27/v28): bisect switches, `trace.log`, PGRAPH stall report; not seen since v29. Jungle Japes SFX bank-2 hang |
+| v28 | intro movie right, Corneria fixed, rumble strength, Trophy Collection smooth (overflow texture pool) |
+| v31 | Kirby's Falcon helmet, capsules and crates fixed (`HSD_TExpSetReg` zero-init); off-screen DObj cull; Mute City 30-40, Onett 40-50, Fountain ~15-24 |
+| v32 | silent AC97 boots fixed (`aci_start`), Data -> title SFX hang fixed; Fountain 21.6 fps (sim 4.5 ms a tick at 2.7 ticks, render 17-19 ms, ~885 draws) |
+| v33 | CPU/GPU overlap and cheaper back-end lookups: Fountain 24-27, no hitching |
+| v34 | HSD prefetches, inline matrix setters, centre/extent cull: Fountain 28-33, sim per tick 4.7 -> 4.05 ms |
+| v35 | envelope-matrix memo; stopped on Big Blue's first frame (byte-swapped stage params) |
+| v36 | Big Blue fixed; release candidate (above) |
 
 ## Performance plan
 
-Where it stood in xemu (4-CPU timed match on Green Greens):
+A match frame on the console is CPU-bound: the GPU waits are ~0 since v33.
+Melee renders once per frame and runs one simulation tick per pad poll
+since the last render (up to 5), so a cheaper tick pays twice (less time per
+tick, fewer ticks per render). Done, roughly by gain:
 
-| | hardware (v6, 2026-09-29) | xemu 2026-09-30 start | xemu now |
-|---|---|---|---|
-| match fps | ~14 | 4.0 | ~13.5 |
-| results screen fps | | 2.0 | ~9 |
-| draws per frame | ~2750 | ~2950 | ~730 |
-| sim ticks per second | ~60 | ~20 | ~60 |
+- fewer draws (display-list batches merged, immediate batches joined,
+  fixed array offsets), off-screen cull of rigid DObjs;
+- display lists and textures cached with staggered, sampled rechecks;
+- builtin memcpy & co., the platform's own string functions, alarms
+  throttled;
+- shorter vertex programs with forecast residency (`renderer.md`);
+- CPU/GPU overlap (v33), packed cache arrays, O(1) vertex signatures;
+- bit-identical HSD rewrites: spline and `HSD_MtxSRT`, `C_MTXConcat` in
+  SSE, the fused envelope blend, no calls for idle animations, prefetches
+  in the list walks (v34), the envelope-matrix memo (v35).
 
-In order, measured against the console's `[PERF]`/`[PROF]` lines
-(`prof_report.py`):
+Ideas left, in order:
 
-1. **Fewer draws** (both targets; xemu is bound by them): ~27% of draws
-   change no state and ~13% only a position matrix (`[NV2A] per N draws`).
-   Candidates: join consecutive cached lists with identical state into one
-   draw (they sit in different buffers today, so the fixed-base scheme would
-   need them adjacent, or a copy to the ring); for position-matrix-only
-   changes, give each draw its own matrix slot and index it per vertex.
-2. **Simulation CPU**: stage collision (`mpLib_*Wall`, `mpCheck*`; ~15% of
-   the CPU work in xemu), musl `sinf`/`cosf` (double math on x87), HSD
-   animation (`fobj`, `jobj`). Only bit-identical rewrites (the simulation
-   must round like other builds), as `C_MTXConcat` was. First pass done
-   (after v26, unmeasured on the console; `docs/decisions.md`, "HSD
-   animation and matrices"): the spline's divide and call, a shared
-   `sinf`/`cosf` per angle in `HSD_MtxSRT`, no calls for objects with
-   nothing playing. Estimated at a few tenths of a ms per frame; compare
-   the `[PROF]` share of `fobj`, `HSD_MtxSRT`, `pc_sinf`/`pc_cosf` and
-   `HSD_AObjInterpretAnim` with v25. What is left is the arithmetic itself:
-   the next step would be memoizing `sinf`/`cosf` per joint angle (pure
-   functions, so exact), if a console count shows angles repeat between
-   ticks.
-3. **Render-pass CPU**: `PObjSetupMtx` and envelope skinning matrices,
-   GX setter traffic per material. First pass done (after v26): the envelope
-   blend's concat and scaled add fused into one SSE step.
-4. **CPU/GPU overlap** at present: the frame waits for the GPU to go idle,
-   so the GPU sits idle during the next frame's simulation. Worth ~20% in
-   xemu; on hardware the GPU wait was under 1 ms, so only once the CPU side
-   is fast.
-5. **Vertex-program loads** (done: `docs/renderer.md` "Program memory").
-   Next: capture a console trace (`-DXGX_DEBUG_VPTRACE`) and replay it with
-   `vp_policy.py`; if loads still matter, let a program that writes more
-   outputs serve draws that don't read them (fog off, fewer texture units,
-   COLOR1 unused), at some cost in vertex work.
-6. Smaller: stagger the display-list content check (a sampled hash per list
-   per frame), `-ftrivial-auto-var-init-max-size` for large locals in hot
-   code (after checking which rely on the zeroing).
+1. **Render pass** (~12 ms of a ~27 ms frame in v36): HSD's per-material
+   setup (`HSD_MObjSetup`, TEV/channel setters) and `PObjSetupMtx`. A
+   `-DXHW_PROF=1` round on the console first: `prof_report.py` with the
+   build's map and `.statics`.
+2. **Simulation**: stage collision (`mpLib_*`), `sinf`/`cosf` (memoize per
+   joint angle if a console count shows angles repeat), HSD animation.
+   Bit-identical only (`test_anim_mtx.py`).
+3. **Cache capacity**: more display-list slots or vertex pool (see above).
+4. **Vertex-program loads**: capture `-DXGX_DEBUG_VPTRACE` on the console
+   and replay with `vp_policy.py`; let a program that writes more outputs
+   serve draws that read fewer.
+5. Smaller: `-ftrivial-auto-var-init-max-size` for large locals in hot code
+   (after checking which rely on the zeroing).
 
 ## Future features
 
 - **Settings menu**: an in-game screen for what only `settings.ini` sets
   today (`docs/platform.md`): video mode (720p / 480p / 480i, widescreen),
-  rumble, per-port button mapping and dead zones, plus port toggles worth
-  exposing (screenshot button, `[PERF]` overlay, texture pool size, the
-  performance trade-offs as they appear). Options: a page in Melee's own
-  Options menu (imported menu code, `PORT:` edits), or a separate Melee-X
-  screen before the title (held button at boot, drawn with the splash
-  code). Writes `settings.ini`; a video-mode change needs a restart (the
-  NV2A and pools are sized at boot).
+  rumble, per-port button mapping and dead zones, the FPS counter. Options:
+  a page in Melee's own Options menu (imported menu code, `PORT:` edits),
+  or a separate Melee-X screen before the title (held button at boot, drawn
+  with the splash code). Writes `settings.ini`; a video-mode change needs a
+  restart (the NV2A and pools are sized at boot).
 
 - **Front LED effects**: the SMC takes a custom four-step red/green pattern
   over SMBus (`HalWriteSMBusValue(0x20, 0x08, 0, pattern)` then register

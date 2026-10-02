@@ -43,12 +43,15 @@ real call. That was ~18% of a match frame on the console.
 
 Display lists are cached (`gx_vtx.c`, up to 2048 lists): the first call
 decodes the list into a vertex buffer from its own pool (4 MB at 480, 3 MB
-at 720p; with every list cached, a 4-CPU match fills 3 MB) and later calls replay the draws. Entries are keyed by the
+at 720p) and later calls replay the draws. One 4-CPU match fills about 3
+MB; over a long session (several stages and characters) all 2048 slots and
+the whole pool stay in use, and the LRU eviction below rebuilds a few dozen
+to a few hundred lists every 10 s (v36 console log). Entries are keyed by the
 list's address and size and by the vertex descriptor and the formats (VAT)
 the list uses: HSD draws some small lists under different formats (shared
 by models quantized differently), and one entry per list flipped between
 them until ~100 lists were decoded on every call. Now a 4-CPU match keeps
-~1400 lists cached, none volatile. An entry is checked against the
+1400-2048 lists cached, none volatile. An entry is checked against the
 vertex descriptor, formats and arrays on every call, and against a sampled
 hash of the list and of the array ranges it indexed once a frame; a list
 that passed 120 checks in a row is checked every fourth frame, staggered by
@@ -139,7 +142,7 @@ compared as words inline.
 `[DLC]` line counts joined batches and names the calls that drew a waiting
 immediate batch.
 
-### CPU cost of the back end (v33)
+### CPU cost of the back end (v33-v35)
 
 The v32 console profile of a 4-CPU Fountain of Dreams match (21 fps, ~47 ms
 a frame) had the back end at about a quarter of the CPU, mostly cache
@@ -189,6 +192,11 @@ misses in lookups and revalidation rather than useful work. v33:
   less than the corner test, never more. `GXLoadPosMtxImm` and
   `GXLoadTexMtxImm` compare and copy their 3x4 matrices inline as 12 words
   (48 bytes was a memcmp and a memcpy call each, ~2% of the CPU).
+- Game side (imported code, `docs/decisions.md`): v34 prefetches the next
+  node in HSD's animation and display list walks (the P3 has a 128 KB L2
+  and no hardware prefetcher); v35 reuses an envelope's matrices when a
+  later PObj of the same DObj uses the same joints and weights (~1250
+  envelope matrices a frame in a 4-CPU match, ~630 distinct).
 
 `xgx.h` is compiled by both triples (game and nxdk), so its structs hold only
 32-bit scalars, floats and byte arrays: no bit-fields, no 64-bit members.
@@ -494,9 +502,10 @@ Dolphin:
 - Off-screen culling: the display-list cache keeps each list's model-space
   box (lists without per-vertex matrices); `HSD_DObjDisp` asks
   `gx_dl_culled` with the DObj's model-view matrix and the current
-  projection and skips DObjs of rigid PObjs that are wholly outside (a
-  box corner test against the four side planes and the camera plane, so
-  nothing visible is dropped). A list is known after its first draw.
+  projection and skips DObjs of rigid PObjs that are wholly outside (the
+  box's centre is transformed and the view-aligned box around it tested
+  against the four side planes and the camera plane, so nothing visible is
+  dropped; v34, was eight corners). A list is known after its first draw.
 - Bump texgens (`GX_TG_BUMPn`, HSD's emboss) are drawn as their source
   coordinate (no binormal/tangent offset), and the emboss stage pair
   "prev + h(tc)*ras, prev - h(bump)*ras" is dropped since it cancels; the
@@ -526,7 +535,10 @@ Dolphin:
   untextured, usually black) instead of waiting forever. Drops are counted
   in the `[TEX]` line, the first of each interval gets a `[TEX] drop:` line
   (size, pool free, largest free block), and `-DXGX_DEBUG_MAGENTA` draws
-  them magenta.
+  them magenta. The `[NV2A]` line's `pool allocations failed` counts every
+  allocation that didn't fit at first, including the ones that fit after
+  evicting: with a full pool (every long session, v36) it is a few to ~15
+  per 10 s while `drops` stays 0.
 - When only textures drawn this frame are left to evict, the frame's working
   set is bigger than the pool: an overflow pool is taken from the RAM free
   at that moment (up to 8 MB, keeping 6 MB free for the game's

@@ -52,7 +52,7 @@ here than on x86-64:
 
 | item | size |
 |---|---|
-| XBE image (game ~5.8 MB + platform) | ~7 MB |
+| XBE image (game ~5.8 MB + platform) | ~7.5 MB |
 | MEM1 (game heaps) | 24 MB reserved as on the GameCube, committed on demand |
 | ARAM (preload cache, sound banks) | 16 MB reserved, committed on demand |
 | NV2A: 720p R5G6B5 x3 + Z16 | 7.4 MB |
@@ -71,7 +71,9 @@ much is committed. Melee can touch more than the Xbox has (24 MB of MEM1
 and 16 MB of ARAM, with ~35 MB free after the NV2A is up), so ARAM pages
 that hold bytes straight from the disc image are left on the disc: their
 chunks are decommitted and read back from the image when needed (`ar.c`,
-docs/decisions.md).
+docs/decisions.md). Measured on the console (v36, 480i): ~34 MB free once
+the NV2A is up, ~24 MB of MEM1+ARAM committed in a match (another ~11 MB of
+ARAM left on the disc), ~7-9 MB free, steady from match to match.
 
 Textures are stored in formats the NV2A samples as is, whenever the size
 is a power of two:

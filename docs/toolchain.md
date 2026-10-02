@@ -24,6 +24,43 @@ tools/xbox/docker/build.sh                      # disc_lower if stale, then xbox
 `XBOX_CFLAGS`, `XBOX_CMAKE_ARGS`, `XBOX_NINJA_ARGS`, `XBOX_FORCE` and
 `XBOX_KEEP_TEMPS` pass through to the container.
 
+**Windows, native (MSYS2).** Docker and WSL2 need CPU virtualization, which
+can be off in the BIOS, so the build also runs without them:
+
+- MSYS2 (`C:\msys64`) with `make git bison flex cmake ninja` and the
+  `mingw-w64-x86_64-` `clang lld llvm python python-pillow gcc` packages.
+  Use MSYS2's own `cmake`/`ninja`, not mingw's: those can't run nxdk's
+  shell wrappers. MSYS2's clang is LLVM 21.1.8, the Docker image's version.
+- nxdk at the Dockerfile's `NXDK_SHA` in `C:\xdev\nxdk`, built once with
+  `make tools` and `make NXDK_ONLY=y NXDK_SDL=y NXDK_CXX=y`.
+- Build from Git Bash with `tools/xbox/msys/build.sh`. It passes
+  `XBOX_CFLAGS` and the other knobs on as arguments (Git Bash's
+  environment doesn't reach MSYS2's bash). The code layout matches the
+  Docker build's symbol for symbol.
+- xemu: the Windows release, with `MX_XEMU=<path to xemu.exe>` and
+  `MX_XISO=<nxdk>/tools/extract-xiso/build/extract-xiso.exe` for
+  `tools/xbox/xemu_run.sh`. Kill a stale one with `taskkill //F //IM xemu.exe`.
+
+Every build uses `-ffile-prefix-map`, so the checkout path doesn't end up
+in the XBE (assert strings and `__FILE__`). The game's link order is sorted
+case-sensitively (`compile_game.py`), so Windows and Linux link the same
+order and the maps match.
+
+## Release
+
+A plain build (no `XBOX_CFLAGS`) is a release: no BACK screenshots, the
+frame-rate counter off by default (`XHW_TEST_BUILD`, `docs/testing.md`).
+
+```sh
+tools/xbox/msys/build.sh                       # or tools/xbox/docker/build.sh
+python tools/xbox/package_release.py <name>    # -> dist/Melee-X-<name>.zip
+```
+
+`package_release.py` refuses a build made with `XBOX_CFLAGS`. The zip holds
+`Melee-X/default.xbe`, `default.tbn` and `tools/make-xiso`, which packs a
+burnable DVD image with xdvdfs or extract-xiso (README, "Option 2"). CI does
+not publish releases: `build.yml` runs only by hand.
+
 ## Game code
 
 ```sh
@@ -82,5 +119,5 @@ expose only scalars and pointers to the rest.
 
 The workflow runs only when started by hand (`workflow_dispatch`); builds
 and tests run locally. `.github/workflows/build.yml` runs `tools/xbox/setup.sh` (LLVM and nxdk are
-cached, keyed on that script), builds `default.xbe` and runs the three host
+cached, keyed on that script), builds `default.xbe` and runs the host
 tests. The XBE and its link map are uploaded as the `default.xbe` artifact.

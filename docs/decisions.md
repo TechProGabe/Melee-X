@@ -193,7 +193,7 @@ stable lists and textures are revalidated with 16 samples instead of 64
 hashed in full; the cost is a lower chance of noticing a partial in-place
 rewrite of a list or texture that had stayed the same for two seconds.
 
-**Release builds have no test tools (v37).** A plain build is a release:
+**Release builds have no test tools (after v36).** A plain build is a release:
 BACK does nothing and the frame-rate counter is off unless `settings.ini`
 turns it on. The profiler and autopad builds, which every console test
 round uses, imply `XHW_TEST_BUILD` and keep BACK screenshots and the
@@ -397,20 +397,26 @@ To sync a newer melee-pc:
 
 ## Known risks
 
-- **Hardware coverage.** 4-CPU VS matches on Pokémon Stadium (with
-  transformations), Fountain of Dreams and Green Greens, menus, saves and a
-  100% save file run on the console. Most other stages, single-player modes
-  and items have seen little play there. xemu differs from the console in
-  ways that hid real bugs this round (w-buffer, PFIFO timing, AC97): check
-  rendering on the console with BACK screenshots, not only in xemu.
-- **Performance.** Matches draw 13-30 fps on the console while the
-  simulation keeps 60 ticks (`docs/roadmap.md`).
+- **Hardware coverage.** VS matches on many stages (Pokémon Stadium with
+  transformations, Fountain of Dreams, Green Greens, Mute City, Onett,
+  Corneria, Big Blue and more), menus, the Trophy Collection, saves and a
+  100% save run on the console, over 30-minute sessions. Single-player
+  modes and many stages have seen less play. A stage-specific crash has so
+  far meant a disc struct missing `DISC_STRUCT` (Big Blue, v35). xemu
+  differs from the console in ways that hid real bugs (w-buffer, PFIFO
+  timing, AC97): check rendering on the console, not only in xemu.
+- **Performance.** Matches draw 30-60 fps on the console (busy 4-CPU
+  stages in the low 30s) while the simulation keeps 60 ticks
+  (`docs/roadmap.md`).
 - **Rendering gaps**: no indirect texturing (water and reflections), fog
   per vertex (long polygons get less fog mid-span; no range adjustment),
-  TEV swap tables only for the alpha broadcast; non-power-of-two textures
-  are resampled; the texture pool is short on busy stages (an overflow pool
-  takes free RAM for a scene that outgrows it).
+  TEV swap tables only for the alpha broadcast; the texture pool and the
+  display-list vertex pool run full in long sessions (they evict and
+  rebuild; an overflow texture pool takes free RAM for a scene whose
+  working set outgrows it).
 - **Netplay** is not built; the online/LAN lobby returns to the menu.
 - **The demand-commit fault handler** relies on the Xbox kernel sending
   kernel-mode access violations on reserved memory to the thread's SEH
-  chain. That is how nxdk's `__try` works, but it hasn't been exercised.
+  chain. Every console boot depends on it (MEM1 and ARAM commit this way)
+  and it has held since the first hardware builds; a fault at raised IRQL
+  still can't be handled (`docs/testing.md`, Crashes).

@@ -73,9 +73,11 @@ needed, as for any xemu title. xemu is useful for crashes and rendering, but
 timing, audio (it uses the APU fallback there) and memory headroom differ
 from hardware, so check fixes on a console too.
 
-On macOS the scripts do all of this for you. They use Docker (colima works)
+The scripts do all of this for you. On macOS they use Docker (colima works)
 and xemu at `/Applications/Xemu.app`, with its BIOS, MCPX and HDD already
-set up in xemu's settings:
+set up in xemu's settings; on Windows, build with `tools/xbox/msys/build.sh`
+and point `MX_XEMU`/`MX_XISO` at xemu and extract-xiso
+(`docs/toolchain.md`):
 
 ```sh
 docker build -t melee-x:sdk tools/xbox/docker   # once
@@ -108,18 +110,23 @@ that the current TSS's link field names (read the GDT to find it).
 
 ## The console loop
 
-What each hardware round looks like (one folder per build in `~/xemu/hw/`,
-or `MX_HW`; `tools/xbox/console.py` does steps 1, 2 and 4 on any OS):
+What each hardware round looks like (one folder per build in `MX_HW`,
+default `~/xemu/hw/`; `tools/xbox/console.py` does it on any OS, with the
+console's address in `MX_FTP_HOST`):
 
-1. Build with `XBOX_CFLAGS=-DXHW_PROF=1`; copy `default.xbe`,
-   `default.tbn`, `TitleImage.xbx`, `TitleMeta.xbx` into
-   `~/xemu/hw/stage-vNN/` and `melee_x.map` to `~/xemu/hw/melee_x.vNN.map`.
-2. `~/xemu/hw/deploy-vNN.sh` uploads over FTP (the XBE and icon to
-   `/F/Applications/Melee-X/`, the dashboard files to `/E/UDATA/4d580001/`)
-   and re-downloads each file to compare.
-3. The user plays; BACK takes a screenshot of anything wrong.
-4. `~/xemu/hw/pull-logsNN.sh` fetches `boot.log` (and `boot2.log`, `boot3.log`, `trace.log`), `crash.log`, `hang.log`
-   and the `shotNN.bmp` files; symbolize with that build's map.
+1. Build. A test round uses `XBOX_CFLAGS=-DXHW_PROF=1` (profiler, BACK
+   screenshots, counter on); a release candidate is a plain build.
+2. `console.py stage vNN` copies `default.xbe`, `default.tbn`,
+   `TitleImage.xbx` and `TitleMeta.xbx` into `stage-vNN/`, the map to
+   `melee_x.vNN.map` and its static functions to `melee_x.vNN.map.statics`.
+3. `console.py deploy vNN` deletes the console's old logs and shots, then
+   uploads (the XBE and icon to `/F/Applications/Melee-X/`, the dashboard
+   files to `/E/UDATA/4d580001/`) and re-downloads each file to compare.
+4. The user plays; in a test build BACK takes a screenshot of anything wrong.
+5. `console.py pull vNN` fetches `boot*.log`, `trace.log`, `crash.log`,
+   `hang.log` and the `shotNN.bmp` files into `logsNN/`; symbolize with that
+   build's map. Pull before the game is launched again: each boot deletes
+   the previous boot's logs.
 
 Rendering that differs between xemu and the console has come from state
 xemu doesn't model (the w-buffer bit, PFIFO timing): trust the screenshot.
@@ -210,7 +217,7 @@ Everything is written to `E:\UDATA\4d580001\` (the title ID is `4d580001`):
 | `trace.log` | the `[DRAW]` lines of a `-DXGX_DEBUG_TRACE` build (COM1 still gets them), restarted at 64 MB |
 | `hang.log` | written by the watchdog: the log tail and a dump of every thread (also appended to `boot.log`) |
 | `crash.log` | written on a CPU exception: the last log lines, the fault, registers, XBE addresses found on the stack |
-| `shot00.bmp` .. `shot99.bmp` | screenshots: BACK on any controller (unmapped by default in `settings.ini`) writes the next frame as a 24-bit BMP and logs `[SHOT] wrote ...`; numbering restarts at 00 each boot. An autopad `BACK` line does the same in xemu. Y pressed while BACK is held drops every cached texture and display list at the frame end (`[DEBUG] ... caches flushed`): a surface that comes back right afterwards had its cached copy corrupted |
+| `shot00.bmp` .. `shot99.bmp` | screenshots, test builds only (`XHW_TEST_BUILD`): BACK on any controller (unmapped by default in `settings.ini`) writes the next frame as a 24-bit BMP and logs `[SHOT] wrote ...`; numbering restarts at 00 each boot. An autopad `BACK` line does the same in xemu. Y pressed while BACK is held drops every cached texture and display list at the frame end (`[DEBUG] ... caches flushed`): a surface that comes back right afterwards had its cached copy corrupted |
 | `settings.ini` | options (`docs/platform.md`) |
 | `card_a\*.gci` | memory card saves |
 
@@ -231,8 +238,10 @@ Lines worth reading first:
   lists to go volatile with the reason.
 - `[NV2A] frame N: D draws (A approximated), tex pool K KB free (largest L
   KB)`: logged every 600 frames. A high `approximated` count means TEV
-  setups the combiners only approximate; a tex pool near 0 means texture
-  churn, and `pool allocations failed` that textures were dropped.
+  setups the combiners only approximate; a tex pool near 0 means a full
+  pool (normal in a long session), and `pool allocations failed` counts
+  uploads that only fit after evicting: harmless while `[TEX]`'s `drops`
+  stays 0.
   `pushbuffer peak P of 1024 KB (R restarts)`: the fullest a frame got,
   and how often a frame had to wait for the GPU and restart at the head.
 - `[NV2A] per N frames: L vertex programs loaded (I instructions), S program
@@ -260,6 +269,20 @@ Lines worth reading first:
   once. If the frames (or presents) come back, `[WDOG] frames again after
   N s` is logged and the game gets the screen back: that was a long stall
   (a load), not a hang.
+- `[DLC] N of 2048 lists ... vertex pool K of 4096 KB free`: a long
+  session fills both and evicts least recently used lists; `builds` per
+  interval is the rebuild cost. Only `uncached:`/volatile lists mean lists
+  drawn without the cache.
+- `[CARD] save data big-endian (votes be N, le M)`, and `looks mixed` when
+  an older build rewrote some fields (`docs/platform.md`, CARD).
+- `[WARN] hit` / `[WARN] hit by item kind`: the knockback diagnostic
+  (`docs/decisions.md`), its first 32 hits a boot; expected in any match
+  with items or stage hazards.
+
+A healthy console session: one `[AUDIO] AC97 polled` line and no `halted`,
+`stuck` or `cold reset`; `[BEAT]` lines to the end with `presented`
+following `retrace`; `[PERF]` `ticks per render` well under 5; no
+`crash.log` or `hang.log`.
 
 ## Crashes
 
@@ -347,5 +370,6 @@ watchdog ("frames stopped"), it logs `frames again` and the run carries on.
    doesn't shuffle them.
 5. At 720p the picture is 16:9 with the HUD at the screen edges. At 480
    (4:3 dashboard) it matches the GameCube framing.
-6. A 4-player VS match on a busy stage holds 60 fps.
+6. A 4-player VS match on a busy stage keeps full game speed (`[PERF]`
+   ticks per render under 5) at 30 fps or more.
 7. Saving creates `card_a\01-GALE-*.gci`, and it loads back after a reboot.
