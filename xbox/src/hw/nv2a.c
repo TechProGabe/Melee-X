@@ -901,6 +901,7 @@ void xgx_tex_destroy(uint32_t tex) {
 static int s_frame_open;
 static uint32_t s_frame;
 static uint32_t s_draws, s_approx, s_pf_verts;
+static uint32_t s_st_swz, s_st_swz_stages;   /* draws whose combiners extract swizzled channels */
 static volatile int s_fbdump_once;
 
 unsigned xgx_present_count(void) { return s_frame; }
@@ -1194,6 +1195,10 @@ void xgx_present(int black) {
                  "%u, points %u", XGX_STATS_EVERY, s_st_prim[0], s_st_prim[2], s_st_prim[3], s_st_prim[4], s_st_prim[5],
                  s_st_prim[6], s_st_prim[7]);
         memset(s_st_prim, 0, sizeof s_st_prim);
+        if (s_st_swz)
+            xhw_logf("[NV2A] per %u frames: %u draws through swap tables (%u combiner stages added)", XGX_STATS_EVERY,
+                     s_st_swz, s_st_swz_stages);
+        s_st_swz = s_st_swz_stages = 0;
         xhw_logf("[NV2A] per %u frames: %u vertex programs loaded (%u instructions), %u program switches",
                  XGX_STATS_EVERY, s_st_vp_loads, s_st_vp_ins, s_st_vp_sel);
         s_st_vp_loads = s_st_vp_ins = s_st_vp_sel = 0;
@@ -1632,20 +1637,25 @@ static const RcProg* rc_lookup(const RcCfg* cfg) {
 
 static uint8_t clamp_s10(int v) { return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v); }
 
-/* RREF_FIXED constants: rgb, a (nv2a_rc.c's movie YUV program) */
-static const uint8_t k_rc_fixed[4][4] = {
+/* RREF_FIXED constants: rgb, a (nv2a_rc.c's movie YUV program, then the
+ * unit vectors its swap-table dot products extract a channel with) */
+static const uint8_t k_rc_fixed[8][4] = {
     { 90, 0, 0, 44 },     /* 0.351, 0, 0 | 0.1725 */
     { 0, 0, 113, 91 },    /* 0, 0, 0.443 | 0.357 */
     { 255, 0, 255, 0 },
     { 0, 255, 0, 0 },
+    { 255, 0, 0, 0 },
+    { 0, 255, 0, 0 },
+    { 0, 0, 255, 0 },
+    { 0, 0, 0, 0 },
 };
 
 static void ref_val(const XgxState* st, uint16_t ref, uint8_t rgb[3], uint8_t* a) {
     int t = ref >> 8, p = ref & 0xFF, k;
     switch (t) {
         case RREF_FIXED:
-            for (k = 0; k < 3; k++) rgb[k] = k_rc_fixed[p & 3][k];
-            *a = k_rc_fixed[p & 3][3];
+            for (k = 0; k < 3; k++) rgb[k] = k_rc_fixed[p & 7][k];
+            *a = k_rc_fixed[p & 7][3];
             break;
         case RREF_TEVREG_RGB:
             for (k = 0; k < 3; k++) rgb[k] = clamp_s10(st->tevreg[p & 3][k]);
@@ -2168,6 +2178,11 @@ static uint32_t s_d_spec_lights, s_d_layout = 0xFFFFFFFFu;
 #define DIRTY_TG (DIRTY_UNITS | XGX_DIRTY_TEXGEN | XGX_DIRTY_TEXMTX)
 #define DIRTY_FIXED (XGX_DIRTY_PIXEL | XGX_DIRTY_SCISSOR | XGX_DIRTY_FOG)
 
+/* a swap table as RcStage's tex_swz/ras_swz: two bits per channel */
+static uint8_t swap_bits(const uint8_t t[4]) {
+    return (uint8_t)((t[0] & 3) | (t[1] & 3) << 2 | (t[2] & 3) << 4 | (t[3] & 3) << 6);
+}
+
 /* texture units (one per distinct texcoord/texmap the TEV samples) and the combiner setup */
 static void derive_units(const XgxState* st) {
     RcCfg* rc = &s_d_rc;
@@ -2209,8 +2224,7 @@ static void derive_units(const XgxState* st) {
         r->cout = (uint8_t)(t->cout & 3); r->aout = (uint8_t)(t->aout & 3);
         r->kcsel = (uint8_t)t->kcsel; r->kasel = (uint8_t)t->kasel;
         r->ras = t->chan == GX_COLOR0A0 ? 0 : t->chan == GX_COLOR1A1 ? 1 : 2;
-        r->tex_alpha_bcast = st->swap[t->tex_swap & 3][0] == 3 && st->swap[t->tex_swap & 3][1] == 3;
-        r->ras_alpha_bcast = st->swap[t->ras_swap & 3][0] == 3 && st->swap[t->ras_swap & 3][1] == 3;
+        r->ras_swz = r->ras == 2 ? RC_SWZ_ID : swap_bits(st->swap[t->ras_swap & 3]);
         if (!(emboss >> s & 1) && t->texmap != GX_NULL && t->texmap < XGX_MAX_MAPS && t->texcoord != GX_NULL &&
             st->map[t->texmap].tex) {
             for (i = 0; i < nunits; i++)
@@ -2223,6 +2237,7 @@ static void derive_units(const XgxState* st) {
             if (u < 0) s_d_unit_miss++;
         }
         r->unit = (int8_t)u;
+        r->tex_swz = u < 0 ? RC_SWZ_ID : swap_bits(st->swap[t->tex_swap & 3]);
         if (u >= 0) rc->units_used |= (uint8_t)(1u << u);
         if (r->ras == 1) rc->v1_used = 1;
     }
@@ -2242,6 +2257,7 @@ static void derive_units(const XgxState* st) {
         r->cclamp = r->aclamp = 1;
         r->unit = last->unit;
         r->ras = 2;
+        r->tex_swz = r->ras_swz = RC_SWZ_ID;
         rc->nstages++;
     }
     s_d_nunits = nunits;
@@ -2367,6 +2383,10 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     }
     if (s_vp_cur < 0) vp_select(&s_d_vk);
     s_approx += (uint32_t)s_d_unit_miss + (s_d_rp->approximated ? 1u : 0u);
+    if (s_d_rp->swizzled) {
+        s_st_swz++;
+        s_st_swz_stages += (uint32_t)s_d_rp->swizzled;
+    }
 #ifdef XGX_DEBUG_TRACE
     if (s_fbdump_once || s_shot_once) trace_draw(prim, count, st, s_d_rp->approximated, layout);   /* autopad SHOT or BACK */
 #endif

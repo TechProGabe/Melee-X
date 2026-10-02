@@ -13,9 +13,13 @@ typedef struct {
     uint8_t kcsel, kasel;
     int8_t unit;       /* NV2A texture unit sampled by this stage, -1: none */
     uint8_t ras;       /* 0: colour channel 0, 1: channel 1, 2: zero */
-    uint8_t tex_alpha_bcast, ras_alpha_bcast;   /* swap table replicates alpha */
+    /* swap tables (GXSetTevSwapMode): the source channel of r, g, b and a,
+     * two bits each from bit 0; RC_SWZ_ID passes them through */
+    uint8_t tex_swz, ras_swz;
     uint8_t pad;
 } RcStage;
+
+#define RC_SWZ_ID 0xE4   /* r g b a = 0 1 2 3 */
 
 typedef struct {
     uint8_t nstages;
@@ -32,7 +36,8 @@ enum {
     RREF_TEVREG_A,
     RREF_KONST_C,      /* param: kcsel */
     RREF_KONST_A,      /* param: kasel */
-    RREF_FIXED,        /* param: index into nv2a.c's k_rc_fixed (rgb and a) */
+    RREF_FIXED,        /* param: index into nv2a.c's k_rc_fixed (rgb and a): 0-3 the movie's
+                          YUV program, 4-6 the unit vectors r, g, b (swap-table dot products) */
 };
 #define RREF(t, p) ((uint16_t)(((t) << 8) | ((p) & 0xFF)))
 
@@ -44,6 +49,7 @@ typedef struct {
     uint16_t cref[RC_MAX_STAGES][4];   /* C0.rgb C0.a C1.rgb C1.a */
     uint16_t fref[4];
     int approximated;
+    int swizzled;                      /* combiner stages added for swap tables */
 } RcProg;
 
 void rc_compile(const RcCfg* cfg, RcProg* out);

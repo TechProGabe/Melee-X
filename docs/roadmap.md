@@ -22,7 +22,9 @@
   - [x] 720p 16:9 content rect for melee-pc's hor+ widescreen
   - [x] fog: every GX fog type, per vertex from GX's registers (`nv2a_fog.c`); not yet
         compared with Dolphin on the console; no range adjustment
-  - [ ] indirect texturing, TEV swap tables beyond alpha broadcast
+  - [x] TEV swap tables (broadcasts as dot-product combiner stages; permutations
+        approximated)
+  - [ ] indirect texturing
 - [x] movie frames decoded (`thp.c`)
 - [x] memory fit on hardware: native texture formats, MEM1 and ARAM committed on demand
 - [x] 4-CPU VS matches stable on hardware, audio, saves, the 100% save loads
@@ -123,7 +125,7 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
 2. Frame rate: the CPU is the limit everywhere (render pass ~60%, sim
    ~40%). See the plan below.
 3. Rendering gaps: indirect texturing (Fountain of Dreams' reflection,
-   water), TEV swap tables, fog against Dolphin.
+   water), fog against Dolphin.
 4. Cache headroom: the display-list vertex pool and the texture pool both
    run full in long sessions; measure what more RAM for them buys before
    taking it from the game's ~7 MB.

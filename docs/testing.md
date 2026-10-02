@@ -9,6 +9,7 @@ tools/xbox/test_vp_opt.py        # optimized vertex programs vs the pre-optimize
 tools/xbox/vp_policy.py --check  # program-memory residency (nv2a_vpmem.c) vs its model and flush/LRU
 tools/xbox/test_tex_convert.py   # native texture formats vs the GX decoder
 tools/xbox/test_fog.py           # GX fog on the NV2A vs GX's fog factor (libogc registers, Dolphin's formula)
+tools/xbox/test_rc.py            # TEV -> combiners: no-swizzle programs unchanged, swap tables vs a combiner model [n]
 tools/xbox/test_card_endian.py   # memory-card files: field tables vs the game's structs, big-endian <-> native
 tools/xbox/test_pool.py          # nv2a.c's pool allocator: random allocations and frees, block-list invariants
 tools/xbox/test_anim_mtx.py      # HSD keyframe interpreter, HSD_MtxSRT, envelope blend vs the code before the rewrites [--full]

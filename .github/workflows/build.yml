@@ -65,6 +65,7 @@ jobs:
           python3 tools/xbox/vp_policy.py --check
           python3 tools/xbox/test_tex_convert.py
           python3 tools/xbox/test_fog.py
+          python3 tools/xbox/test_rc.py
           python3 tools/xbox/test_anim_mtx.py
           python3 tools/xbox/test_card_endian.py
 

@@ -57,8 +57,13 @@ GXFifoObj* GXInit(void* base, u32 size) {
         t->kcsel = GX_TEV_KCSEL_1;
         t->kasel = GX_TEV_KASEL_1;
     }
+    /* GXInit's swap tables: RGBA, RRRA, GGGA, BBBA. The 1P clear screen's
+     * sepia freeze frame (lb_800122F0) relies on 1-3 without setting them. */
     for (i = 0; i < 4; i++) {
-        g_xgx.swap[i][0] = 0; g_xgx.swap[i][1] = 1; g_xgx.swap[i][2] = 2; g_xgx.swap[i][3] = 3;
+        g_xgx.swap[i][0] = (uint8_t)(i ? i - 1 : 0);
+        g_xgx.swap[i][1] = (uint8_t)(i ? i - 1 : 1);
+        g_xgx.swap[i][2] = (uint8_t)(i ? i - 1 : 2);
+        g_xgx.swap[i][3] = 3;
     }
     g_xgx.ntev = 1;
     g_xgx.nchans = 1;

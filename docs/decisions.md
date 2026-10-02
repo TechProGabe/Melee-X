@@ -238,6 +238,16 @@ empty or half file. `ram128` can only be on where the kernel counts more
 than 64 MB of physical pages: the menu row is locked off on a 64 MB
 console, and a hand-edited `ram128 = 1` there is ignored at boot.
 
+**TEV swap tables as dot products (after v40).** A swizzled source
+(`RRRA` and the other GXInit tables) costs one extra combiner stage that
+dots it with a unit vector into a spare register; the identity and the
+alpha broadcast stay free. A per-texture channel-shuffled copy would cost
+no stage but a texture per table, and tables are per TEV stage (the 1P
+clear screen reads one texture through three of them). Draws without a
+swizzle compile to the same combiner words as before
+(`tools/xbox/test_rc.py`). The front end's default tables were all
+identity; they are GXInit's now.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 
@@ -462,7 +472,7 @@ To sync a newer melee-pc:
   (`docs/roadmap.md`).
 - **Rendering gaps**: no indirect texturing (water and reflections), fog
   per vertex (long polygons get less fog mid-span; no range adjustment),
-  TEV swap tables only for the alpha broadcast; the texture pool and the
+  TEV swap-table permutations; the texture pool and the
   display-list vertex pool run full in long sessions (they evict and
   rebuild; an overflow texture pool takes free RAM for a scene whose
   working set outgrows it).

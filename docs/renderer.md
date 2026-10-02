@@ -403,11 +403,36 @@ unclamped arithmetic of Nintendo's THP YUV -> RGB recipe (used for
 three-stage program that does the same maths with signed registers and
 fixed constants (`RREF_FIXED`).
 
+TEV swap tables (`GXSetTevSwapModeTable`, `GXSetTevSwapMode`): a stage
+sees its texture and rasterised colour through one of four tables, TEXC as
+(src[r], src[g], src[b]) and TEXA as src[a]. A combiner input reads a
+register's rgb or its alpha broadcast, so the identity and an alpha
+broadcast (`AAAA`) cost nothing. A colour broadcast (GXInit's tables 1-3,
+`RRRA`, `GGGA`, `BBBA`, which the front end now sets up as GXInit does;
+they were all identity) or an alpha taken from r, g or b costs one combiner
+stage in front of the TEV stage: a dot product of the source with a unit
+vector (`RREF_FIXED` 4-6) into a spare register, AB for the colour view and
+CD for the alpha view (CD's blue copied to its alpha), so up to two views
+of one source per extra stage. The stage only exists for views the TEV
+stage reads, and it counts against the 8 combiner stages (a configuration
+that no longer fits is approximated, as before). Permutations (`GBRA` and
+the like) are approximated by the identity: nothing in Melee's code sets
+one. The user in the code is the 1P clear screen's sepia freeze frame
+(`lb_800122F0`: three stages read one texture through `RRRA`, `GGGA`,
+`BBBA` and sum K0 r + K1 g + K2 b, six combiner stages); HSD's TEV
+descriptors (`HSD_SetupTevStage`) can name any table from model data.
+`[NV2A] per N frames: D draws through swap tables (S combiner stages
+added)` counts them. `tools/xbox/test_rc.py` checks that configurations
+without a swizzle compile to the same combiner words as before
+(`tests/xbox/rc_ref.c` is the compiler before swap tables), that swizzled
+configurations run through a model of the combiners give what the identity
+gives on pre-swizzled inputs, and the sepia case.
+
 Current limits:
 
 - signed TEV colours (`GXSetTevColorS10` below 0) and unclamped stages
   work only in the movie recipe;
-- TEV swap tables: only the alpha broadcast (`AAAA`) is supported;
+- TEV swap tables: permutations are approximated by the identity;
 - indirect texturing is ignored (some stage effects);
 - destination alpha is missing at 720p (R5G6B5 has no alpha);
 - texture-matrix index attributes (TEXnMTXIDX) are ignored.

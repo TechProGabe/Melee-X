@@ -7,11 +7,13 @@
  * and an NV2A general combiner stage computes AB + CD with per-input
  * mappings (invert, negate, half-bias, expand) and an output shift/bias. A
  * TEV stage becomes one NV2A stage when its lerp collapses (the common
- * modulate / replace / decal configurations) and two when it does not.
+ * modulate / replace / decal configurations) and two when it does not,
+ * plus one before it when it reads a texture or colour through a swap
+ * table that broadcasts r, g or b (see "swap tables").
  *
  * Registers:
  *   R0            PREV (the final combiner reads it)
- *   R1, spare T*  REG0..REG2 once written, scratch; T* are the texture units
+ *   R1, spare T*  REG0..REG2 once written, scratch, swizzled sources; T* are the texture units
  *   (and V1)      no stage samples, and V1 while colour channel 1 is unused
  *   T0..T3        the textures of the units the stages sample
  *   V0 / V1       rasterised colour channels 0 / 1
@@ -25,6 +27,10 @@ enum { S_ZERO = 0, S_C0 = 1, S_C1 = 2, S_FOG = 3, S_V0 = 4, S_V1 = 5,
        S_T0 = 8, S_T1 = 9, S_T2 = 10, S_T3 = 11, S_R0 = 12, S_R1 = 13 };
 enum { M_UID = 0, M_UINV = 1, M_EXPN = 2, M_EXPNEG = 3, M_HBN = 4, M_HBNEG = 5, M_SID = 6, M_SNEG = 7 };
 enum { OP_NOSHIFT = 0, OP_NOSHIFT_BIAS = 1, OP_SHL1 = 2, OP_SHL1_BIAS = 3, OP_SHL2 = 4, OP_SHR1 = 6 };
+/* colour OCW: dot products into the AB/CD outputs, CD's blue also to its alpha */
+#define OCW_CD_DOT (1u << 12)
+#define OCW_AB_DOT (1u << 13)
+#define OCW_CD_BLUE_TO_ALPHA (1u << 18)
 
 typedef struct {
     uint8_t src, alpha, map;
@@ -67,12 +73,16 @@ typedef struct {
     const RcCfg* cfg;
     uint8_t pool_rgb[6], pool_a[6];
     int npool_rgb, npool_a;
+    uint8_t rsv[6];                /* held for the current TEV stage: its outputs, up to 4 prep results */
+    int nrsv;
 } Alloc;
 
 static int hw_used(const Alloc* al, int alpha, uint8_t hw) {
     int r;
     for (r = 0; r < 4; r++)
         if ((alpha ? al->a[r] : al->rgb[r]) == hw) return 1;
+    for (r = 0; r < al->nrsv; r++)
+        if (al->rsv[r] == hw) return 1;
     return 0;
 }
 
@@ -97,23 +107,89 @@ static Op reg_op(const Alloc* al, int reg, int want_alpha) {
     return o;
 }
 
-static Op ras_op(const RcStage* ts, int alpha) {
-    Op o = OP_ZERO;
-    if (ts->ras == 2) return OP_ZERO;
-    o.src = ts->ras ? S_V1 : S_V0;
-    o.alpha = (uint8_t)(alpha || ts->ras_alpha_bcast);
-    return o;
+/* ---- swap tables ----
+ * A TEV stage sees its texture and rasterised colour through a swap table:
+ * TEXC is (src[r], src[g], src[b]) and TEXA is src[a]. The combiners read
+ * a register's rgb or its alpha broadcast, so the identity and an alpha
+ * broadcast are free. A colour broadcast (GXInit's tables 1-3: RRRA, GGGA,
+ * BBBA) or an alpha taken from r, g or b costs one combiner stage before
+ * the TEV stage's own: a dot product with a unit vector (RREF_FIXED 4-6)
+ * into a spare register, AB for the rgb view and CD for the alpha view
+ * (CD's blue copied to its alpha). Other swizzles (permutations) are
+ * approximated by the identity. */
+typedef struct {
+    Op c, a;           /* the TEXC/RASC and TEXA/RASA views */
+    uint8_t src;       /* the register they come from; 0: none (no texture, ras zero) */
+    uint8_t dot_c, dot_a;   /* channel + 1 a prep stage extracts for each view; 0: none */
+    uint8_t perm;      /* the rgb view is a permutation: approximated */
+} View;
+
+typedef struct {
+    const RcStage* ts;
+    View tex, ras;
+} Ctx;
+
+static void view_init(View* v, uint8_t src, uint8_t swz, Op none) {
+    int r = swz & 3, g = swz >> 2 & 3, b = swz >> 4 & 3, a = swz >> 6 & 3;
+    memset(v, 0, sizeof *v);
+    if (!src) {
+        v->c = v->a = none;
+        return;
+    }
+    v->src = src;
+    v->c.src = v->a.src = src;
+    v->a.alpha = 1;
+    if (r == g && g == b) {
+        if (r == 3) v->c.alpha = 1;
+        else v->dot_c = (uint8_t)(r + 1);
+    } else if (r != 0 || g != 1 || b != 2) {
+        v->perm = 1;
+    }
+    if (a != 3) v->dot_a = (uint8_t)(a + 1);
 }
 
-static Op tex_op(const RcStage* ts, int alpha) {
-    Op o = OP_ZERO;
-    if (ts->unit < 0) return OP_ONE;
-    o.src = (uint8_t)(S_T0 + ts->unit);
-    o.alpha = (uint8_t)(alpha || ts->tex_alpha_bcast);
-    return o;
+/* a register free in both halves, for a prep stage's result */
+static uint8_t pick_both(const Alloc* al) {
+    int i;
+    for (i = 0; i < al->npool_rgb; i++)
+        if (!hw_used(al, 0, al->pool_rgb[i]) && !hw_used(al, 1, al->pool_rgb[i])) return al->pool_rgb[i];
+    return 0;
 }
 
-static Op color_arg(const Alloc* al, int arg, const RcStage* ts) {
+typedef struct { uint8_t src, ab_dst, cd_dst, ab_ch, cd_ch; } Prep;
+
+/* the views of v this stage reads (want_c/want_a) that need a prep stage:
+ * point them at fresh registers and describe the stage in *p */
+static int view_prep(Alloc* al, View* v, int want_c, int want_a, Prep* p, int* approx) {
+    memset(p, 0, sizeof *p);
+    if (want_c && v->perm) *approx = 1;
+    if (want_c && v->dot_c) {
+        uint8_t r = pick_both(al);
+        if (!r) *approx = 1;
+        else {
+            al->rsv[al->nrsv++] = r;
+            p->ab_dst = r;
+            p->ab_ch = (uint8_t)(v->dot_c - 1);
+            v->c.src = r;
+            v->c.alpha = 0;
+        }
+    }
+    if (want_a && v->dot_a) {
+        uint8_t r = pick_both(al);
+        if (!r) *approx = 1;
+        else {
+            al->rsv[al->nrsv++] = r;
+            p->cd_dst = r;
+            p->cd_ch = (uint8_t)(v->dot_a - 1);
+            v->a.src = r;
+            v->a.alpha = 1;
+        }
+    }
+    p->src = v->src;
+    return p->ab_dst || p->cd_dst;
+}
+
+static Op color_arg(const Alloc* al, int arg, const Ctx* x) {
     Op o = OP_ZERO;
     switch (arg) {
         case 0: return reg_op(al, 0, 0);    /* CPREV */
@@ -124,27 +200,27 @@ static Op color_arg(const Alloc* al, int arg, const RcStage* ts) {
         case 5: return reg_op(al, 2, 1);
         case 6: return reg_op(al, 3, 0);
         case 7: return reg_op(al, 3, 1);
-        case 8: return tex_op(ts, 0);       /* TEXC */
-        case 9: return tex_op(ts, 1);       /* TEXA */
-        case 10: return ras_op(ts, 0);      /* RASC */
-        case 11: return ras_op(ts, 1);      /* RASA */
+        case 8: return x->tex.c;            /* TEXC */
+        case 9: return x->tex.a;            /* TEXA */
+        case 10: return x->ras.c;           /* RASC */
+        case 11: return x->ras.a;           /* RASA */
         case 12: return OP_ONE;
         case 13: return OP_HALF;
-        case 14: o.cref = RREF(RREF_KONST_C, ts->kcsel); return o;
+        case 14: o.cref = RREF(RREF_KONST_C, x->ts->kcsel); return o;
         default: return OP_ZERO;
     }
 }
 
-static Op alpha_arg(const Alloc* al, int arg, const RcStage* ts) {
+static Op alpha_arg(const Alloc* al, int arg, const Ctx* x) {
     Op o = OP_ZERO;
     switch (arg) {
         case 0: return reg_op(al, 0, 1);
         case 1: return reg_op(al, 1, 1);
         case 2: return reg_op(al, 2, 1);
         case 3: return reg_op(al, 3, 1);
-        case 4: return tex_op(ts, 1);
-        case 5: return ras_op(ts, 1);
-        case 6: o.cref = RREF(RREF_KONST_A, ts->kasel); o.alpha = 1; return o;
+        case 4: return x->tex.a;
+        case 5: return x->ras.a;
+        case 6: o.cref = RREF(RREF_KONST_A, x->ts->kasel); o.alpha = 1; return o;
         default: return OP_ZERO;
     }
 }
@@ -361,7 +437,9 @@ void rc_compile(const RcCfg* cfg, RcProg* out) {
         const RcStage* ts = &cfg->st[s];
         Portion pc, pa;
         uint8_t cdst, adst, cscr, ascr;
-        int k, groups;
+        int k, groups, nprep = 0, want[4] = { 0, 0, 0, 0 };   /* TEXC TEXA RASC RASA read */
+        Prep prep[2];
+        Ctx x;
 
         if (ts->cop > 1 || ts->aop > 1) out->approximated = 1;   /* comparison modes */
         cdst = ts->cout == 0 ? S_R0 : al.rgb[ts->cout];
@@ -370,22 +448,54 @@ void rc_compile(const RcCfg* cfg, RcProg* out) {
         adst = ts->aout == 0 ? S_R0 : al.a[ts->aout];
         if (!adst) adst = pick_free(&al, 1, 0);
         if (!adst) { adst = S_R1; out->approximated = 1; }
+
+        x.ts = ts;
+        view_init(&x.tex, ts->unit >= 0 ? (uint8_t)(S_T0 + ts->unit) : 0, ts->tex_swz, OP_ONE);
+        view_init(&x.ras, ts->ras == 2 ? 0 : ts->ras ? S_V1 : S_V0, ts->ras_swz, OP_ZERO);
+        for (k = 0; k < 4; k++) {
+            if (ts->cin[k] >= 8 && ts->cin[k] <= 11) want[ts->cin[k] - 8] = 1;
+            if (ts->ain[k] == 4 || ts->ain[k] == 5) want[ts->ain[k] == 4 ? 1 : 3] = 1;
+        }
+        if ((want[0] && (x.tex.dot_c || x.tex.perm)) || (want[1] && x.tex.dot_a) ||
+            (want[2] && (x.ras.dot_c || x.ras.perm)) || (want[3] && x.ras.dot_a)) {
+            /* the prep registers stay clear of this stage's outputs and scratch */
+            al.nrsv = 0;
+            al.rsv[al.nrsv++] = cdst;
+            al.rsv[al.nrsv++] = adst;
+            if (view_prep(&al, &x.tex, want[0], want[1], &prep[nprep], &out->approximated)) nprep++;
+            if (view_prep(&al, &x.ras, want[2], want[3], &prep[nprep], &out->approximated)) nprep++;
+        }
         cscr = pick_free(&al, 0, cdst);
         ascr = pick_free(&al, 1, adst);
+        al.nrsv = 0;
 
         memset(&pc, 0, sizeof pc);
         memset(&pa, 0, sizeof pa);
-        emit_portion(color_arg(&al, ts->cin[0], ts), color_arg(&al, ts->cin[1], ts), color_arg(&al, ts->cin[2], ts),
-                     color_arg(&al, ts->cin[3], ts), ts->cop == 1, ts->cbias, ts->cscale, cdst, cscr, &pc,
+        emit_portion(color_arg(&al, ts->cin[0], &x), color_arg(&al, ts->cin[1], &x), color_arg(&al, ts->cin[2], &x),
+                     color_arg(&al, ts->cin[3], &x), ts->cop == 1, ts->cbias, ts->cscale, cdst, cscr, &pc,
                      &out->approximated);
-        emit_portion(alpha_arg(&al, ts->ain[0], ts), alpha_arg(&al, ts->ain[1], ts), alpha_arg(&al, ts->ain[2], ts),
-                     alpha_arg(&al, ts->ain[3], ts), ts->aop == 1, ts->abias, ts->ascale, adst, ascr, &pa,
+        emit_portion(alpha_arg(&al, ts->ain[0], &x), alpha_arg(&al, ts->ain[1], &x), alpha_arg(&al, ts->ain[2], &x),
+                     alpha_arg(&al, ts->ain[3], &x), ts->aop == 1, ts->abias, ts->ascale, adst, ascr, &pa,
                      &out->approximated);
 
         groups = pc.n > pa.n ? pc.n : pa.n;
-        if (n + groups > RC_MAX_STAGES) {
+        if (n + nprep + groups > RC_MAX_STAGES) {
             out->approximated = 1;
             break;
+        }
+        for (k = 0; k < nprep; k++) {   /* dot(src, unit vector): AB -> rgb view, CD -> alpha view */
+            const Prep* p = &prep[k];
+            Term z = { OP_ZERO, OP_ZERO }, ab = z, cd = z;
+            const Op src = { p->src, 0, M_UID, 0 }, k0 = { S_C0, 0, M_UID, 0 }, k1 = { S_C1, 0, M_UID, 0 };
+            if (p->ab_dst) { ab.a = src; ab.b = k0; out->cref[n][0] = RREF(RREF_FIXED, 4 + p->ab_ch); }
+            if (p->cd_dst) { cd.a = src; cd.b = k1; out->cref[n][2] = RREF(RREF_FIXED, 4 + p->cd_ch); }
+            out->cicw[n] = make_icw(ab, cd);
+            out->cocw[n] = (uint32_t)(p->ab_dst & 0xF) << 4 | (uint32_t)(p->cd_dst & 0xF) |
+                           (p->ab_dst ? OCW_AB_DOT : 0) | (p->cd_dst ? OCW_CD_DOT | OCW_CD_BLUE_TO_ALPHA : 0);
+            out->aicw[n] = make_icw(z, z);
+            out->aocw[n] = 0;
+            out->swizzled++;
+            n++;
         }
         for (k = 0; k < groups; k++) {
             int ci = pc.n == groups ? k : k - (groups - pc.n);
