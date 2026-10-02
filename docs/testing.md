@@ -99,7 +99,7 @@ regex matches. See the script header for the `MX_*` variables:
 
 Screenshots come out of the serial log as `[FBDUMP]` lines. Decode them
 with `tools/xbox/fbdump_to_png.py serial.log shot`. A run that should end on a screenshot needs
-`'FBDUMP\] END'` as its stop regex: `SHOT at frame` is logged before the
+`'FBDUMP\] END.?$'` as its stop regex (`.?$`: a base64 line can start with END); `SHOT at frame` is logged before the
 dump is written.
 
 If the log stops dead, heartbeat included, the guest has bugchecked. In the

@@ -78,14 +78,19 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   tail first, which is why no test build ever hung. Found with the
   first-fault pushbuffer dump on the console (v37), confirmed in xemu with
   a release build.
-- A mid-match GPU stall, twice, both on the same kind of console (128 MB,
-  480i): Classic (issue #5, v1, `LIMIT_COLOR` on a game `DRAW_ARRAYS`) and
-  a VS match on Fountain of Dreams (v2, `LIMIT_COLOR` on the `END` of an
-  EFB shadow copy, frame 9302). The GPU stops after the fault. Not seen on
-  a 64 MB console. Since v3 a 128 MB console runs in its first 64 MB unless
-  `settings.ini` says `ram128 = 1` (`xhw_mem_hold_upper`), and the first
-  fault also logs PGRAPH 0x400800-0x40080C and the last EFB copy's target.
-  If it comes back with `ram128 = 0`, those lines are the next lead.
+- A mid-match GPU stall, three times, all 480i: Classic (issue #5, v1,
+  128 MB, `LIMIT_COLOR` on a game `DRAW_ARRAYS`), a VS match on Fountain of
+  Dreams (v2, 128 MB) and the v2 burn-in on the user's 64 MB console (frame
+  72850, ~20 min), the last two `LIMIT_COLOR` on the `END` of the EFB
+  copy's quad into a swizzled 256x256 target. The GPU stops after the
+  fault, so it is not a 128 MB problem (`ram128` stays as a precaution).
+  v40's candidate fix (`renderer.md`): the window clip's maximum is
+  inclusive, so the copy's `pw << 16` let column and row 256 through, past
+  the end of the swizzled target; the copy and the Z-texture mask now clip
+  to `pw - 1`, `ph - 1` and break the vertex cache right before their
+  draws, and the game's scissor ends one pixel earlier, as GX's does. If it
+  comes back, v39+ log PGRAPH 0x400800-0x40080C and the last copy's target
+  at the first fault.
 - Fixed: Classic's team cards (Team DK/Kirby/Jigglypuff, stage 8) drew the
   right half black. Two bugs: the depth plane was never primed
   (`GXTexCoord1f32` positions dropped) and `GXSetZTexture` wasn't emulated

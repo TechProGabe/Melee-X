@@ -1853,8 +1853,9 @@ static void emit_fixed(const XgxState* st) {
     if (x1 > s_cx + s_cw) x1 = s_cx + s_cw;
     if (y1 > s_cy + s_ch) y1 = s_cy + s_ch;
     if (x1 <= x0 || y1 <= y0) { x0 = y0 = 0; x1 = y1 = 1; }
-    SETF(13, NV097_SET_WINDOW_CLIP_HORIZONTAL, (uint32_t)x0 | ((uint32_t)x1 << 16));
-    SETF(14, NV097_SET_WINDOW_CLIP_VERTICAL, (uint32_t)y0 | ((uint32_t)y1 << 16));
+    /* the hardware's max is inclusive: GX's scissor ends before x1, y1 */
+    SETF(13, NV097_SET_WINDOW_CLIP_HORIZONTAL, (uint32_t)x0 | ((uint32_t)(x1 - 1) << 16));
+    SETF(14, NV097_SET_WINDOW_CLIP_VERTICAL, (uint32_t)y0 | ((uint32_t)(y1 - 1) << 16));
     /* alpha test: the two-reference GX compare, folded to one when possible */
     {
         uint32_t c0 = st->alpha_comp0, c1 = st->alpha_comp1, op = st->alpha_op;
@@ -2560,8 +2561,10 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     put1(NV097_SET_SURFACE_COLOR_OFFSET, (uint32_t)t->mem & 0x03FFFFFF);
     put1(NV097_SET_SURFACE_CLIP_HORIZONTAL, pw << 16);
     put1(NV097_SET_SURFACE_CLIP_VERTICAL, ph << 16);
-    put1(NV097_SET_WINDOW_CLIP_HORIZONTAL, pw << 16);
-    put1(NV097_SET_WINDOW_CLIP_VERTICAL, ph << 16);
+    /* the window clip's max is inclusive (xemu adds 1 too): pw would let
+     * column pw through, past the end of a swizzled target */
+    put1(NV097_SET_WINDOW_CLIP_HORIZONTAL, (pw - 1) << 16);
+    put1(NV097_SET_WINDOW_CLIP_VERTICAL, (ph - 1) << 16);
 
     /* pixel state: write every channel, test nothing (no depth access) */
     put1(NV097_SET_DEPTH_TEST_ENABLE, 0);
@@ -2596,6 +2599,11 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     attr(VPI_COL0, -1, 0, 0, 0);
     attr(VPI_COL1, -1, 0, 0, 0);
     for (i = 0; i < 8; i++) attr(vpi_tex((int)i), i ? -1 : 12, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 2, 20);
+    /* pb_open only breaks the vertex cache at a batch's start, and this one
+     * may already be open: a stale read of these four vertices puts the quad
+     * anywhere, and a pixel outside the swizzled target faults (LIMIT_COLOR,
+     * three console stalls on this quad's END) */
+    if (XGX_VB_CACHE_BREAK) put1(NV097_BREAK_VERTEX_BUFFER_CACHE, 0);
     put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_TRIANGLE_STRIP);   /* not a quad: see gx_vtx.c out_prim */
     *P++ = 1u << 18 | NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_DRAW_ARRAYS);
     *P++ = 3u << 24;   /* 4 vertices from 0 */
@@ -2668,8 +2676,8 @@ int xgx_ztex_mask(const int32_t src[4], uint32_t z24) {
     put1(NV097_SET_LOGIC_OP_ENABLE, 0);
     put1(NV097_SET_CULL_FACE_ENABLE, 0);
     put1(NV097_SET_COLOR_MASK, NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE);
-    put1(NV097_SET_WINDOW_CLIP_HORIZONTAL, (uint32_t)s_fbw << 16);
-    put1(NV097_SET_WINDOW_CLIP_VERTICAL, (uint32_t)s_fbh << 16);
+    put1(NV097_SET_WINDOW_CLIP_HORIZONTAL, (uint32_t)(s_fbw - 1) << 16);   /* max inclusive */
+    put1(NV097_SET_WINDOW_CLIP_VERTICAL, (uint32_t)(s_fbh - 1) << 16);
     for (i = 0; i < 4; i++) put1(NV097_SET_TEXTURE_CONTROL0 + i * 64, 0);
     put1(NV097_SET_SHADER_STAGE_PROGRAM, 0);
     put1(NV097_SET_COMBINER_CONTROL, 1u | (1u << 12) | (1u << 16));
@@ -2685,6 +2693,7 @@ int xgx_ztex_mask(const int32_t src[4], uint32_t z24) {
     attr(VPI_COL0, -1, 0, 0, 0);
     attr(VPI_COL1, -1, 0, 0, 0);
     for (i = 0; i < 8; i++) attr(vpi_tex(i), i ? -1 : 12, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 2, 20);
+    if (XGX_VB_CACHE_BREAK) put1(NV097_BREAK_VERTEX_BUFFER_CACHE, 0);   /* as efb_copy_gpu */
     /* three passes over the rect. 0: depth writes on but nothing passes
      * (NEVER), which changes nothing; xemu only binds its depth buffer for
      * a draw that may write depth, and the EFB copy just before (another

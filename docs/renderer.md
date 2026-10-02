@@ -116,6 +116,14 @@ was a render pass of its own (~75 µs of emulation, ~90% of a match frame).
   quad lost its first triangle (black wedges above its diagonal, black
   flashes on the stage surfaces near fighters that multiply the maps in).
   xemu has no such cache and drew them right.
+- The window clip's maximum is inclusive (xemu adds 1 to it as well):
+  the game's scissor sends `x1 - 1`, `y1 - 1`, and the EFB copy into a
+  swizzled texture clips to `pw - 1`, `ph - 1`. With `pw` a pixel in column
+  or row `pw` lands past the swizzled target. The copy and the Z-texture
+  mask also send `BREAK_VERTEX_BUFFER_CACHE` right before their draw: the
+  batch they join may be open already, and a stale read of their four
+  vertices puts the quad anywhere. Both are the v40 candidate fix for the
+  console's `LIMIT_COLOR` stall on the copy quad's `END` (`roadmap.md`).
 - Build switches undo these v26 GPU-side changes one at a time, to bisect
   the console's GPU stalls (Pokémon Stadium, v27/v28): `-DXGX_PB_KICK=4096`,
   `-DXGX_VB_CACHE_BREAK=0`, `-DXGX_VBUF_FREE_NOW=0`. A stall report
