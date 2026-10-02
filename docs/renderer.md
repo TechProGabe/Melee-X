@@ -232,7 +232,10 @@ misses in lookups and revalidation rather than useful work. v33:
   registers it last sent (texture handle, the map's wrap, filters and LOD
   bias, the unit kind, and an epoch every texture made or freed bumps)
   skips the `s_tex` read and the register build (`emit_textures`): most
-  draws that rebuild the units rebind one map, not all of them.
+  draws that rebuild the units rebind one map, not all of them. The
+  combiner constants (`pack_const` per stage) are rebuilt only when the
+  program is sent or a TEV colour or konst colour changed
+  (`XGX_DIRTY_TEVREG`), not on every map or TEV change.
 
 `xgx.h` is compiled by both triples (game and nxdk), so its structs hold only
 32-bit scalars, floats and byte arrays: no bit-fields, no 64-bit members.

@@ -1793,7 +1793,10 @@ static uint32_t pack_const(const XgxState* st, uint16_t rgb_ref, uint16_t a_ref)
     return (uint32_t)a << 24 | (uint32_t)rgb[0] << 16 | (uint32_t)rgb[1] << 8 | rgb[2];
 }
 
-static void emit_combiners(const XgxState* st, const RcProg* rp) {
+/* consts: the TEV colour registers or konst colours changed. Otherwise, with
+ * the program already on the GPU, its constants are the ones sent with it:
+ * every change of those marks XGX_DIRTY_TEVREG, which reaches this */
+static void emit_combiners(const XgxState* st, const RcProg* rp, int consts) {
     int i;
     if (!s_rc_valid || rp != s_rc_sent || s_rc_sent_gen != s_rc_gen) {
         put1(NV097_SET_COMBINER_CONTROL, (uint32_t)rp->nstages | (1u << 12) | (1u << 16));
@@ -1811,7 +1814,9 @@ static void emit_combiners(const XgxState* st, const RcProg* rp) {
         s_rc_valid = 1;
         memset(s_rc_consts, 0xA5, sizeof s_rc_consts);
         memset(s_rc_fconsts, 0xA5, sizeof s_rc_fconsts);
+        consts = 1;
     }
+    if (!consts) return;
     for (i = 0; i < rp->nstages; i++) {
         uint32_t c0 = pack_const(st, rp->cref[i][0], rp->cref[i][1]);
         uint32_t c1 = pack_const(st, rp->cref[i][2], rp->cref[i][3]);
@@ -2753,7 +2758,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
 
     if (d & DIRTY_FIXED) emit_fixed(st);
     if (d & DIRTY_UNITS) emit_textures(st, s_d_unit_map, s_d_nunits);
-    if (d & (DIRTY_UNITS | XGX_DIRTY_TEVREG)) emit_combiners(st, s_d_rp);
+    if (d & (DIRTY_UNITS | XGX_DIRTY_TEVREG)) emit_combiners(st, s_d_rp, (d & XGX_DIRTY_TEVREG) != 0);
 
     /* The vertices are at s_draw_base (xgx_vtx_alloc or xgx_vtx_use). The
      * arrays point at the start of the ring or of the vertex pool, and the
