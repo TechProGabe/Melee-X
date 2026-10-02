@@ -40,6 +40,7 @@
 void xhw_video_fallback_480(void);
 extern unsigned int pb_DepthFmt;   /* settable: tools/xbox/patch_pbkit.py */
 void ocx_pb_retarget_back_buffer(void);   /* tools/xbox/patch_pbkit.py */
+void ocx_pb_layout(unsigned* out);        /* tools/xbox/patch_pbkit.py */
 
 /* GX values used here (dolphin headers are not on the hw include path) */
 enum { GX_CULL_NONE, GX_CULL_FRONT, GX_CULL_BACK, GX_CULL_ALL };
@@ -488,11 +489,11 @@ static void log_first_fault(void) {
              (unsigned)s_gf_first[4], (unsigned)s_gf_first[5], (unsigned)s_gf_first[6], (uint32_t)s_pb_base & 0x03FFFFFFu,
              (unsigned)s_gf_first[7], (unsigned)s_gf_first[8]);
     s_gf_first_logged = 1;
-    {   /* what the pusher had just read: 24 words before GET, 8 from it */
+    {   /* what the pusher had just read: 64 words before GET, 32 from it */
         const uint32_t* w = (const uint32_t*)(0x80000000u | (s_gf_first[5] & 0x03FFFFFCu));
         int i;
-        if (!MmIsAddressValid((PVOID)(w - 24)) || !MmIsAddressValid((PVOID)(w + 7))) return;
-        for (i = -24; i < 8; i += 8)
+        if (!MmIsAddressValid((PVOID)(w - 64)) || !MmIsAddressValid((PVOID)(w + 31))) return;
+        for (i = -64; i < 32; i += 8)
             xhw_logf("[NV2A]  first fault get%+d: %08x %08x %08x %08x %08x %08x %08x %08x", i * 4, w[i], w[i + 1],
                      w[i + 2], w[i + 3], w[i + 4], w[i + 5], w[i + 6], w[i + 7]);
     }
@@ -1114,6 +1115,13 @@ void xgx_present(int black) {
          * and nothing would say why, so they are timed and logged. */
         int guard = 4, pf = xhw_perf_enter(XHW_PERF_GPU), warned = 0;
         uint64_t t0 = 0;
+        /* pb_finished pushes the flip at pbkit's pb_Put, where the last kick
+         * ended: with this frame's tail still open (P past pb_Put, not
+         * kicked) the flip overwrote its first words, and the kick that
+         * followed sent the GPU into the middle of the tail (the v1 release
+         * hang on the intro movie, GitHub #5/#6: the frame-rate counter,
+         * on in test builds, closed it first in fps_overlay). */
+        pb_close();
         while (pb_finished()) {
             irq_recover();
             if (!t0) t0 = xhw_time_ns();
@@ -2776,6 +2784,18 @@ int xgx_init(void) {
     setup_state();
     xhw_logf("[NV2A] up: %dx%d %d-bit, %s, tex pool %u KB", s_fbw, s_fbh, s_bpp,
              vm->widescreen ? "16:9" : "4:3", s_tp.bytes / 1024);
+    {   /* physical layout: a GPU or DMA write past a buffer lands in whatever
+         * sits next to it (the 480p hang overwrote the pushbuffer) */
+        unsigned l[8];
+        const void* xfb = XVideoGetFB();
+        ocx_pb_layout(l);
+        xhw_logf("[NV2A] layout: pushbuffer %08x +%x, fb %08x %08x %08x +%x, depth %08x +%x, video fb %08x",
+                 l[0] & 0x03FFFFFFu, l[1], l[2] & 0x03FFFFFFu, l[3] & 0x03FFFFFFu, l[4] & 0x03FFFFFFu, l[5],
+                 l[6] & 0x03FFFFFFu, l[7], (unsigned)(uintptr_t)xfb & 0x03FFFFFFu);
+        xhw_logf("[NV2A] layout: vertex ring %08x +%x, tex pool %08x +%x, vertex pool %08x +%x",
+                 (unsigned)(uintptr_t)s_ring & 0x03FFFFFFu, RING_BYTES, (unsigned)(uintptr_t)s_tp.base & 0x03FFFFFFu,
+                 s_tp.bytes, (unsigned)(uintptr_t)s_vb.base & 0x03FFFFFFu, s_vb.bytes);
+    }
     xhw_mem_log("after nv2a");
     return 1;
 }

@@ -121,7 +121,7 @@ Settings are in `E:\UDATA\4d580001\settings.ini`. Melee-X writes it the first ti
 
 The layout matches where the buttons sit on a GameCube pad. Every port can be remapped in `settings.ini`.
 
-Hold **L + R + Back + Start** on any controller to quit to the dashboard.
+Hold **L + R + Back + Black** on any controller to quit to the dashboard.
 
 ## If something breaks
 

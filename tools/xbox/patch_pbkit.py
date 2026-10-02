@@ -19,6 +19,8 @@ Here:
   - the depth format can be set before pb_init (pb_DepthFmt no longer static,
     Z16 sized and scaled): 720p pairs a 16-bit colour buffer with Z16, as
     NV2x wants matching colour and depth widths (xbox/src/hw/nv2a.c);
+  - ocx_pb_layout() reports the pushbuffer, framebuffers and depth buffer
+    addresses for the layout line at boot;
   - ocx_pb_retarget_back_buffer() points rendering back at the current back
     buffer after an EFB copy drew elsewhere through another DMA object. DMA
     object 9 still describes the back buffer, so only the surface state is
@@ -114,6 +116,23 @@ void ocx_pb_retarget_back_buffer(void)
     p=pb_push2(p,NV20_TCL_PRIMITIVE_3D_VIEWPORT_HORIZ,pb_FrameBuffersWidth<<16,pb_FrameBuffersHeight<<16);
     p=pb_push1(p,NV20_TCL_PRIMITIVE_3D_BUFFER_FORMAT,pb_GPUFrameBuffersFormat|pb_FBVFlag);
     pb_end(p);
+}
+"""
+
+src += """
+
+/* Melee-X (tools/xbox/patch_pbkit.py): where pbkit's buffers are, for the
+ * [NV2A] layout line (a GPU write past a buffer lands in its neighbour). */
+void ocx_pb_layout(unsigned *out)
+{
+    out[0]=(unsigned)pb_Head;
+    out[1]=pb_Size;
+    out[2]=pb_FBAddr[0];
+    out[3]=pb_FBAddr[1];
+    out[4]=pb_FBAddr[2];
+    out[5]=pb_FBSize;
+    out[6]=pb_DSAddr;
+    out[7]=pb_DSSize;
 }
 """
 

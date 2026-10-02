@@ -229,10 +229,13 @@ Lines worth reading first:
   ARAM has been committed so far. If free RAM runs low while the game is
   still loading, that is the 64 MB budget (`docs/architecture.md`).
 - `[DVD] GALE01 rev 2, N FST entries`: the image was accepted.
+- `[NV2A] layout:` the physical addresses and sizes of the pushbuffer,
+  framebuffers, depth buffer, nxdk's video framebuffer, the vertex ring and
+  the texture and vertex pools: a write past one lands in its neighbour.
 - `[NV2A] first GPU fault: kind K ...`: the first fault the patched pbkit
   reported (1 PGRAPH: nsource, class, trapped method, data; 2 DMA pusher:
   software put, put, get), with the pusher's GET and PUT at that moment,
-  the pushbuffer's base, the frame and the draw count, then the 32
+  the pushbuffer's base, the frame and the draw count, then the 96
   pushbuffer words around that GET. Later faults are usually its
   consequences. `[NV2A] GPU stalled` dumps the words at the current GET only
   when that address is mapped.

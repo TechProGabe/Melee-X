@@ -131,8 +131,9 @@ started with `xhw_thread_start`.
   - then scaled so full tilt reaches the GameCube's raw rim (±104);
   - the game clamps to its own 80-unit circle.
 - The digital L/R click fires past `trigger_click`.
-- In-game reset: L and R pressed past 200 with BACK and START, on any port,
-  quits to the dashboard (`PADRead`).
+- In-game reset: L and R pressed past 200 with BACK and BLACK, on any
+  port, quits to the dashboard (`PADRead`). Not BACK + START: L + R + START
+  is Melee's own reset from the pause menu.
 - Rumble goes to the pad's motors, scaled by `[input] rumble`; 100 drives the
   motors at 75% (full strength was too strong on the console's controllers).
 

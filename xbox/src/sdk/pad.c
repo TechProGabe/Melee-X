@@ -78,9 +78,10 @@ u32 PADRead(PADStatus* status) {
             continue;
         }
         s->err = PAD_ERR_NONE;
-        /* in-game reset: L + R + BACK + START on any controller, the usual
-         * Xbox combo, back to the dashboard */
-        if ((p.buttons & (XHW_BTN_BACK | XHW_BTN_START)) == (XHW_BTN_BACK | XHW_BTN_START) && p.lt > 200 &&
+        /* in-game reset: L + R + BACK + BLACK on any controller, back to
+         * the dashboard (not the usual BACK + START: L + R + START is
+         * Melee's own reset from the pause menu) */
+        if ((p.buttons & (XHW_BTN_BACK | XHW_BTN_BLACK)) == (XHW_BTN_BACK | XHW_BTN_BLACK) && p.lt > 200 &&
             p.rt > 200) {
             xhw_logf("[PAD] port %d: in-game reset, back to the dashboard", i + 1);
             xhw_quit_to_dashboard();

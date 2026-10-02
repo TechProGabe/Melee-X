@@ -70,10 +70,14 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
 
 ## Known issues (after v1, GitHub #5/#6)
 
-- 480p and 720p hang on the intro movie's first frame on real consoles
-  (GPU fault, then the pusher runs off into texture memory); xemu doesn't
-  reproduce it. 480i is unaffected. dev logs the first fault with the
-  pushbuffer words around it (`docs/testing.md`) for the next console run.
+- Fixed on dev: the v1 release hung on the intro movie (GitHub #5, #6,
+  reddit), at any video mode. `xgx_present` called pbkit's `pb_finished`
+  with the frame's tail still open, so the flip overwrote unsent commands
+  and the GPU then read from the middle of a vertex-program upload. The
+  frame-rate counter (on in test builds, off in a release) closed the
+  tail first, which is why no test build ever hung. Found with the
+  first-fault pushbuffer dump on the console (v37), confirmed in xemu with
+  a release build.
 - A mid-match GPU stall at 480i on a 128 MB console (Classic, issue #5:
   `LIMIT_COLOR` on a `DRAW_ARRAYS`, then the GPU stops).
 - Classic's team cards (Team DK/Kirby/Jigglypuff, stage 8) draw the right
