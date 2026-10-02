@@ -27,7 +27,9 @@ Here:
     buffer after an EFB copy drew elsewhere through another DMA object. DMA
     object 9 still describes the back buffer, so only the surface state is
     pushed; pb_target_back_buffer() rewrites object 9 through four
-    GPU->CPU interrupts (PB_SETOUTER) every time.
+    GPU->CPU interrupts (PB_SETOUTER) every time. With
+    ocx_pb_retarget_repitch set (nv2a.c) the pitch and offsets go again
+    after the format.
 Every replacement must match exactly once, or the build fails.
 """
 import re
@@ -121,6 +123,7 @@ src += """
 
 /* Melee-X (tools/xbox/patch_pbkit.py): back to the current back buffer
  * without rewriting DMA object 9, which still points at it. */
+extern int ocx_pb_retarget_repitch;
 void ocx_pb_retarget_back_buffer(void)
 {
     uint32_t *p=pb_begin();
@@ -128,6 +131,10 @@ void ocx_pb_retarget_back_buffer(void)
     p=pb_push3(p,NV20_TCL_PRIMITIVE_3D_BUFFER_PITCH,(pb_DepthStencilPitch<<16)|(pb_FrameBuffersPitch&0xFFFF),0,0);
     p=pb_push2(p,NV20_TCL_PRIMITIVE_3D_VIEWPORT_HORIZ,pb_FrameBuffersWidth<<16,pb_FrameBuffersHeight<<16);
     p=pb_push1(p,NV20_TCL_PRIMITIVE_3D_BUFFER_FORMAT,pb_GPUFrameBuffersFormat|pb_FBVFlag);
+    /* the pitch above went in while the copy's swizzled surface was still
+     * set: send it again now the format is linear (nv2a.c, XGX_COPY_FIX) */
+    if (ocx_pb_retarget_repitch)
+        p=pb_push3(p,NV20_TCL_PRIMITIVE_3D_BUFFER_PITCH,(pb_DepthStencilPitch<<16)|(pb_FrameBuffersPitch&0xFFFF),0,0);
     pb_end(p);
 }
 """

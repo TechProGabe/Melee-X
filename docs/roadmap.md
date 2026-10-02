@@ -92,9 +92,11 @@ Fix order after RC2 (2026-10-02), details in the entries below:
    `~/xemu/tools/stadium-copy-lifetime.patch`, broke Stage Clear);
    check `scenarios/clear`, `ps2` (>40 s) and the texture pool.
 4. Peach's Castle Bullet Bill stuck + endless quake.
-5. Fire Flower flame not drawn; Adventure Corneria Arwing cutscene
+5. Particles not drawn (all of them, not only the Fire Flower's); Adventure Corneria Arwing cutscene
    silent with Falco's face frozen; trophy transition lighting.
-6. 100-Man freeze: wait for the tester's RC2 retest.
+6. 100-Man freeze: the post-copy GPU stall, fixed on dev; confirm with
+   the tester on the next RC.
+7. Classic Team Kirby card: some Kirbys corrupted (tester).
 
 - Fixed on dev: the v1 release hung on the intro movie (GitHub #5, #6,
   reddit), at any video mode. `xgx_present` called pbkit's `pb_finished`
@@ -193,11 +195,23 @@ Fix order after RC2 (2026-10-02), details in the entries below:
   is spawned in the second phase, nothing frees it and the Bill frees
   itself without it. Reproduce in xemu with Peach's Castle and Bullet
   Bills; log the phase changes, `xCA`, and the anim end check.
-- Fire Flower (console, v43, 480i, Temple): the flame stream is not drawn
-  at all while Mario holds and fires it. The flame is a particle effect
-  (`src/sysdolphin/baselib/psdisp.c` / the item's effect), so check its
-  draw path: blend/TEV mode, texture format, or a primitive type the
-  back end drops. Other particles (smoke, hits) do draw.
+- Classic team card corrupted (tester, 2026-10-02, build not stated yet;
+  Classic as Luigi, Team Kirby on Fountain of Dreams): on the card before
+  the fight some of the Kirbys drew corrupted. The card is the Z-texture
+  mask path (`xgx_ztex_mask`, then an EFB copy per fighter; earlier fixes:
+  the depth plane priming and the 720p mask in green). Reproduce with
+  `MELEE_BOOT_SCENE=classic`, `MELEE_CLASSIC_STAGE_OVERRIDE=8`,
+  `MELEE_CLASSIC_TEAM=kirby`, at 480 32-bit and 720p 16-bit; ask the
+  tester for the build, video mode and a photo.
+- Particles not drawn (console). First seen as the Fire Flower (v43,
+  480i, Temple): the flame stream is not drawn at all while Mario holds
+  and fires it. The user found later (2026-10-02, console on v45) that
+  it is not only the Fire Flower: no particle effect draws, at 480
+  (32-bit, so not the 720p/Z16 depth remap). The v43 note had smoke and
+  hit effects drawing: check whether it is a v44/v45 regression (bisect
+  the v43..v45 commits in xemu) or was always so. Particles are
+  `src/sysdolphin/baselib/psdisp.c`; check their draw path: blend/TEV
+  mode, texture format, or a primitive type the back end drops.
 - Whole-system freeze after a long uptime, twice: v39 (results screen,
   ~82 min) and v43 (Peach's Castle, 113 min: 60 on Fountain, 47 on
   Peach's). The log stops between two 5 s heartbeats with normal
@@ -210,10 +224,22 @@ Fix order after RC2 (2026-10-02), details in the entries below:
   9.7 -> 3.6 MB in 110 min; v39 stayed at 8.7 MB for 75 min). MEM1+ARAM
   barely moves (+64 KB), no overflow texture pool, no new allocation in
   the v39..v43 diff; "ARAM on disc" was 12 MB vs 9.6 MB in v39. Would run
-  out after ~3 hours. Next: log a per-subsystem memory breakdown each
+  out after ~3 hours. The v45 720p burn-in (38 min) did not leak: free
+  memory fell only while MEM1+ARAM grew (+384 KB, pages first touched),
+  then stayed flat for 16 min. Next: log a per-subsystem memory breakdown each
   minute and run 15-20 min in xemu. 192 KB is three 64 KB allocation
   granules, so look at kernel-side allocations (virtual memory, handles,
   threads, contiguous memory) as well as the game's heaps.
+- Fixed on dev (after v45): the GPU stall after an EFB copy, the
+  100-Man freeze below. The v45 720p burn-in (Fountain, 4 CPUs, items)
+  stopped at 38 min with the same `LIMIT_ZETA` on the Z/stencil clear
+  after a copy. The retarget sent the surface pitch before the format,
+  while the copy's swizzled surface was still set, and the colour pitch
+  sometimes stayed the copy's; it now sends it again after the format
+  (`renderer.md`). A stress build (`-DXGX_COPY_STRESS=20`) faulted 19 s
+  into a console match without the fix and ran 19 min clean with it. The
+  same burn-in showed no memory leak (free memory flat after 22 min) and
+  15-30 fps (median 22) at 720p.
 - 100-Man Melee (Multi-Man Melee) freezes (tester, RC1 = v42, 128 MB
   with `ram128 = 1`, 480 at 32 bits; not reproduced on the 64 MB console).
   The GPU stall family, logs in `~/xemu/hw/logs-tester-100man/`. First

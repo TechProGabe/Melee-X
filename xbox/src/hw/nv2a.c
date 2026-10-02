@@ -344,6 +344,33 @@ static uint32_t* s_pb_base;
 #ifndef XGX_OVERLAP
 #define XGX_OVERLAP 1
 #endif
+/* The GPU stall after an EFB copy (v42 tester at 480, v45 console burn-in
+ * at 720p, about 1 in 300k copies): LIMIT_ZETA on the Z/stencil clear
+ * right after the copy, then PGRAPH busy for good. The fault's register
+ * dump kept the copy's colour pitch: the retarget sends the pitch before
+ * the format, while the copy's swizzled surface is still set, and now and
+ * then that pitch doesn't take. Bits of -DXGX_COPY_FIX: 1 (default) the
+ * retarget sends the pitch again after the format (ocx_pb_retarget_repitch;
+ * console with XGX_COPY_STRESS=20: 0 faults in 19 min at 720p, against one
+ * 19 s in without it), 2 colour and depth cleared by one CLEAR_SURFACE
+ * (untried). -DXGX_COPY_STRESS=N repeats each copy that clears after itself
+ * N more times into a scratch texture, each with its clear (the rect is
+ * cleared already, so the picture doesn't change), to make such a fault
+ * frequent. Test builds (XHW_AUTOPAD) also take both from the autopad
+ * lines "env MX_COPY_FIX=n" and "env MX_COPY_STRESS=n" (copy_switches,
+ * tools/xbox/scenarios/stall). */
+#ifndef XGX_COPY_FIX
+#define XGX_COPY_FIX 1
+#endif
+#ifndef XGX_COPY_STRESS
+#define XGX_COPY_STRESS 0
+#endif
+int ocx_pb_retarget_repitch = XGX_COPY_FIX & 1;
+static int s_copy_fix = XGX_COPY_FIX, s_copy_stress = XGX_COPY_STRESS;
+/* the copy the stress repeats (xgx_clear) */
+static int32_t s_stress_src[4];
+static int s_stress_mode, s_stress_armed, s_stress_busy;
+static uint32_t s_stress_tex;
 #define PCRTC_START_REG (*(volatile uint32_t*)0xFD600800)
 
 static inline void put1(uint32_t m, uint32_t v) { P[0] = (1u << 18) | m; P[1] = v; P += 2; }
@@ -968,16 +995,22 @@ static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int d
     pb_close();
     /* A8R8G8B8: pb_fill converts to the surface's format itself (converted
      * here as well, 16-bit clears came out near black) */
-    if (color) pb_fill(x, y, w, h, argb);
+    if (color && !(depth && (s_copy_fix & 2))) pb_fill(x, y, w, h, argb);
     if (depth) {
         uint32_t* p = pb_begin();
         uint32_t zv = pb_DepthFmt != NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? z24 << 8
                       : s_zg0 > 0.0f ? (uint32_t)(z_store((float)z24 / 16777215.0f) + 0.5f)
                                      : z24 >> 8;
+        uint32_t what = NV097_CLEAR_SURFACE_Z | NV097_CLEAR_SURFACE_STENCIL;
         p = pb_push1(p, NV097_SET_CLEAR_RECT_HORIZONTAL, (uint32_t)((x + w - 1) << 16) | (uint32_t)x);
         p = pb_push1(p, NV097_SET_CLEAR_RECT_VERTICAL, (uint32_t)((y + h - 1) << 16) | (uint32_t)y);
         p = pb_push1(p, NV097_SET_ZSTENCIL_CLEAR_VALUE, zv);
-        p = pb_push1(p, NV097_CLEAR_SURFACE, NV097_CLEAR_SURFACE_Z | NV097_CLEAR_SURFACE_STENCIL);
+        if (color && (s_copy_fix & 2)) {   /* XGX_COPY_FIX 2: one clear for both, colour as pb_fill */
+            p = pb_push1(p, NV097_SET_COLOR_CLEAR_VALUE,
+                         s_bpp == 16 ? (argb >> 8 & 0xF800) | (argb >> 5 & 0x07E0) | (argb >> 3 & 0x001F) : argb);
+            what |= NV097_CLEAR_SURFACE_COLOR;
+        }
+        p = pb_push1(p, NV097_CLEAR_SURFACE, what);
         pb_end(p);
     }
     /* The next draws wait for the clear. HSD's shadow maps are drawn one
@@ -993,6 +1026,10 @@ static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int d
         pb_end(p);
     }
 }
+
+#if XGX_EFB_GPU_COPY
+static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode);
+#endif
 
 void xgx_clear(const int32_t r[4], const uint8_t rgba[4], uint32_t z24, int color, int alpha, int depth) {
     int x0, y0, x1, y1;
@@ -1016,6 +1053,21 @@ void xgx_clear(const int32_t r[4], const uint8_t rgba[4], uint32_t z24, int colo
     }
     frame_open();
     clear_fb(x0, y0, x1 - x0, y1 - y0, argb, color, depth, z24);
+#if XGX_EFB_GPU_COPY
+    /* XGX_COPY_STRESS: the copy's clear-after-copy, again and again */
+    if (s_copy_stress && s_stress_armed && color && depth && !memcmp(r, s_stress_src, sizeof s_stress_src)) {
+        int i;
+        if (!s_stress_tex)
+            s_stress_tex = xgx_tex_create(256, 256, 1, s_bpp == 32 ? XGX_TEX_ARGB8 : XGX_TEX_RGB565, NULL);
+        s_stress_busy = 1;
+        for (i = 0; s_stress_tex && i < s_copy_stress; i++) {
+            efb_copy_gpu(s_stress_src, &s_tex[s_stress_tex], s_stress_mode);
+            clear_fb(x0, y0, x1 - x0, y1 - y0, argb, color, depth, z24);
+        }
+        s_stress_busy = 0;
+    }
+#endif
+    s_stress_armed = 0;
 }
 
 static void state_reset_shadows(void);
@@ -2949,6 +3001,24 @@ static void copy_combiners(int mode) {
     put1(NV097_SET_COMBINER_SPECULAR_FOG_CW1, (uint32_t)(CR_R0 | 1 << 4) << 8 | 0x80);
 }
 
+/* XGX_COPY_FIX / XGX_COPY_STRESS, once, from the autopad script in test
+ * builds */
+static void copy_switches(void) {
+    static int done;
+    if (done) return;
+    done = 1;
+#if defined(XHW_AUTOPAD) && XHW_AUTOPAD
+    {
+        const char* e = getenv("MX_COPY_FIX");
+        if (e) s_copy_fix = atoi(e);
+        e = getenv("MX_COPY_STRESS");
+        if (e) s_copy_stress = atoi(e);
+    }
+#endif
+    ocx_pb_retarget_repitch = s_copy_fix & 1;
+    if (s_copy_fix != 1 || s_copy_stress) xhw_logf("[NV2A] copy clear fix %d, stress %d", s_copy_fix, s_copy_stress);
+}
+
 static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     static const VpKey k_copy = { .copy = 1 };
     uint32_t pw = t->w, ph = t->h, fb = (uint32_t)pb_back_buffer() & 0x03FFFFFF, i, bytes = (uint32_t)s_bpp / 8;
@@ -2958,6 +3028,12 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     uint32_t filt = (float)pw < u1 - u0 - 0.5f || (float)ph < v1 - v0 - 0.5f ? 2 : 1;
     float* v;
     int pf = xhw_perf_enter(XHW_PERF_EFB);
+    copy_switches();
+    if (!s_stress_busy) {
+        memcpy(s_stress_src, src, sizeof s_stress_src);
+        s_stress_mode = mode;
+        s_stress_armed = 1;
+    }
     s_st_efb++;
     frame_open();
     pb_budget();

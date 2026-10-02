@@ -132,6 +132,17 @@ was a render pass of its own (~75 µs of emulation, ~90% of a match frame).
   `LIMIT_ZETA` as well as `LIMIT_COLOR`: v43's attempt. The first fault now
   also logs PGRAPH 0x400700-0x4008FC and the last eight copies with where
   each one's `END` sits in the pushbuffer.
+- After an EFB copy the retarget to the back buffer sends the surface
+  pitch a second time, after the format (`XGX_COPY_FIX` bit 1, default;
+  `ocx_pb_retarget_repitch` in `patch_pbkit.py`). It sent the pitch before
+  the format, while the copy's swizzled surface was still set, and now and
+  then the colour pitch stayed the copy's: the Z/stencil clear after the
+  copy then faulted with `LIMIT_ZETA` and PGRAPH stayed busy (tester's
+  100-Man freeze on v42, the v45 burn-in at 38 min; about 1 in 300k
+  copies). `-DXGX_COPY_STRESS=N` repeats each clearing copy N more times
+  into a scratch texture to make such a fault frequent: without the fix
+  the console faulted 19 s into a match at N = 20, with it ran 19 min
+  clean. Bit 2 (one `CLEAR_SURFACE` for colour and depth) is untried.
 - An EFB copy reads exactly its source rect: a target pixel's centre
   samples the source pixel under it (`efb_copy_gpu`'s corners, `pix_x`/
   `pix_y` in `read_rect_cpu`). Until v40 both paths sampled one pixel right

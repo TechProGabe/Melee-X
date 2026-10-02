@@ -150,6 +150,16 @@ console's address in `MX_FTP_HOST`):
 Rendering that differs between xemu and the console has come from state
 xemu doesn't model (the w-buffer bit, PFIFO timing): trust the screenshot.
 
+Console-only faults (xemu doesn't raise NV2A limit faults) are hunted with
+an autopad test build (`-DXHW_AUTOPAD=1`) and a script uploaded over FTP
+as `/F/Applications/Melee-X/autopad.txt` (the game's `D:\autopad.txt`):
+it boots straight into the scripted match, and its `env` lines pick the
+candidate fix and a stress factor (`MX_COPY_FIX`, `MX_COPY_STRESS`,
+`scenarios/stall`), so one deploy covers an A/B and only the script is
+swapped between runs. A run without the fix has to fail reliably before
+a fixed run counts. Delete `autopad.txt` from the console afterwards (a
+release build ignores it).
+
 ## Measuring on the console
 
 Every build logs a `[PERF]` line every 5 s (`xhw_perf.c`): fps and the
@@ -368,6 +378,8 @@ report.
 | `-DXGX_PB_KICK=<words>` | pushbuffer words per kick (default 8192; v25 and before 4096) |
 | `-DXGX_VB_CACHE_BREAK=0` | no `BREAK_VERTEX_BUFFER_CACHE` at each batch start (v26 added it) |
 | `-DXGX_VBUF_FREE_NOW=0` | evicted display-list vertex buffers go through the deferred free like the rest (v26 freed them at once) |
+| `-DXGX_COPY_FIX=<bits>` | the EFB copy's retarget: 1 (default) sends the surface pitch again after the format (the post-copy `LIMIT_ZETA` stall), 2 clears colour and depth with one `CLEAR_SURFACE`; 0 is v45's. Test builds also read `env MX_COPY_FIX=` from the autopad script |
+| `-DXGX_COPY_STRESS=<n>` | repeat each EFB copy that clears after itself n more times into a scratch texture, with its clear (picture unchanged): makes copy-related GPU faults frequent on the console. Test builds also read `env MX_COPY_STRESS=`; `scenarios/stall` |
 | `-DXGX_OVERLAP=0` | `xgx_present` waits for the GPU before the flip, as up to v32, instead of the next frame's first GPU use (v33) |
 | `-DXGX_DEBUG_VPTRACE[=<n>]` | log the vertex-program selects of two consecutive frames every n (default 600) as `[VPT]` lines: each program (key hash, instructions, key bytes), then the selects in order with `L` where one was loaded; replay with `tools/xbox/vp_policy.py boot.log` |
 | `-DXGX_DEBUG_NOMIP` | bind only the base level of every texture |
