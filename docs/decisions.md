@@ -9,6 +9,7 @@ changing one, update this file.
 |---|---|
 | Game data | Read the user's own `GALE01` (NTSC-U 1.02, revision 2) disc image at runtime, from `.iso`, `.gcm` or `.ciso` next to `default.xbe`. Nothing from the disc is converted ahead of time or committed. |
 | 720p aspect | 16:9 widescreen (hor+) at 720p, using melee-pc's widescreen code. 480 follows the dashboard's 4:3 / 16:9 setting. |
+| Video defaults | 480i/480p from the dashboard; 720p experimental and opt-in (`720p = 1`). v1 used 720p whenever the dashboard allowed it, and 720p and 480p 16:9 consoles hung on the intro movie's first frame (GitHub issues #5, #6); only 480i 4:3 had been tested on hardware. `progressive = 0` forces 480i. |
 | OpenCrossing-Xbox | Reuse its port layer where it applies: the audio drivers, the crash reporter, the TEV -> register combiner compiler, pbkit patches, video mode rules and hardware notes. |
 | Controller layout | GameCube-like by position: A=A, X=B, B=X, Y=Y, White/Black=Z, triggers=analog L/R, right stick=C-stick. It can be remapped per port. |
 | Players | 4, one per physical controller port. |
@@ -215,6 +216,10 @@ marked `PORT:`:
 - `src/pc/libm/pc_libm.h`, `pc_rem_pio2f.c`: accept `FLT_EVAL_METHOD == -1`
   under `TARGET_XBOX`. clang reports -1 for SSE float with x87 double, and
   melee-pc's libm is still exact there.
+- `src/melee/gm/gmclassic.c`: melee-pc's `MELEE_CLASSIC_STAGE_OVERRIDE` /
+  `MELEE_CLASSIC_TEAM` test hooks moved into `pc_classic_stage_override`,
+  which the `MELEE_BOOT_SCENE=classic` shortcut now calls too (it skips the
+  character select, where the hook was the only call). Test harness only.
 - `src/pc/discfont.c`: the Xbox reads the DOL through its DVD layer
   (`DVDGetDOLLocation`), as the emscripten build does, not through `nod`.
 - `src/melee/lb/lbfile.c`, `ft/ftdata.c` (two places), `gr/grdisplay.c`:

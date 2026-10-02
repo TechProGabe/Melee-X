@@ -1,11 +1,12 @@
 /* xhw_video.c - picks the output mode once, before pbkit starts.
  *
- * 720p is used whenever the dashboard allows it on this AV pack (and the
- * user hasn't turned it off in settings.ini): 1280x720, always 16:9. It runs
- * at 16-bit colour with a Z16 depth buffer: three 1280x720x32 framebuffers
- * plus depth don't fit next to the game in 64 MB (OpenCrossing-Xbox's
- * measurement). Otherwise 640x480 at 32 bits, progressive when allowed, 16:9
- * when the dashboard is set to widescreen. */
+ * 640x480 at 32 bits by default: progressive when the dashboard allows 480p
+ * (settings.ini can force 480i), 16:9 when the dashboard is set to
+ * widescreen. 720p is experimental and opt-in (settings.ini `720p = 1`, and
+ * the dashboard must allow it on this AV pack): 1280x720, always 16:9, at
+ * 16-bit colour with a Z16 depth buffer, since three 1280x720x32
+ * framebuffers plus depth don't fit next to the game in 64 MB
+ * (OpenCrossing-Xbox's measurement). */
 #include <hal/video.h>
 #include <windows.h>
 #include <xboxkrnl/xboxkrnl.h>
@@ -13,8 +14,15 @@
 #include "xhw.h"
 #include "xhw_internal.h"
 
+/* nxdk's video.c: the region in the encoder settings, and its 640x480i
+ * mode for the HDTV pack (NTSC-M and NTSC-J use the same one) */
+#define XHW_VIDEO_REGION_PAL 0x00000300
+#define XHW_MODE_640x480I_HDTV 0x0801010du
+void XVideoInit(DWORD dwMode, int width, int height, int bpp);
+
 static xhw_video_mode s_mode = { 640, 480, 32, 0, 0 };
-static int s_pref_720p = 1;   /* xsdk settings may clear it before boot */
+static int s_pref_720p = 0;   /* settings.ini, before boot */
+static int s_pref_480p = 1;
 
 const xhw_video_mode* xhw_video(void) { return &s_mode; }
 
@@ -27,12 +35,30 @@ int xhw_video_720p_allowed(void) {
 int xhw_video_480p_allowed(void) {
     DWORD enc = XVideoGetEncoderSettings();
     DWORD pack = enc & VIDEO_ADAPTER_MASK;
-    return (enc & VIDEO_MODE_480P) && (pack == AV_PACK_HDTV || pack == AV_PACK_VGA);
+    /* nxdk has no PAL progressive modes */
+    return (enc & VIDEO_MODE_480P) && (pack == AV_PACK_HDTV || pack == AV_PACK_VGA) &&
+           (enc & VIDEO_STANDARD_MASK) != XHW_VIDEO_REGION_PAL;
 }
 
 int xhw_video_widescreen_set(void) { return (XVideoGetEncoderSettings() & VIDEO_WIDESCREEN) != 0; }
 
 void xhw_video_set_pref_720p(int on) { s_pref_720p = on; }
+void xhw_video_set_pref_480p(int on) { s_pref_480p = on; }
+
+/* 640x480x32: 480p when the dashboard allows it and settings.ini doesn't
+ * say otherwise. XVideoSetMode always picks 480p on an HDTV pack set to
+ * 480p, so 480i there is set with nxdk's own XVideoInit, after
+ * XVideoSetMode has recorded the size for pbkit (XVideoGetMode). */
+static void set_mode_480(void) {
+    int p480 = xhw_video_480p_allowed();
+    XVideoSetMode(640, 480, 32, REFRESH_DEFAULT);
+    if (p480 && !s_pref_480p && (XVideoGetEncoderSettings() & VIDEO_ADAPTER_MASK) == AV_PACK_HDTV)
+        XVideoInit(XHW_MODE_640x480I_HDTV, 640, 480, 32);
+    s_mode.width = 640;
+    s_mode.height = 480;
+    s_mode.bpp = 32;
+    s_mode.progressive = p480 && (s_pref_480p || (XVideoGetEncoderSettings() & VIDEO_ADAPTER_MASK) != AV_PACK_HDTV);
+}
 
 void xhw_video_boot(void) {
     xhw_splash_release();   /* XVideoSetMode frees the splash's framebuffer */
@@ -45,8 +71,7 @@ void xhw_video_boot(void) {
         s_mode.widescreen = 1;
         s_mode.progressive = 1;
     } else {
-        XVideoSetMode(640, 480, 32, REFRESH_DEFAULT);
-        s_mode.progressive = xhw_video_480p_allowed();
+        set_mode_480();
     }
     xhw_logf("[VIDEO] %dx%d %d-bit%s%s", s_mode.width, s_mode.height, s_mode.bpp,
              s_mode.progressive ? " progressive" : " interlaced", s_mode.widescreen ? " 16:9" : " 4:3");
@@ -55,12 +80,8 @@ void xhw_video_boot(void) {
 /* The renderer calls this when 720p can't start (pb_init or its contiguous
  * allocations fail): a saved setting must never leave a black screen. */
 void xhw_video_fallback_480(void) {
-    XVideoSetMode(640, 480, 32, REFRESH_DEFAULT);
-    s_mode.width = 640;
-    s_mode.height = 480;
-    s_mode.bpp = 32;
+    set_mode_480();
     s_mode.widescreen = xhw_video_widescreen_set();
-    s_mode.progressive = xhw_video_480p_allowed();
     xhw_logf("[VIDEO] fell back to 640x480");
 }
 

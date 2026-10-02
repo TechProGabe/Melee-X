@@ -380,6 +380,10 @@ static int only_hot_left(void) {
     return 1;
 }
 
+/* The frame's working set doesn't fit: open the overflow pool
+ * (xgx_tex_pool_grow). For EFB copies (gx_copy.c), as uploads do below. */
+int gx_tex_grow_for_frame(void) { return only_hot_left() && xgx_tex_pool_grow(); }
+
 /* Scene change: textures in the overflow pool go, then the pool itself
  * (xgx_tex_pool_grow). The next scene uploads what it draws. */
 void gx_tex_scene_leave(void) {

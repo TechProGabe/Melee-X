@@ -674,6 +674,32 @@ static gm_803DDEC8Struct* gmClassic_801B2D54(gm_803DDEC8Struct* arg0)
     }
     return ptr;
 }
+#ifdef TARGET_PC
+/* MELEE_CLASSIC_STAGE_OVERRIDE=<1..11> (MELEE_CLASSIC_TEAM=dk|kirby|jiggly
+ * for stage 8): start Classic at that stage. PORT: shared by the character
+ * select's exit and the MELEE_BOOT_SCENE=classic shortcut, which skips it. */
+static void pc_classic_stage_override(struct gmm_x0_528_t* pick, gm_803DDEC8Struct* r4)
+{
+    const char* stage_ovr = getenv("MELEE_CLASSIC_STAGE_OVERRIDE");
+    if (stage_ovr != NULL && *stage_ovr != '\0') {
+        int stg = atoi(stage_ovr);
+        if (stg >= 1 && stg <= 11) {
+            int idx = stg - 1;
+            pick->x5 = idx;
+            int team_idx = 7; /* Stage 8 is index 7 */
+            const char* team_ovr = getenv("MELEE_CLASSIC_TEAM");
+            if (team_ovr != NULL && (strstr(team_ovr, "jiggly") != NULL || strstr(team_ovr, "purin") != NULL)) {
+                r4[team_idx].xC = &gmClassic_803DDEC8.x2B0[5]; /* Team Jigglypuff */
+            } else if (team_ovr != NULL && strstr(team_ovr, "kirby") != NULL) {
+                r4[team_idx].xC = &gmClassic_803DDEC8.x2B0[2]; /* Team Kirby */
+            } else if (team_ovr != NULL) {
+                r4[team_idx].xC = &gmClassic_803DDEC8.x2B0[1]; /* Team DK */
+            }
+        }
+    }
+}
+#endif
+
 
 void gm_Mode_Classic_OnLoad(void)
 {
@@ -734,7 +760,8 @@ void gm_Mode_Classic_OnLoad(void)
         data->x0.x0.stocks = pick->stocks;
         data->x0.x0.nametag = pick->nametag;
         gmClassic_801B2D54(gmClassic_803DDEC8.x00);
-        gm_SetGameModeStateId(0);
+        pc_classic_stage_override(pick, gmClassic_803DDEC8.x00);
+        gm_SetGameModeStateId(pick->x5 << 3);
     }
 #endif
     gm_80172174();
@@ -1085,25 +1112,7 @@ void gmClassic_801B3E44(GameModeState* scene)
     temp_r31->x0.x0.nametag = temp_r29->nametag;
     gmClassic_801B2D54(r4);
 #ifdef TARGET_PC
-    {
-        const char* stage_ovr = getenv("MELEE_CLASSIC_STAGE_OVERRIDE");
-        if (stage_ovr != NULL && *stage_ovr != '\0') {
-            int stg = atoi(stage_ovr);
-            if (stg >= 1 && stg <= 11) {
-                int idx = stg - 1;
-                temp_r29->x5 = idx;
-                int team_idx = 7; /* Stage 8 is index 7 */
-                const char* team_ovr = getenv("MELEE_CLASSIC_TEAM");
-                if (team_ovr != NULL && (strstr(team_ovr, "jiggly") != NULL || strstr(team_ovr, "purin") != NULL)) {
-                    r4[team_idx].xC = &gmClassic_803DDEC8.x2B0[5]; /* Team Jigglypuff */
-                } else if (team_ovr != NULL && strstr(team_ovr, "kirby") != NULL) {
-                    r4[team_idx].xC = &gmClassic_803DDEC8.x2B0[2]; /* Team Kirby */
-                } else if (team_ovr != NULL) {
-                    r4[team_idx].xC = &gmClassic_803DDEC8.x2B0[1]; /* Team DK */
-                }
-            }
-        }
-    }
+    pc_classic_stage_override(temp_r29, r4);
 #endif
     gm_SetNextGameModeStateId(temp_r29->x5 << 3);
     gm_80168F88();

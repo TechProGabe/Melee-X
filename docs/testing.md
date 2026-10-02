@@ -229,6 +229,13 @@ Lines worth reading first:
   ARAM has been committed so far. If free RAM runs low while the game is
   still loading, that is the 64 MB budget (`docs/architecture.md`).
 - `[DVD] GALE01 rev 2, N FST entries`: the image was accepted.
+- `[NV2A] first GPU fault: kind K ...`: the first fault the patched pbkit
+  reported (1 PGRAPH: nsource, class, trapped method, data; 2 DMA pusher:
+  software put, put, get), with the pusher's GET and PUT at that moment,
+  the pushbuffer's base, the frame and the draw count, then the 32
+  pushbuffer words around that GET. Later faults are usually its
+  consequences. `[NV2A] GPU stalled` dumps the words at the current GET only
+  when that address is mapped.
 - `[PERF]`: see "Measuring on the console". `ticks per render` near 5 means
   the game can't keep up and is slowing down (5 is the cap).
 - `[NV2A] per N draws: ...`: what changed before each draw (nothing, only a
@@ -335,6 +342,8 @@ report.
 | `-DXGX_TEX_POOL_KB=<n>` | texture pool size (default 8192 at 480, 6144 at 720p) |
 | `-DXGX_DEBUG_MAGENTA` | textures the pool could not take draw magenta instead of untextured |
 | `-DXHW_NO_SPLASH`, `-DXHW_SPLASH_MS=<n>` | boot title card off; its hold time |
+| `-DXGX_DEBUG_PBCHECK` | parse every pushbuffer segment before its kick and log malformed headers as `[PBCHECK]` (first 16): tells a bad command stream from a GPU fault on a good one in xemu, which forgives both |
+| `-DXSDK_SETTINGS_RESET` | test builds: delete `settings.ini` at boot (a first boot), then copy `D:\settings.ini` over it if the disc has one (stage it with `MX_STAGE_EXTRA`) |
 | `XBOX_FORCE=1 tools/xbox/compile_game.py` | rebuild every game unit |
 | `XBOX_KEEP_TEMPS=1` | keep the `.i` / `.lowered.c` intermediates |
 | `XBOX_CFLAGS`, `XBOX_CMAKE_ARGS`, `XBOX_NINJA_ARGS` | passed through by `xbox/build.sh`; `XBOX_CFLAGS` sets the platform's C flags |

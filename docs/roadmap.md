@@ -68,6 +68,21 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
 - `[WARN] hit` lines: the knockback diagnostic from the Corneria bug still
   logs its first 32 hits a boot (`docs/decisions.md`); harmless.
 
+## Known issues (after v1, GitHub #5/#6)
+
+- 480p and 720p hang on the intro movie's first frame on real consoles
+  (GPU fault, then the pusher runs off into texture memory); xemu doesn't
+  reproduce it. 480i is unaffected. dev logs the first fault with the
+  pushbuffer words around it (`docs/testing.md`) for the next console run.
+- A mid-match GPU stall at 480i on a 128 MB console (Classic, issue #5:
+  `LIMIT_COLOR` on a `DRAW_ARRAYS`, then the GPU stops).
+- Classic's team cards (Team DK/Kirby/Jigglypuff, stage 8) draw the right
+  half black around the team: the fighters are drawn as tiles masked by a
+  depth copy (`GXSetZTexture`), which isn't emulated. Visual only. Reproduce
+  with `MELEE_BOOT_SCENE=classic`, `MELEE_CLASSIC_STAGE_OVERRIDE=8`,
+  `MELEE_CLASSIC_TEAM=dk`.
+- Credits: the screen goes black now and then (issue #5, not reproduced yet).
+
 ## Next
 
 1. Release: a plain build of the current `main`, `package_release.py`, a

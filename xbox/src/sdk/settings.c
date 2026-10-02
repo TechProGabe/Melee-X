@@ -71,7 +71,8 @@ static const char* gc_name(uint16_t bits) {
 static void defaults(void) {
     int p, i;
     memset(&g_xsdk_settings, 0, sizeof g_xsdk_settings);
-    g_xsdk_settings.video_720p = 1;
+    g_xsdk_settings.video_720p = 0;   /* experimental: GitHub issue #6 */
+    g_xsdk_settings.progressive = 1;
     g_xsdk_settings.widescreen = 1;
     g_xsdk_settings.fps = XSDK_FPS_DEFAULT;
     g_xsdk_settings.rumble = 1.0f;
@@ -102,9 +103,16 @@ static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v;
 void xsdk_settings_load(void) {
     char p[260], line[256], section[32] = "";
     FILE* f;
-    int saw_fps = 0;
+    int saw_fps = 0, saw_progressive = 0;
     defaults();
     path(p, sizeof p);
+#ifdef XSDK_SETTINGS_RESET
+    /* test builds: start from the settings.ini staged next to default.xbe
+     * (MX_STAGE_EXTRA), or from none, as on a first boot */
+    remove(p);
+    if (xhw_copy_file("D:\\settings.ini", p)) xhw_logf("[SETTINGS] %s from D:\\settings.ini (XSDK_SETTINGS_RESET)", p);
+    else xhw_logf("[SETTINGS] removed %s (XSDK_SETTINGS_RESET)", p);
+#endif
     f = fopen(p, "r");
     if (!f) {
         xsdk_settings_save();
@@ -129,6 +137,7 @@ void xsdk_settings_load(void) {
         val = trim(eq + 1);
         if (_stricmp(section, "video") == 0) {
             if (_stricmp(key, "720p") == 0) g_xsdk_settings.video_720p = atoi(val) != 0;
+            else if (_stricmp(key, "progressive") == 0) g_xsdk_settings.progressive = atoi(val) != 0, saw_progressive = 1;
             else if (_stricmp(key, "widescreen") == 0) g_xsdk_settings.widescreen = atoi(val) != 0;
             else if (_stricmp(key, "fps") == 0) g_xsdk_settings.fps = atoi(val) != 0, saw_fps = 1;
         } else if (_stricmp(section, "input") == 0) {
@@ -146,7 +155,12 @@ void xsdk_settings_load(void) {
     }
     fclose(f);
     xhw_logf("[SETTINGS] loaded %s", p);
-    if (!saw_fps) xsdk_settings_save();   /* a file from before the fps line: add it */
+    /* v1 wrote 720p = 1 and had no progressive line: 720p is opt-in now */
+    if (!saw_progressive) {
+        g_xsdk_settings.video_720p = 0;
+        xhw_logf("[SETTINGS] file from v1: 720p turned off (experimental now)");
+    }
+    if (!saw_fps || !saw_progressive) xsdk_settings_save();   /* add the missing lines */
     xgx_set_fps_overlay(g_xsdk_settings.fps);
 }
 
@@ -158,8 +172,9 @@ void xsdk_settings_save(void) {
     f = fopen(p, "w");
     if (!f) return;
     fprintf(f, "; Melee-X settings. Buttons: Xbox = GameCube (A B X Y Z L R START UP DOWN LEFT RIGHT NONE)\n");
-    fprintf(f, "[video]\n720p = %d\nwidescreen = %d\nfps = %d\n\n", g_xsdk_settings.video_720p,
-            g_xsdk_settings.widescreen, g_xsdk_settings.fps);
+    fprintf(f, "; Video: 720p = 1 is experimental (needs 720p on in the dashboard). progressive = 0 forces 480i.\n");
+    fprintf(f, "[video]\n720p = %d\nprogressive = %d\nwidescreen = %d\nfps = %d\n\n", g_xsdk_settings.video_720p,
+            g_xsdk_settings.progressive, g_xsdk_settings.widescreen, g_xsdk_settings.fps);
     fprintf(f, "[input]\nrumble = %d\n\n", (int)(g_xsdk_settings.rumble * 100.0f + 0.5f));
     for (port = 0; port < 4; port++) {
         const xsdk_port_settings* ps = &g_xsdk_settings.port[port];

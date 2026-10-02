@@ -18,7 +18,8 @@ typedef struct {
 } xsdk_port_settings;
 
 typedef struct {
-    int video_720p;          /* 1: use 720p when the dashboard allows it */
+    int video_720p;          /* 1: use 720p when the dashboard allows it (experimental) */
+    int progressive;         /* 1: 480p when the dashboard allows it; 0: 480i */
     int widescreen;          /* 1: 16:9 at 480 when the dashboard says widescreen */
     int fps;                 /* 1: frame-rate counter on screen */
     float rumble;            /* 0..1 */

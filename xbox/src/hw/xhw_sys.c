@@ -505,6 +505,15 @@ void xhw_mem_log(const char* where) {
 const char* xhw_game_dir(void) { return "D:\\"; }
 const char* xhw_save_dir(void) { return XHW_UDATA_DIR; }
 
+/* A copy from the disc keeps its read-only attribute, and the file could
+ * then be neither replaced nor rewritten: writable both before and after. */
+int xhw_copy_file(const char* from, const char* to) {
+    SetFileAttributesA(to, FILE_ATTRIBUTE_NORMAL);
+    if (!CopyFileA(from, to, FALSE)) return 0;
+    SetFileAttributesA(to, FILE_ATTRIBUTE_NORMAL);
+    return 1;
+}
+
 int xhw_mkdir(const char* path) { return CreateDirectoryA(path, NULL) || GetLastError() == ERROR_ALREADY_EXISTS; }
 
 static void fill_entry(const WIN32_FIND_DATAA* fd, xhw_dir_entry* out) {

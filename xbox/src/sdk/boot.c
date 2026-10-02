@@ -17,6 +17,7 @@ int melee_main(void);
 void xsdk_early(void) {
     xsdk_settings_load();
     xhw_video_set_pref_720p(g_xsdk_settings.video_720p);
+    xhw_video_set_pref_480p(g_xsdk_settings.progressive);
 }
 
 void xsdk_boot(const char* disc) {

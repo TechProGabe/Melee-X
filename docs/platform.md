@@ -131,6 +131,8 @@ started with `xhw_thread_start`.
   - then scaled so full tilt reaches the GameCube's raw rim (±104);
   - the game clamps to its own 80-unit circle.
 - The digital L/R click fires past `trigger_click`.
+- In-game reset: L and R pressed past 200 with BACK and START, on any port,
+  quits to the dashboard (`PADRead`).
 - Rumble goes to the pad's motors, scaled by `[input] rumble`; 100 drives the
   motors at 75% (full strength was too strong on the console's controllers).
 
@@ -140,7 +142,8 @@ started with `xhw_thread_start`.
 
 ```ini
 [video]
-720p = 1            ; use 720p (16:9) when the dashboard allows it
+720p = 0            ; 1: use 720p (16:9) when the dashboard allows it (experimental)
+progressive = 1     ; 0: 480i even where the dashboard allows 480p
 widescreen = 1      ; 16:9 at 480 when the dashboard is set to widescreen
 fps = 0             ; frame-rate counter in the top-left corner (default: 1 in test builds, 0 in a release)
 [input]
@@ -167,10 +170,17 @@ right = RIGHT
 
 ## VI (`vi.c`, `xhw_video.c`)
 
-- 720p is used when the dashboard allows it, `720p = 1`, and at least 32 MB
-  is free at boot. Otherwise the mode is 480p/480i at 32 bits, 16:9 if the
-  dashboard is set to widescreen.
+- 720p is experimental and opt-in: it is used when `720p = 1`, the
+  dashboard allows it and at least 32 MB is free at boot. Otherwise the
+  mode is 640x480 at 32 bits: 480p when the dashboard allows it and
+  `progressive = 1`, else 480i; 16:9 if the dashboard is set to widescreen.
+  The game sees progressive through `VIGetDTVStatus`.
+- 480i on an HDTV pack set to 480p: `XVideoSetMode` always picks 480p there,
+  so `set_mode_480` calls nxdk's `XVideoInit` with the 640x480i HDTV mode
+  after it. PAL has no progressive modes in nxdk.
 - If 720p can't be set up, `xhw_video_fallback_480` drops to 480.
+- A `settings.ini` without a `progressive` line was written by v1, which
+  defaulted to `720p = 1`: 720p is turned off and the file rewritten.
 - `VIWaitForRetrace` is the frame boundary. It paces to 60.000 Hz, runs due
   alarms (the pad-poll alarm reads the controllers there), then the retrace
   callbacks. `VISetBlack` is honoured at the flip.

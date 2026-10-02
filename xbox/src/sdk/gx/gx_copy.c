@@ -110,9 +110,21 @@ void GXCopyTex(void* dest, GXBool clear) {
     }
 #endif
     tex = xgx_tex_from_efb(g_gx.tex_copy_src, w, h, mode, gx_tex_efb_texture(dest));
-    /* pool full: evict and copy again (eviction may have taken the old copy) */
+    /* pool full: the overflow pool when only this frame's textures are left
+     * (as uploads do), else evict and copy again (eviction may have taken
+     * the old copy) */
+    if (!tex && w && h && w <= 1024 && h <= 1024 && gx_tex_grow_for_frame())
+        tex = xgx_tex_from_efb(g_gx.tex_copy_src, w, h, mode, gx_tex_efb_texture(dest));
     for (room = w * h * 4; !tex && w && h && w <= 1024 && h <= 1024 && gx_tex_make_room(room); room *= 2)
         tex = xgx_tex_from_efb(g_gx.tex_copy_src, w, h, mode, gx_tex_efb_texture(dest));
+    if (!tex && w && h) {
+        static int s_logged;
+        if (!s_logged) {
+            s_logged = 1;
+            xhw_logf("[TEX] copy dropped: %ux%u to %p; pool %u of %u KB free, largest block %u KB", w, h, dest,
+                     xgx_tex_pool_free_kb(), xgx_tex_pool_kb(), xgx_tex_pool_largest_kb());
+        }
+    }
     gx_tex_note_efb_copy(dest, tex, g_gx.tex_copy_w, g_gx.tex_copy_h, g_gx.tex_copy_fmt);
     if (clear) clear_rect(g_gx.tex_copy_src, 1, 1);
 }

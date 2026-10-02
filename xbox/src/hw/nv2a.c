@@ -350,8 +350,33 @@ static void pb_open(void) {
     if (XGX_VB_CACHE_BREAK) put1(NV097_BREAK_VERTEX_BUFFER_CACHE, 0);
 }
 
+#ifdef XGX_DEBUG_PBCHECK
+static uint32_t s_frame, s_draws;   /* defined with the frame state below */
+/* -DXGX_DEBUG_PBCHECK: walk each segment before the kick and log the first
+ * malformed headers. xemu forgives what the console's pusher faults on, so
+ * this tells "the CPU wrote a bad stream" from "the GPU faulted on a good
+ * one" without a console. */
+static void pb_check(const uint32_t* p, const uint32_t* end) {
+    static int logged;
+    const uint32_t* start = p;
+    while (p < end && logged < 16) {
+        uint32_t h = *p, n = (h >> 18) & 0x7FF, m = h & 0x1FFC;
+        if ((h & 0xA0000003u) || ((h >> 13) & 7) > 1 || !n || p + 1 + n > end) {
+            logged++;
+            xhw_logf("[PBCHECK] frame %u draw %u: bad header %08x at +%u of %u words (method %04x count %u)",
+                     (unsigned)s_frame, (unsigned)s_draws, h, (unsigned)(p - start), (unsigned)(end - start), m, n);
+            return;
+        }
+        p += 1 + n;
+    }
+}
+#endif
+
 static void pb_close(void) {
     if (!s_pb_open) return;
+#ifdef XGX_DEBUG_PBCHECK
+    pb_check(s_pb_mark, P);
+#endif
     pb_end(P);
     s_pb_open = 0;
 }
@@ -364,6 +389,10 @@ static uint32_t s_st_vp_sel, s_st_vp_loads, s_st_vp_ins;   /* program switches, 
 
 /* GPU faults, recorded by the patched pbkit (ocx_pb_gpu_fault below) */
 static volatile uint32_t s_gf_count, s_gf_storms, s_gf_last[5];
+/* The first fault, with where the pusher was and which draw of which frame
+ * the CPU had reached: later ones are usually its consequences. */
+static volatile uint32_t s_gf_first[9], s_gf_first_logged;
+static void log_first_fault(void);
 
 /* A GPU that stops fetching (bad method or state) otherwise hangs the game
  * thread here with nothing in the log: after 2 s, report once where the
@@ -380,10 +409,18 @@ static void report_gpu_stall(void) {
              get, put, *(volatile uint32_t*)(0xFD000000u + 0x3228), *(volatile uint32_t*)(0xFD000000u + 0x400700),
              (unsigned)s_gf_count, (unsigned)s_gf_last[0], (unsigned)s_gf_last[1], (unsigned)s_gf_last[2],
              (unsigned)s_gf_last[3], (unsigned)s_gf_last[4]);
-    xhw_logf("[NV2A]  at get-32: %08x %08x %08x %08x %08x %08x %08x %08x", w[-8], w[-7], w[-6], w[-5], w[-4], w[-3],
-             w[-2], w[-1]);
-    xhw_logf("[NV2A]  at get:    %08x %08x %08x %08x %08x %08x %08x %08x", w[0], w[1], w[2], w[3], w[4], w[5], w[6],
-             w[7]);
+    log_first_fault();
+    /* GET can be anywhere once the pusher has run off into other data
+     * (GitHub issue #6: 15000004), and an unmapped read here faults */
+    xhw_logf("[NV2A]  pushbuffer at %08x", (uint32_t)s_pb_base & 0x03FFFFFFu);
+    if (MmIsAddressValid((PVOID)(w - 8)) && MmIsAddressValid((PVOID)(w + 7))) {
+        xhw_logf("[NV2A]  at get-32: %08x %08x %08x %08x %08x %08x %08x %08x", w[-8], w[-7], w[-6], w[-5], w[-4],
+                 w[-3], w[-2], w[-1]);
+        xhw_logf("[NV2A]  at get:    %08x %08x %08x %08x %08x %08x %08x %08x", w[0], w[1], w[2], w[3], w[4], w[5],
+                 w[6], w[7]);
+    } else {
+        xhw_logf("[NV2A]  get is outside mapped memory");
+    }
     {   /* PGRAPH: trap (what it was doing), surface, clip and raster state */
         volatile const uint32_t* g = (volatile const uint32_t*)0xFD400000u;
         xhw_logf("[NV2A]  pgraph intr %08x nsource %08x trapped %08x data %08x surface %08x | clear %08x %08x "
@@ -444,7 +481,35 @@ static uint32_t pb_used(void) {
 /* GPU faults, recorded by the patched pbkit (tools/xbox/patch_pbkit.py) */
 static uint32_t s_gf_logged;
 
+static void log_first_fault(void) {
+    if (!s_gf_count || s_gf_first_logged) return;
+    xhw_logf("[NV2A] first GPU fault: kind %u %08x %08x %08x %08x, get %08x put %08x (pushbuffer %08x), frame %u draw %u",
+             (unsigned)s_gf_first[0], (unsigned)s_gf_first[1], (unsigned)s_gf_first[2], (unsigned)s_gf_first[3],
+             (unsigned)s_gf_first[4], (unsigned)s_gf_first[5], (unsigned)s_gf_first[6], (uint32_t)s_pb_base & 0x03FFFFFFu,
+             (unsigned)s_gf_first[7], (unsigned)s_gf_first[8]);
+    s_gf_first_logged = 1;
+    {   /* what the pusher had just read: 24 words before GET, 8 from it */
+        const uint32_t* w = (const uint32_t*)(0x80000000u | (s_gf_first[5] & 0x03FFFFFCu));
+        int i;
+        if (!MmIsAddressValid((PVOID)(w - 24)) || !MmIsAddressValid((PVOID)(w + 7))) return;
+        for (i = -24; i < 8; i += 8)
+            xhw_logf("[NV2A]  first fault get%+d: %08x %08x %08x %08x %08x %08x %08x %08x", i * 4, w[i], w[i + 1],
+                     w[i + 2], w[i + 3], w[i + 4], w[i + 5], w[i + 6], w[i + 7]);
+    }
+}
+
 void ocx_pb_gpu_fault(unsigned kind, unsigned a, unsigned b, unsigned c, unsigned d) {
+    if (!s_gf_count) {
+        s_gf_first[0] = kind;
+        s_gf_first[1] = a;
+        s_gf_first[2] = b;
+        s_gf_first[3] = c;
+        s_gf_first[4] = d;
+        s_gf_first[5] = *(volatile uint32_t*)(0xFD000000u + 0x3244);   /* DMA GET */
+        s_gf_first[6] = *(volatile uint32_t*)(0xFD000000u + 0x3240);   /* DMA PUT */
+        s_gf_first[7] = s_frame;
+        s_gf_first[8] = s_draws;
+    }
     s_gf_last[0] = kind;
     s_gf_last[1] = a;
     s_gf_last[2] = b;
@@ -1033,6 +1098,7 @@ void xgx_present(int black) {
         s_shot_once = 1;
     }
     if (!XGX_OVERLAP) release_deferred();
+    log_first_fault();
     if (s_gf_count != s_gf_logged) {
         xhw_logf("[NV2A] GPU fault x%u: kind %u %08x %08x %08x %08x%s", (unsigned)s_gf_count, (unsigned)s_gf_last[0],
                  (unsigned)s_gf_last[1], (unsigned)s_gf_last[2], (unsigned)s_gf_last[3], (unsigned)s_gf_last[4],
@@ -1965,6 +2031,9 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
             if (c[1] > y1) y1 = c[1];
         }
         if (x0 <= x1) xhw_logf("[DRAW]  screen %d,%d - %d,%d", (int)x0, (int)y0, (int)x1, (int)y1);
+        xhw_logf("[DRAW]  scissor %d,%d %dx%d viewport %d,%d %dx%d", (int)st->scissor[0], (int)st->scissor[1],
+                 (int)st->scissor[2], (int)st->scissor[3], (int)st->viewport[0], (int)st->viewport[1],
+                 (int)st->viewport[2], (int)st->viewport[3]);
     }
     for (s = 0; s < st->ntev && s < XGX_MAX_TEV; s++) {
         const XgxTevStage* t = &st->tev[s];

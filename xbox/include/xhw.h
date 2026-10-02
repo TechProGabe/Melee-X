@@ -111,6 +111,8 @@ const char* xhw_game_dir(void);
 const char* xhw_save_dir(void);
 /* Directory helpers (FATX): mkdir ignores "already exists". */
 int xhw_mkdir(const char* path);
+/* Copies a file, replacing the destination; 0 on failure. */
+int xhw_copy_file(const char* from, const char* to);
 typedef struct xhw_dir_entry { char name[64]; int is_dir; uint32_t size; } xhw_dir_entry;
 /* pattern like "E:\\dir\\*.gci"; returns a handle (NULL: nothing found).
  * xhw_dir_next returns 0 at the end and closes the handle. */
@@ -165,8 +167,11 @@ const xhw_video_mode* xhw_video(void);
 int xhw_video_720p_allowed(void);
 int xhw_video_480p_allowed(void);
 int xhw_video_widescreen_set(void);
-/* Before boot (settings.ini): 0 keeps 480 even where 720p is allowed. */
+/* Before boot (settings.ini): 1 uses 720p where the dashboard allows it
+ * (experimental, off by default). */
 void xhw_video_set_pref_720p(int on);
+/* Before boot (settings.ini): 0 forces 480i where the dashboard allows 480p. */
+void xhw_video_set_pref_480p(int on);
 /* Picks 480/720 and sets the mode, before pbkit starts. Ends the splash. */
 void xhw_video_boot(void);
 void xhw_wait_vblank(void);
