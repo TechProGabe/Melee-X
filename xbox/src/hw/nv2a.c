@@ -64,6 +64,15 @@ enum { GX_ITF_8 = 0, GX_ITM_OFF = 0, GX_ITM_2 = 3, GX_ITW_OFF = 0, GX_ITBA_OFF =
  * ====================================================================== */
 static int s_fbw = 640, s_fbh = 480, s_bpp = 32;
 static float s_zmax = 16777215.0f;
+static float s_zg0;             /* Z16 depth remap of this frame (build_proj); 0: none */
+static float s_zg0_next = 2.0f;  /* the smallest g0 a projection built this frame asked for; 1: none, 2: no build */
+
+/* GX depth (0..1) as the depth buffer stores it, in depth-buffer units */
+static float z_store(float g) {
+    if (s_zg0 > 0.0f) g = g > s_zg0 ? (g - s_zg0) / (1.0f - s_zg0) : 0.0f;
+    return g * s_zmax;
+}
+
 static uint32_t s_draw_force = XGX_DIRTY_ALL;   /* groups xgx_draw must rebuild regardless of dirty bits */
 static float s_display_aspect = 4.0f / 3.0f;
 static float s_content_aspect = 73.0f / 60.0f;
@@ -958,7 +967,9 @@ static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int d
     if (color) pb_fill(x, y, w, h, argb);
     if (depth) {
         uint32_t* p = pb_begin();
-        uint32_t zv = pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? (z24 >> 8) : (z24 << 8);
+        uint32_t zv = pb_DepthFmt != NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? z24 << 8
+                      : s_zg0 > 0.0f ? (uint32_t)(z_store((float)z24 / 16777215.0f) + 0.5f)
+                                     : z24 >> 8;
         p = pb_push1(p, NV097_SET_CLEAR_RECT_HORIZONTAL, (uint32_t)((x + w - 1) << 16) | (uint32_t)x);
         p = pb_push1(p, NV097_SET_CLEAR_RECT_VERTICAL, (uint32_t)((y + h - 1) << 16) | (uint32_t)y);
         p = pb_push1(p, NV097_SET_ZSTENCIL_CLEAR_VALUE, zv);
@@ -1146,6 +1157,8 @@ void xgx_set_overlay(const xgx_overlay* o) {
     s_ovl_ttl = 2;   /* lingers at most one present after the last refresh */
 }
 
+static void z16_frame_end(void);
+
 void xgx_present(int black) {
     int ovl;
     frame_open();
@@ -1215,6 +1228,7 @@ void xgx_present(int black) {
     xhw_perf_frame(s_draws, s_pf_verts);
     s_pf_verts = 0;
     vp_frame_end();
+    z16_frame_end();
     s_frame++;
     if (s_frame % XGX_STATS_EVERY == 0) {
         /* draws/approximated: the last frame; the rest summed over the interval */
@@ -1431,31 +1445,75 @@ static void set_row(int r, float x, float y, float z, float w) {
  * final combiner were built from. The rows depend on the projection too. */
 static FogSetup s_fog;
 
+/* GX's depth row (build_proj), before the Z16 near-plane remap: fog is
+ * GX's function of GX's depth */
+static float s_zrow_gx[4];
+
 static void build_fog(const XgxState* st) {
-    fog_setup(st->fog_type, st->fog_start, st->fog_end, st->fog_near, st->fog_far, s_vc[VPC_PROJ + 2],
-              s_vc[VPC_PROJ + 3], s_zmax, &s_fog);
+    fog_setup(st->fog_type, st->fog_start, st->fog_end, st->fog_near, st->fog_far, s_zrow_gx, s_vc[VPC_PROJ + 3],
+              s_zmax, &s_fog);
     if (!s_fog.kind) return;
     set_row(VPC_FOG, s_fog.num[0], s_fog.num[1], s_fog.num[2], s_fog.num[3]);
     set_row(VPC_FOG + 1, s_fog.den[0], s_fog.den[1], s_fog.den[2], s_fog.den[3]);
     set_row(VPC_FOG + 2, s_fog.curve[0], s_fog.curve[1], s_fog.curve[2], s_fog.curve[3]);
 }
 
+/* Z16 (720p) depth: Melee's match camera has near 0.1 and far 16384, made
+ * for the GameCube's 24 bits. A z-buffer step at eye distance D is about
+ * D^2 / (2^bits * near): at 16 bits that is ~3 units where the fighters
+ * are (D ~150), and the crates' frames, Fountain of Dreams' grass and the
+ * fountain's floor layer fought the surfaces under them (fighters looked
+ * see-through). Final Destination (near 1) looked right. At 16 bits, in a
+ * frame with such a camera, depth g (GX's, 0..1) is stored as
+ * (g - g0) / (1 - g0), g0 being the camera's depth at far / XGX_Z16_DEPTH_RATIO:
+ * as if its near plane were there, ~0.1 units a step at D ~150. One remap
+ * for every projection of the frame, ortho too, since the game compares
+ * depth across cameras (the match timer's camera is tested against the
+ * stage). It is affine, so a projection still gives a z-buffer, and depth 1
+ * (far, the clears) stays; what lies in front of g0 is clamped to 0
+ * (ZCLAMP_CLAMP), not clipped. The frame's g0 is set from the projections
+ * built in the frame before (build_proj, xgx_present); Z24 is untouched. */
+#ifndef XGX_Z16_DEPTH_RATIO
+#define XGX_Z16_DEPTH_RATIO 4096.0f
+#endif
+
 static void build_proj(const XgxState* st) {
     const float(*p)[4] = st->proj;
     float vx = (float)map_x(st->viewport[0]) , vy = (float)map_y(st->viewport[1]);
     float vw = st->viewport[2] * (float)s_cw / XGX_EFB_W, vh = st->viewport[3] * (float)s_ch / XGX_EFB_H;
     float vn = st->viewport[4], vf = st->viewport[5];
-    float sx = vw * 0.5f, ox = vx + vw * 0.5f, sy = -vh * 0.5f, oy = vy + vh * 0.5f;
+    float sx = vw * 0.5f, ox = vx + vw * 0.5f, sy = -vh * 0.5f, oy = vy + vh * 0.5f, g0 = 1.0f;
     int c;
+    /* GX perspective: p22 = -n/(f-n), p23 = -fn/(f-n), w = -z. Clip z/w at
+     * eye distance f/K is (K-1) p22, depth there vf + (vf - vn) (K-1) p22 */
+    if (s_zmax < 65536.0f && XGX_Z16_DEPTH_RATIO > 1.0f && !st->proj_ortho && p[3][2] == -1.0f &&
+        p[3][3] == 0.0f && p[2][2] < 0.0f && -p[2][2] * (XGX_Z16_DEPTH_RATIO - 1.0f) < 1.0f)
+        g0 = vf + (vf - vn) * (XGX_Z16_DEPTH_RATIO - 1.0f) * p[2][2];
+    if (g0 <= 0.0f) g0 = 1.0f;
+    if (g0 < s_zg0_next || s_zg0_next > 1.0f) s_zg0_next = g0;
     /* GX clip z/w runs -1 (near) .. 0 (far); depth = z/w * (far - near) + far */
     vc_mark(VPC_PROJ, 4);
     for (c = 0; c < 4; c++) {
         s_vc[VPC_PROJ][c] = sx * p[0][c] + ox * p[3][c];
         s_vc[VPC_PROJ + 1][c] = sy * p[1][c] + oy * p[3][c];
-        s_vc[VPC_PROJ + 2][c] = s_zmax * ((vf - vn) * p[2][c] + vf * p[3][c]);
+        s_zrow_gx[c] = s_zmax * ((vf - vn) * p[2][c] + vf * p[3][c]);
+        s_vc[VPC_PROJ + 2][c] =
+            s_zg0 > 0.0f ? (s_zrow_gx[c] - s_zmax * s_zg0 * p[3][c]) / (1.0f - s_zg0) : s_zrow_gx[c];
         s_vc[VPC_PROJ + 3][c] = p[3][c];
     }
     if (st->fog_type & 7) build_fog(st);
+}
+
+/* Frame end: the next frame's Z16 remap from this frame's projections. A
+ * frame that built none keeps it (its projection hasn't changed). */
+static void z16_frame_end(void) {
+    float g0;
+    if (s_zg0_next > 1.0f) return;
+    g0 = s_zg0_next < 1.0f ? s_zg0_next : 0.0f;
+    s_zg0_next = 2.0f;
+    if (g0 == s_zg0) return;
+    s_zg0 = g0;
+    s_draw_force |= XGX_DIRTY_PROJ;   /* every projection again with the new remap */
 }
 
 /* only the matrices the front end loaded since the last draw (posmtx_mask) */
@@ -3007,7 +3065,8 @@ int xgx_ztex_mask(const int32_t src[4], uint32_t z24, int clears) {
     /* a little in front of z24: the cleared background holds exactly z24,
      * and the quad's interpolated depth there must not round past it */
     z24 &= 0xFFFFFFu;
-    z = (float)(z24 > 0x100u ? z24 - 0x100u : 0u) * (s_zmax / 16777215.0f);
+    z = s_zg0 > 0.0f ? z_store((float)(z24 > 0x100u ? z24 - 0x100u : 0u) / 16777215.0f)
+                     : (float)(z24 > 0x100u ? z24 - 0x100u : 0u) * (s_zmax / 16777215.0f);
     {
         const float q[4][5] = { { (float)x0, (float)y0, z, 0, 0 }, { (float)x1, (float)y0, z, 0, 0 },
                                 { (float)x0, (float)y1, z, 0, 0 }, { (float)x1, (float)y1, z, 0, 0 } };

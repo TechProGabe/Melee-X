@@ -288,6 +288,28 @@ SMC does the blinking, so nothing is timed per frame. Events come from three
 small `PORT:` calls in the game (KO, the countdown's seconds, the match's
 end) rather than polling game state every frame from the platform.
 
+**Z16 depth as if the near plane were further out (after v43).** At 720p
+(R5G6B5 colour forces a Z16 depth buffer on the NV2A) Melee's match camera,
+near 0.1 and far 16384, leaves ~3 units per depth step where the fighters
+are: crates, Fountain of Dreams' grass and floor layer z-fought (the
+"wrong textures" of the v41 report; Final Destination, near 1, was fine).
+Two other ways out were left: Z24S8 needs 32-bit colour at 1280x720
+(~7 MB more), and a float Z16 helps only with reversed depth, which every
+depth function, clear and the Z-texture mask would have to follow, and xemu
+doesn't model float depth to check it. Instead one affine remap of GX's
+depth per frame, (g - g0) / (1 - g0), chosen from the frame's projections
+(`build_proj`, `-DXGX_Z16_DEPTH_RATIO`, `renderer.md` "Depth"): a single
+mapping for every camera, since the game depth-tests the timer's camera
+against the stage's. Only Z16 changes; 480 renders as before.
+
+**Fighter reflections that draw nothing are skipped (after v43).** Fountain
+of Dreams' 80x60 reflection draws each fighter's body twice a frame
+(`grIzumi_801CCEA0`), on the GameCube too, also when the fighter is out of
+that view. With four Foxes that was ~265 of ~1000 draws a frame for
+nothing. `ftDrawCommon_80080C28` skips the body when the camera-box sphere
+the game itself uses to cull fighters from the main view is outside the
+reflection camera's frustum (edit below).
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 
@@ -496,6 +518,14 @@ marked `PORT:`:
   calls `xhw_led_timer` where the countdown drops a second (last 10 only)
   and `xhw_led_match_end` next to the `[GAME] match ends` line. Scene
   changes come from the existing `xsdk_scene_log` hook.
+- `src/melee/ft/ftdrawcommon.c` (`ftDrawCommon_80080C28`, `80081140`,
+  `80081118`), after v43, under `TARGET_XBOX`: while grIzumi's reflection
+  draws (between `80081140` and `80081118`), a fighter whose camera-box
+  sphere (`bone_pos`, `ext.v.z + 15`, as `Camera_80030CFC`) lies outside
+  the current camera's frustum (from `GXGetProjectionv` and the CObj's view
+  matrix) skips `HSD_JObjDispAll` of its body; the flags, parts and
+  per-kind callbacks run as before. The magnifier's direct calls are
+  untouched.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after

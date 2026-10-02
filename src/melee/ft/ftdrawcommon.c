@@ -22,6 +22,10 @@
 #include <sysdolphin/baselib/cobj.h>
 #include <sysdolphin/baselib/gobj.h>
 #include <sysdolphin/baselib/state.h>
+#ifdef TARGET_XBOX
+#include <dolphin/gx.h>
+#include <math.h>
+#endif
 #ifdef TARGET_PC
 #include "pc/net.h"
 #endif
@@ -264,6 +268,66 @@ void ftDrawCommon_800805C8(HSD_GObj* gobj, s32 arg1, bool arg2)
     ftCo_800C2600(gobj, arg1);
 }
 
+#ifdef TARGET_XBOX
+/* PORT: Fountain of Dreams' reflection (grIzumi_801CCEA0, 80x60) draws
+ * every fighter's body twice a frame, as the GameCube does, also when the
+ * fighter is nowhere in that image (in the air, on the top platforms).
+ * Each PObj is a draw here, CPU time whatever its size: four Foxes (~33
+ * PObjs each in that model, Mario ~16) spent ~265 of ~1000 draws a frame
+ * on reflections that drew nothing. The body is skipped when the sphere
+ * the game trusts to cull a fighter from the main camera
+ * (ftLib_UpdateScreenVisibility, Camera_80030CFC: bone_pos, ext.v.z + 15)
+ * lies wholly outside the reflection camera's frustum, tested against the
+ * projection actually set. */
+static bool ftDrawCommon_in_reflection;
+
+static bool ftDrawCommon_ReflectionCulled(Fighter* fp)
+{
+    HSD_CObj* cobj = HSD_CObjGetCurrent();
+    CmSubject* box = fp->x890_cameraBox;
+    f32 p[7], r, v[3], d;
+    MtxPtr m;
+
+    if (!ftDrawCommon_in_reflection || cobj == NULL || box == NULL) {
+        return false;
+    }
+    GXGetProjectionv(p);
+    if (p[0] != 0.0f) {
+        return false; // orthographic
+    }
+    m = HSD_CObjGetViewingMtxPtrDirect(cobj);
+    v[0] = m[0][0] * box->bone_pos.x + m[0][1] * box->bone_pos.y +
+           m[0][2] * box->bone_pos.z + m[0][3];
+    v[1] = m[1][0] * box->bone_pos.x + m[1][1] * box->bone_pos.y +
+           m[1][2] * box->bone_pos.z + m[1][3];
+    v[2] = m[2][0] * box->bone_pos.x + m[2][1] * box->bone_pos.y +
+           m[2][2] * box->bone_pos.z + m[2][3];
+    r = box->ext.v.z + 15.0f;
+    // the side planes (w + x, w - x, w + y, w - y; w = -z) and the near one
+    d = p[1] * v[0] + (p[2] - 1.0f) * v[2];
+    if (d < -r * sqrtf(p[1] * p[1] + (p[2] - 1.0f) * (p[2] - 1.0f))) {
+        return true;
+    }
+    d = -p[1] * v[0] - (p[2] + 1.0f) * v[2];
+    if (d < -r * sqrtf(p[1] * p[1] + (p[2] + 1.0f) * (p[2] + 1.0f))) {
+        return true;
+    }
+    d = p[3] * v[1] + (p[4] - 1.0f) * v[2];
+    if (d < -r * sqrtf(p[3] * p[3] + (p[4] - 1.0f) * (p[4] - 1.0f))) {
+        return true;
+    }
+    d = -p[3] * v[1] - (p[4] + 1.0f) * v[2];
+    if (d < -r * sqrtf(p[3] * p[3] + (p[4] + 1.0f) * (p[4] + 1.0f))) {
+        return true;
+    }
+    d = (p[5] - 1.0f) * v[2] + p[6];
+    if (p[5] != 1.0f && d / fabsf(p[5] - 1.0f) < -r) {
+        return true;
+    }
+    return false;
+}
+#endif
+
 void ftDrawCommon_80080C28(HSD_GObj* gobj, intptr_t flag_index)
 {
     Mtx sp70;
@@ -296,6 +360,10 @@ void ftDrawCommon_80080C28(HSD_GObj* gobj, intptr_t flag_index)
             vmtx = ftDrawCommon_8008051C_inline(gobj, &v1, &v2, sp18, sp70);
 
             jobj = GET_JOBJ(gobj);
+#ifdef TARGET_XBOX
+            /* PORT: a reflection that would draw nothing (above) */
+            if (!ftDrawCommon_ReflectionCulled(fighter))
+#endif
             HSD_JObjDispAll(jobj, vmtx, HSD_GObj_80390EB8(flag_index), 0);
             if (ftData_UnkMtxFunc0[fighter->kind] != NULL) {
                 ftData_UnkMtxFunc0[fighter->kind](gobj, flag_index, vmtx);
@@ -419,6 +487,9 @@ void ftDrawCommon_80080E18(HSD_GObj* gobj, intptr_t arg1)
 void ftDrawCommon_80081118(void)
 {
     HSD_GObj* gobj = HSD_GObjPLinkHead[HSD_GOBJ_PLINK_FIGHTER];
+#ifdef TARGET_XBOX
+    ftDrawCommon_in_reflection = false; /* PORT: the reflection is done */
+#endif
     while (gobj != NULL) {
         gobj->render_cb = &ftDrawCommon_80080E18;
         gobj = gobj->next;
@@ -428,6 +499,10 @@ void ftDrawCommon_80081118(void)
 void ftDrawCommon_80081140(void)
 {
     HSD_GObj* gobj = HSD_GObjPLinkHead[HSD_GOBJ_PLINK_FIGHTER];
+#ifdef TARGET_XBOX
+    /* PORT: only grIzumi's reflection sets this (80080C28's cull) */
+    ftDrawCommon_in_reflection = true;
+#endif
     while (gobj != NULL) {
         gobj->render_cb = ftDrawCommon_80080C28;
         gobj = gobj->next;

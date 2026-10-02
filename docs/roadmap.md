@@ -115,11 +115,18 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   is in "Next".
 - Fox costs more than other characters: four Foxes on Fountain of Dreams
   run ~10 fps lower than a mixed 4-player match (console, v43-era build).
-  Not profiled yet. Suspects: his reflector/shine and blaster effects,
-  afterimage trails, or a heavier model (vertex/draw count). A
-  `-DXHW_PROF=1` run with 4x Fox vs 4x another character should show
-  whether it is sim or render time.
-- Fixed on dev: the results screen's winner portrait (1st place, under the
+  xemu, 4x Fox vs 4x Mario on Fountain: ~980 vs ~710 draws a frame (+38%)
+  for about the same vertices (74k vs 70k); the simulation per tick is no
+  dearer (~1.8 vs ~2.1 ms), so it is render-side, per draw. Fox's model has
+  about twice Mario's PObjs (shadow pass 34 vs 17 draws a fighter,
+  reflection 33 vs 16), drawn in four passes on Fountain (two reflection
+  passes, the shadow map, the main pass), and switches material more often
+  (2.8x the vertex-program switches, 2.7x the TEV/channel rebuilds). No
+  effect or Fox-only code path showed up. After v43 the reflection skips
+  fighters that are outside it (`decisions.md`; ~70% of reflection bodies
+  in a 4-Fox xemu match, ~2% with Marios, who stay near the floor): 4x Fox
+  in xemu 976 -> 767 draws a frame, back end 4.4 -> 3.5 ms, 12.2 -> 15.2
+  fps. Needs a console `-DXHW_PROF=1` round for the rest.
   crown) drew black (a tester's console, RC1 = v42; xemu too). The
   1st-place branch of `fn_80179990` read its flags through a struct
   overlay that matches `lbl_8046E3AC` only in the GameCube's link order,
@@ -220,10 +227,17 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   `-DXHW_PROF=1` round on the console (the frame rate, and what is left
   of `render`/`sim` at 720p), and an A/B of `-DOCX_Z16_TILE_FLAGS`
   (`0x80000001`, `0x00000001`) against the visual faults.
-  v38 left no screenshots of the faults; in xemu 720p matches look like
-  480 (no z-fighting at Z16). Fixed on dev: Classic team cards unmasked at
-  720p (the Z-texture mask now goes into green, `renderer.md`). Take BACK
-  screenshots of what is wrong on the console.
+  v38 left no screenshots of the faults. Fixed on dev: Classic team cards unmasked at
+  720p (the Z-texture mask now goes into green, `renderer.md`). After
+  v43: the item boxes' and Fountain of Dreams' grass "wrong textures"
+  (v41) were Z16 z-fighting, reproduced in xemu at 720p (an HDTV-pack
+  EEPROM gives xemu 720p) and with `-DXHW_VIDEO_480_BPP=16`: the crates'
+  frames through their fronts, black blotches in the grass, fighters
+  see-through over the fountain floor. The match camera's near 0.1 left
+  ~3 units a depth step at 16 bits; Z16 depth is now remapped as if near
+  were far / 4096 (`renderer.md` "Depth"). The texture pool was not it
+  (720p xemu runs: 0 drops). Check on the console; the
+  `-DOCX_Z16_TILE_FLAGS` A/B is still open.
 - Fixed on dev: at 16:9 (console, v38, 480p; 720p too) the in-match timer
   sat right of centre. melee-pc's wide HUD anchored it to the right edge,
   but its joint is at x = 0, top centre, which hor+ already keeps centred

@@ -405,6 +405,27 @@ floor's pixels got depth just outside the clip range and were culled
 restores culling. Geometry behind the eye is still clipped on w. Rows 0 and 1 fold in the viewport scale and offset,
 with y flipped.
 
+At 16 bits (720p, or `-DXHW_VIDEO_480_BPP=16`) the depth buffer is Z16,
+and a z-buffer step at eye distance D is about D^2 / (65536 * near).
+Melee's match camera has near 0.1 and far 16384: ~3 units a step where the
+fighters are, so crates, Fountain of Dreams' grass and floor layer and the
+fighters in front of it z-fought (Final Destination, near 1, didn't). At
+Z16 the depth is therefore remapped once per frame: GX depth g (0..1) is
+stored as (g - g0) / (1 - g0), with g0 a camera's depth at far /
+`XGX_Z16_DEPTH_RATIO` (4096), i.e. as if its near plane were at far / 4096
+(~0.1 units a step at D ~150); of the frame's projections whose far/near
+ratio is past 4096, the one with the smallest g0 decides. The remap is affine, so row 2 still
+gives a z-buffer, and it is the same for every projection of the frame,
+ortho too: the match timer's camera is depth-tested against the stage's
+(a remap per projection hid the timer). Depth 1 (far, the copy clears)
+stays; what lies nearer than g0 is clamped to 0, not clipped, and keeps
+only draw order among itself. Clears and the Z-texture mask convert their
+z24 through the same remap (`z_store`), fog still reads GX's own row
+(`s_zrow_gx`). `build_proj` collects the frame's g0 and `xgx_present` makes
+it the next frame's, rebuilding the projection rows when it changes; a
+frame with no extreme projection uses none. Z24 is untouched.
+`-DXGX_Z16_DEPTH_RATIO=0` turns it off.
+
 ### Culling
 
 The viewport y-flip is folded into the projection, and GX's front faces then
