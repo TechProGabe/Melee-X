@@ -189,6 +189,16 @@ void xhw_wait_vblank(void);
 /* Boot title card (xhw_splash.c): load bar, 0..1; nothing once the mode is set. */
 void xhw_splash_progress(float f);
 
+/* ---- front LED effects (xhw_led.c) ----
+ * Game events, posted from the game thread: a few stores and a SetEvent when
+ * the effects are on, nothing when off. The SMBus writes happen on a worker. */
+void xhw_led_enable(int on);                  /* settings.ini led; off hands the LED back */
+void xhw_led_preview(void);                   /* the menu: a short sweep after turning it on */
+void xhw_led_scene(void);                     /* a scene change: back to the SMC */
+void xhw_led_ko(int port, int stocks_left);   /* stocks_left -1: not a stock match */
+void xhw_led_timer(int seconds_left);         /* a timed match's countdown, once a second */
+void xhw_led_match_end(int outcome);          /* GAME!/TIME!; 7 no contest */
+
 /* ---- system ---- */
 void xhw_quit_to_dashboard(void) __attribute__((noreturn));
 void xhw_reboot_self(void) __attribute__((noreturn));

@@ -281,6 +281,11 @@ Lines worth reading first:
   how much of ARAM is only on the disc image, `ar.c`), the texture pool and
   the vertex cache. `[GAME] match ends: outcome N` is
   TIME!/GAME!, `[GAME] end banner done` the moment the results take over.
+- `[LED] ROGO sweep (retrace R)`, `[LED] SMC`: each front LED write (the
+  four steps, `-` for off, and the effect), from its worker; two per KO,
+  three in a timed match's last 10 s (at 10, 5 and 2), two per match end,
+  none per frame. xemu doesn't show the LED, so these are what a run checks
+  (`docs/platform.md` "Front LED").
 - `[BEAT] Ns: retrace R, presented P, free ...`: every 5 s from the
   watchdog thread. If the log ends with `[BEAT]` lines whose `retrace` still
   climbs while `presented` stands still, the game is looping without

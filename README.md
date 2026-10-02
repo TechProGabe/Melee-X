@@ -11,6 +11,7 @@ This isn't an emulator. The [doldecomp](https://github.com/doldecomp/melee) proj
 - 720p is experimental and off until you turn it on. It's a lot faster than it used to be (Final Destination with 4 players runs around 45 fps), but busy stages still dip and a few textures are off
 - A settings menu right on the title screen: press **Back** there (more below)
 - Hold L + R + Back + Black to quit back to the dashboard
+- The Xbox's front light joins in: it flashes in a player's colour when they lose a stock, counts down the last seconds of a timed match and goes wild on GAME!
 - Saves use the GameCube `.gci` format, so your Dolphin or memory card save works here and the other way around
 
 You need your own copy of the game. Nothing from Nintendo ships with this.
@@ -113,6 +114,7 @@ Press **Back** on the title screen ("Press Start") and the settings menu opens. 
 | Widescreen (16:9) | 16:9 at 480i/480p when the dashboard is set to widescreen. After a restart |
 | Frame-rate counter | shows the fps in the top left corner, right away |
 | BACK screenshots | when on, pressing Back saves a screenshot (`shotNN.bmp`) next to your settings. Handy for bug reports |
+| Front LED effects | the front light flashes on KOs, in the last seconds and on GAME!. On by default; off leaves it plain green |
 | Use 128 MB RAM | only for consoles upgraded to 128 MB. On a stock 64 MB Xbox it's locked off, so you can't break anything |
 | Rumble | off, or 25% to 100% |
 | Controller, dead zones, trigger click | pick a port, then set its stick dead zones and how far the triggers go in before they count as a full press |
@@ -132,6 +134,7 @@ Everything the menu changes lives in `E:\UDATA\4d580001\settings.ini`, and you c
 | | `fps` | 1 shows a frame counter in the top left corner (off by default) |
 | `[system]` | `ram128` | 1 lets a console upgraded to 128 MB use all of it. Off by default: Melee-X then runs in the first 64 MB, the setup it was tested on. Ignored on a 64 MB console |
 | | `screenshots` | 1 makes Back save a screenshot (`shotNN.bmp` in the same folder) |
+| | `led` | 1 (the default) lets matches play with the front light; 0 leaves it to the Xbox |
 | `[input]` | `rumble` | rumble strength in percent, 0 turns it off |
 | `[port1]` to `[port4]` | `stick_deadzone`, `cstick_deadzone` | stick dead zones in percent |
 | | `trigger_click` | how far (0-255) a trigger goes in before it counts as a full L/R press |

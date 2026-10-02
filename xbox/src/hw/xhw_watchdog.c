@@ -171,6 +171,7 @@ static void dump_all(const char* why, int screen) {
         return;
     }
     /* screen next: the file I/O below can block if the hang involves the disk */
+    xhw_led_release(0);   /* flags and an event: the LED worker writes */
     pb_show_debug_screen();
     s_screen = 1;
     debugClearScreen();

@@ -276,6 +276,18 @@ conversion that made them near black). The Z16 depth tile's flags are a
 switch (`-DOCX_Z16_TILE_FLAGS`) with pbkit's value as the default until a
 console A/B, and `-DXHW_VIDEO_480_BPP=16` puts the 16-bit path in reach of xemu.
 
+**Front LED effects, on by default (after v43).** KOs, a timed match's
+last seconds and GAME! drive the console's front LED through the SMC's
+custom sequence (`xhw_led.c`). On by default: it is the kind of thing
+nobody finds in a menu, it only takes the LED for an effect (the SMC has it
+back the rest of the time, so its own signals still show), and every way
+out of the XBE hands it back. Each write is an SMBus transaction through the
+kernel, so the game thread only posts events into a ring and a
+lowest-priority worker writes, on changes only and at most every 80 ms; the
+SMC does the blinking, so nothing is timed per frame. Events come from three
+small `PORT:` calls in the game (KO, the countdown's seconds, the match's
+end) rather than polling game state every frame from the platform.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 
@@ -472,6 +484,13 @@ marked `PORT:`:
   `xsdk_menu_title_frame` (the Melee-X settings menu, BACK) first each
   frame, under `TARGET_XBOX`; while the menu is up it returns early and
   holds the attract timer at 0.
+- Front LED effects (`xbox/src/hw/xhw_led.c`, `docs/platform.md` "Front
+  LED"), under `TARGET_XBOX`: `src/melee/ft/ft_0D31.c` (`ftCo_800D34E0`,
+  the KO bookkeeping) calls `xhw_led_ko` with the port and the stocks left
+  (-1 outside stock matches) for the player's own fighter; `src/melee/gm/gmvs.c`
+  calls `xhw_led_timer` where the countdown drops a second (last 10 only)
+  and `xhw_led_match_end` next to the `[GAME] match ends` line. Scene
+  changes come from the existing `xsdk_scene_log` hook.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after

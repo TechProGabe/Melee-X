@@ -25,6 +25,7 @@ typedef struct {
     int fps;                 /* 1: frame-rate counter on screen */
     int ram128;              /* 1: use the RAM above 64 MB on a 128 MB console (untested) */
     int shots;               /* 1: BACK takes a screenshot (shotNN.bmp in the save folder) */
+    int led;                 /* 1: front LED effects (KOs, the last seconds, GAME!) */
     float rumble;            /* 0..1 */
     xsdk_port_settings port[4];
 } xsdk_settings;

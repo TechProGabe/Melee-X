@@ -14,12 +14,15 @@ env MELEE_NO_ATTRACT=1
 530 DOWN            # Frame-rate counter
 550 A               # on -> off (a test build's default is on), live
 570 DOWN            # BACK screenshots
-590 DOWN
-600 DOWN            # Rumble
-615 LEFT            # 100% -> 75%
-630 DOWN
-650 DOWN            # Stick dead zone (port 1)
-670 RIGHT           # 20% -> 25%
+580 DOWN            # Front LED effects
+590 A               # on -> off (the LED is the SMC's on the title: no write)
+600 A               # off -> on: the preview sweep, [LED] ROGO then [LED] SMC
+610 DOWN
+620 DOWN            # Rumble
+635 LEFT            # 100% -> 75%
+650 DOWN
+665 DOWN            # Stick dead zone (port 1)
+680 RIGHT           # 20% -> 25%
 700 SHOT            # changed rows, restart mark, no counter
 720 B               # save and close
 750 SHOT            # hint line: saved, restart to apply

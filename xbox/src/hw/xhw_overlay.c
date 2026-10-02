@@ -8,8 +8,8 @@
  * nothing here reads it back (an opaque panel, not a darkened one), and an
  * sfence puts the writes out before the flip is queued.
  *
- * 8x16 glyphs at 480 lines, 16x32 at 720p: the menu's 17 rows fill 87% of
- * the height there, inside the TV-safe area. */
+ * 8x16 glyphs at 480 lines, 16x32 at 720p: the menu's 18 rows fill 91% of
+ * the height there, about the TV-safe area; a 19th would need 96%. */
 #include <stdint.h>
 #include <string.h>
 

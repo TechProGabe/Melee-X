@@ -5,6 +5,9 @@
 #include <string.h>
 #ifdef TARGET_XBOX
 #include <dolphin/os.h> /* PORT: OSReport for the Xbox log lines below */
+/* PORT: the front LED's timer and GAME! effects (xbox/src/hw/xhw_led.c) */
+void xhw_led_timer(int seconds_left);
+void xhw_led_match_end(int outcome);
 #endif
 
 #include "forward.h"
@@ -1283,6 +1286,12 @@ void fn_8016CD98(VsSceneController* scene)
                             }
                         }
                         scene->state.timer_seconds -= 1;
+#ifdef TARGET_XBOX
+                        /* PORT: the front LED in the last seconds */
+                        if (scene->state.timer_seconds <= 10) {
+                            xhw_led_timer((int) scene->state.timer_seconds);
+                        }
+#endif
                     }
                 }
             }
@@ -1426,6 +1435,8 @@ void fn_8016CFE0(void)
         /* PORT: the match's end (TIME!, GAME!, no contest) in the Xbox log */
         OSReport("[GAME] match ends: outcome %d (1 time, 2 KO, 3 teams, 7 no contest)\n",
                  (int) tmp->state.match_result);
+        /* PORT: and on the front LED */
+        xhw_led_match_end((int) tmp->state.match_result);
 #endif
         fn_8016C7F0();
         ifStatus_802F7034(fn_8016B88C);

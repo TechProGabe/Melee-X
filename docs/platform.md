@@ -148,6 +148,10 @@ and by the settings menu below:
 progressive = 1     ; 0: 480i even where the dashboard allows 480p
 widescreen = 1      ; 16:9 at 480 when the dashboard is set to widescreen
 fps = 0             ; frame-rate counter in the top-left corner (default: 1 in test builds, 0 in a release)
+[system]
+ram128 = 0          ; 1: use the RAM above 64 MB on an upgraded console (untested)
+screenshots = 0     ; 1: BACK saves shotNN.bmp (default: 1 in test builds)
+led = 1             ; front LED effects ("Front LED" below)
 [input]
 rumble = 100        ; percent
 [port1]             ; .. [port4]
@@ -206,6 +210,7 @@ by the next save.
 | Widescreen (16:9) | On, Off; `On -> Off` at 480 when the dashboard is 4:3 | after a restart |
 | Frame-rate counter | On, Off | at once |
 | BACK screenshots | On, Off (`[system] screenshots`; on in test builds): BACK saves `shotNN.bmp` next to `settings.ini` | at once |
+| Front LED effects | On, Off (`[system] led`) | at once: On plays a short sweep, Off gives the LED back to the SMC |
 | Use 128 MB RAM | On, Off; on a 64 MB console "Off (64 MB console)", greyed, can't be changed | after a restart |
 | Rumble | Off, 25-100% | at once, with a short pulse |
 | Controller | Port 1-4: the three rows below edit that port | |
@@ -224,6 +229,66 @@ stays in the file. The panel is drawn by the platform over the finished
 frame (`docs/renderer.md`), not by the game: Melee's own menus are models
 with prebaked text, and a page in its Options menu would mean new menu
 data.
+
+The panel is 18 rows (title, blank, 13 settings, the selected row's
+hint, a message line, the controls): at 720p that is 91% of the height,
+and a 19th row would take 96%, past the TV-safe area. A new row has to
+give one up (the LED row took the blank line above the hint).
+
+## Front LED (`xhw_led.c`)
+
+The SMC drives the front LED. SMBus register 0x08 of the SMC (address 0x20)
+takes a custom sequence of four steps that the SMC cycles through by itself,
+several steps a second; register 0x07 = 1 switches the LED to it and 0x07 =
+0 hands it back to the SMC (solid green, or its own blinking). The byte, as
+nxdk's `hal/led.c` (`XSetCustomLED`) builds it: bit 7-n is step n's red,
+bit 3-n its green (n = 0..3; the high nibble red, the low nibble green, the
+first step in the top bit of each); red and green together are orange.
+Each change writes 0x08 and then 0x07 = 1.
+
+| event | pattern (4 steps) | how long |
+|---|---|---|
+| GAME! / TIME! (`gmvs.c`, the match's end) | red, orange, green, orange: a sweep | 3 s, also into the next scene |
+| KO (`ft_0D31.c`, `ftCo_800D34E0`) | P1 red/off, P2 red/green, P3 orange/off (yellow), P4 green/off: the port's colour blinking | 1.5 s |
+| timer, last 10-6 s (`gmvs.c`, `fn_8016CD98`) | orange blip, off x3 | until the next second |
+| timer, last 5-3 s | orange/off blinking | |
+| timer, last 2-1 s | orange/red | |
+| a stock match with someone on their last stock | green x3, a red tick | until the match ends |
+| anything else, the menus, a no contest | the SMC's (register 0x07 = 0) | |
+
+The first row that applies wins. Every scene change (`xsdk_scene_log`)
+clears them all but a running sweep, so the LED is the SMC's outside
+matches and after the results. Settings menu: turning it on plays the
+sweep for 1.5 s. Turning it off hands the LED back (one write, and only if
+a pattern was up) and then nothing touches the SMBus: the game's events
+return before the ring, and with `led = 0` at boot the worker is never
+started.
+
+Cost: the game thread only posts an event into a 16-entry ring (a few
+stores and a `SetEvent`; nothing at all with the setting off) at a KO, once
+a second in a timed match's last 10 seconds, at the match's end and at a
+scene change: never per frame. A worker thread at the lowest priority
+(started when the setting is on) drains the ring, works out the pattern and
+writes it only when it changes, at most every 80 ms, so it runs while the
+game waits for the vertical blank and a write's SMBus wait never holds the
+game up. The SMC does the blinking; the worker only times when an effect
+ends. Every write is logged as `[LED] <steps> <why> (retrace N)` (`R`,
+`G`, `O`, `-` for off) or `[LED] SMC`, up to 300 a boot.
+
+Handing back: `xhw_quit_to_dashboard` and `xhw_reboot_self` (the in-game
+reset, the game's own restart, Save and restart, fatal errors) stop the
+worker and wait up to 300 ms for its register 0x07 = 0, writing it
+themselves if it doesn't answer. A crash (`xhw_crash.c`, not at raised
+IRQL) and a hang report on screen (`xhw_watchdog.c`) only set a flag and
+signal the worker, raised to the highest priority for it so a spinning game
+thread can't starve it: no SMBus wait in those paths. After a crash the
+effects stay off; after a hang report the next event starts them again. A
+failed SMBus write logs `[LED] SMBus write ... failed` once, tries one
+hand-back and leaves the LED alone for the rest of the boot.
+
+While a pattern is up the SMC's own LED signals (tray, errors) are hidden;
+patterns are only up for an effect, never while idle. xemu doesn't show the
+LED; the `[LED]` lines are the test.
 
 ## VI (`vi.c`, `xhw_video.c`)
 

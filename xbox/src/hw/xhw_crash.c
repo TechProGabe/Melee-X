@@ -146,6 +146,7 @@ __attribute__((cdecl)) static int on_exception(EXCEPTION_RECORD* er, void* frame
         xhw_com1_raw(s_rep, (size_t)s_len);
         for (;;) {}   /* no waits or file I/O at raised IRQL */
     }
+    xhw_led_release(1);   /* the LED worker writes it: no SMBus wait here */
     xhw_log(s_rep);
     write_crash_log();
     for (;;) Sleep(1000);

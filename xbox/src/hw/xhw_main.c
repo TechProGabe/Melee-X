@@ -121,6 +121,7 @@ int main(void) {
 }
 
 void xhw_quit_to_dashboard(void) {
+    xhw_led_shutdown();
     xhw_audio_shutdown();
     xhw_pad_shutdown();
     XLaunchXBE(NULL);
@@ -138,6 +139,7 @@ void xhw_reboot_self(void) {
     const ANSI_STRING* img = &XeImageFileName[0];
     snprintf(path, sizeof path, "%.*s", (int)img->Length, img->Buffer);
     xhw_logf("[BOOT] restart: %s", path);
+    xhw_led_shutdown();
     xhw_audio_shutdown();
     xhw_pad_shutdown();
     XLaunchXBE(path);

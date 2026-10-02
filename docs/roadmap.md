@@ -38,6 +38,10 @@
       and trigger click). Counter and rumble apply live; video and RAM are saved
       for a restart, which the menu offers (`docs/platform.md`). Button mapping
       is still `settings.ini` only.
+- [x] front LED effects: KOs in the port's colour, the timer's last seconds,
+      a sweep on GAME!, a last-stock tick; `[system] led` and a menu row, on by
+      default, written by a worker on events only (`docs/platform.md` "Front
+      LED"). Needs a look on the console: xemu doesn't show the LED
 - [ ] VS mode with 4 players on hardware at 60 fps
 - [ ] first public release (v36 is the candidate)
 
@@ -231,13 +235,6 @@ Ideas left, in order:
   per port that waits for a press, as OpenCrossing's bindings page does.
   Today the menu covers everything in `settings.ini` but the `[portN]`
   button lines.
-
-- **Front LED effects**: the SMC takes a custom four-step red/green pattern
-  over SMBus (`HalWriteSMBusValue(0x20, 0x08, 0, pattern)` then register
-  0x07 = 1; register 0x07 = 0 hands the LED back to the SMC). Ideas: a
-  flash when a player loses a stock (colour per port), the timer's last
-  seconds, a pulse on Game! Keep it an option in `settings.ini`, and send
-  only on events: each write is an SMBus transaction.
 
 - **Netplay** (LAN and online): melee-pc's netplay, LAN discovery and
   lobby are not built (`stubs.c` reports them off, and the lobby scene

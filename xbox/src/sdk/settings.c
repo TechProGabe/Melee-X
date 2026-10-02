@@ -6,6 +6,7 @@
  *   fps = 1             ; frame-rate counter in the top-left corner
  *   [system]
  *   ram128 = 0          ; 1: use all 128 MB on an upgraded console (untested)
+ *   led = 1             ; front LED effects (xbox/src/hw/xhw_led.c)
  *   [input]
  *   rumble = 100        ; percent
  *   [port1] .. [port4]
@@ -86,6 +87,7 @@ static void defaults(xsdk_settings* st) {
     st->widescreen = 1;
     st->fps = XSDK_FPS_DEFAULT;
     st->shots = XHW_TEST_BUILD;
+    st->led = 1;
     st->rumble = 1.0f;
     for (p = 0; p < 4; p++) {
         xsdk_port_settings* ps = &st->port[p];
@@ -113,7 +115,8 @@ static char* trim(char* s) {
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 static int pct(float f) { return (int)(f * 100.0f + 0.5f); }
 
-enum { SAW_FPS = 1, SAW_PROGRESSIVE = 2, SAW_RAM128 = 4, SAW_END = 8 };
+enum { SAW_FPS = 1, SAW_PROGRESSIVE = 2, SAW_RAM128 = 4, SAW_END = 8, SAW_LED = 16 };
+#define SAW_KEYS (SAW_FPS | SAW_PROGRESSIVE | SAW_RAM128 | SAW_LED)   /* a file without one of these is rewritten */
 #define END_MARK "; end of settings"   /* the writer's last line: the file is whole */
 
 /* the file's keys over the defaults into *st; returns the SAW_* found */
@@ -147,6 +150,7 @@ static int parse(FILE* f, xsdk_settings* st) {
         } else if (_stricmp(section, "system") == 0) {
             if (_stricmp(key, "ram128") == 0) st->ram128 = atoi(val) != 0, saw |= SAW_RAM128;
             else if (_stricmp(key, "screenshots") == 0) st->shots = atoi(val) != 0;
+            else if (_stricmp(key, "led") == 0) st->led = atoi(val) != 0, saw |= SAW_LED;
         } else if (_stricmp(section, "input") == 0) {
             if (_stricmp(key, "rumble") == 0) st->rumble = clampi(atoi(val), 0, 100) / 100.0f;
         } else if (_strnicmp(section, "port", 4) == 0 && section[4] >= '1' && section[4] <= '4') {
@@ -167,7 +171,8 @@ static int parse(FILE* f, xsdk_settings* st) {
 int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
     int p, i;
     if (a->video_720p != b->video_720p || a->progressive != b->progressive || a->widescreen != b->widescreen ||
-        a->fps != b->fps || a->ram128 != b->ram128 || a->shots != b->shots || pct(a->rumble) != pct(b->rumble))
+        a->fps != b->fps || a->ram128 != b->ram128 || a->shots != b->shots || a->led != b->led ||
+        pct(a->rumble) != pct(b->rumble))
         return 0;
     for (p = 0; p < 4; p++) {
         const xsdk_port_settings *x = &a->port[p], *y = &b->port[p];
@@ -183,9 +188,10 @@ int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
 static void log_summary(const char* what) {
     const xsdk_settings* st = &g_xsdk_settings;
     const xsdk_port_settings* p1 = &st->port[0];
-    xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, ram128 %d, screenshots %d, rumble %d, "
-             "port 1 dead zones %d/%d, trigger click %d",
-             what, st->video_720p, st->progressive, st->widescreen, st->fps, st->ram128, st->shots, pct(st->rumble),
+    xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, ram128 %d, screenshots %d, led %d, "
+             "rumble %d, port 1 dead zones %d/%d, trigger click %d",
+             what, st->video_720p, st->progressive, st->widescreen, st->fps, st->ram128, st->shots, st->led,
+             pct(st->rumble),
              pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click);
 }
 
@@ -225,6 +231,7 @@ void xsdk_settings_load(void) {
         g_xsdk_settings_boot = g_xsdk_settings;
         xgx_set_fps_overlay(g_xsdk_settings.fps);
         xhw_pad_set_shots(g_xsdk_settings.shots);
+        xhw_led_enable(g_xsdk_settings.led);
         return;
     }
     saw = parse(f, &g_xsdk_settings);
@@ -242,11 +249,12 @@ void xsdk_settings_load(void) {
         xhw_logf("[SETTINGS] ram128 = 1 ignored: this console has 64 MB");
     }
     log_summary("in use");
-    if ((saw & (SAW_FPS | SAW_PROGRESSIVE | SAW_RAM128)) != (SAW_FPS | SAW_PROGRESSIVE | SAW_RAM128))
+    if ((saw & SAW_KEYS) != SAW_KEYS)
         xsdk_settings_save();   /* add the missing lines */
     g_xsdk_settings_boot = g_xsdk_settings;
     xgx_set_fps_overlay(g_xsdk_settings.fps);
     xhw_pad_set_shots(g_xsdk_settings.shots);
+    xhw_led_enable(g_xsdk_settings.led);
 }
 
 static void write_all(FILE* f, const xsdk_settings* st) {
@@ -258,7 +266,8 @@ static void write_all(FILE* f, const xsdk_settings* st) {
             st->widescreen, st->fps);
     fprintf(f, "; ram128 = 1 uses the RAM above 64 MB on an upgraded console (untested; off: it runs as 64 MB).\n");
     fprintf(f, "; screenshots = 1: BACK saves a screenshot (shotNN.bmp, next to this file).\n");
-    fprintf(f, "[system]\nram128 = %d\nscreenshots = %d\n\n", st->ram128, st->shots);
+    fprintf(f, "; led = 1: the front LED flashes on KOs, in the last seconds and on GAME!.\n");
+    fprintf(f, "[system]\nram128 = %d\nscreenshots = %d\nled = %d\n\n", st->ram128, st->shots, st->led);
     fprintf(f, "[input]\nrumble = %d\n\n", pct(st->rumble));
     for (port = 0; port < 4; port++) {
         const xsdk_port_settings* ps = &st->port[port];

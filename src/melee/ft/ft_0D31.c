@@ -25,6 +25,11 @@
 #include <melee/pl/plstale.h>
 #include <sysdolphin/baselib/random.h>
 
+#ifdef TARGET_XBOX
+/* PORT: a KO flashes the front LED (xbox/src/hw/xhw_led.c) */
+void xhw_led_ko(int port, int stocks_left);
+#endif
+
 const Quaternion lbl_803B7500 = { 0, 3.1415927f, 0, 0 };
 
 bool ftCo_800D3158(Fighter_GObj* gobj)
@@ -146,6 +151,14 @@ void ftCo_800D34E0(Fighter_GObj* gobj)
     {
         Player_LoseStock(fp->player_idx);
     }
+#ifdef TARGET_XBOX
+    /* PORT: see xhw_led_ko above; the player's own fighter, not Nana */
+    if (Player_GetEntity(fp->player_idx) == gobj) {
+        xhw_led_ko(fp->player_idx, gm_8016B094() || gm_8016B0E8()
+                                       ? Player_GetStocks(fp->player_idx)
+                                       : -1);
+    }
+#endif
     if (gm_8016B094() && Player_GetStocks(fp->player_idx) <= 0) {
         Player_UpdateMatchFrameCount(fp->player_idx, fp->is_sub_fighter);
     }

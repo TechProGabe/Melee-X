@@ -14,8 +14,9 @@
  *   B, BACK                         save settings.ini and close
  *
  * Buttons are read raw, before the per-port mapping, so a remapped
- * controller still finds its way. The frame-rate counter and rumble apply at
- * once (rumble with a short pulse at the new strength), the dead zones and
+ * controller still finds its way. The frame-rate counter, rumble and the
+ * front LED apply at once (rumble with a short pulse at the new strength, the
+ * LED with a short sweep when turned on), the dead zones and
  * trigger click as soon as the menu closes. Video output, widescreen and
  * the 128 MB setting are read at boot (the video mode, the NV2A's buffers
  * and the memory pools are set up then): they are saved and marked for a
@@ -30,12 +31,13 @@
 #include "xsdk_settings.h"
 
 enum {
-    ROW_VIDEO, ROW_WIDE, ROW_FPS, ROW_SHOTS, ROW_RAM, ROW_RUMBLE, ROW_PORT, ROW_STICK, ROW_CSTICK, ROW_TRIGGER,
+    ROW_VIDEO, ROW_WIDE, ROW_FPS, ROW_SHOTS, ROW_LED, ROW_RAM, ROW_RUMBLE, ROW_PORT, ROW_STICK, ROW_CSTICK, ROW_TRIGGER,
     ROW_RESTART, ROW_CLOSE, N_ROWS
 };
 static const char* const k_label[N_ROWS] = {
-    "Video output", "Widescreen (16:9)", "Frame-rate counter", "BACK screenshots", "Use 128 MB RAM", "Rumble", "Controller",
-    "  Stick dead zone", "  C-stick dead zone", "  Trigger click", "Save and restart", "Save and close",
+    "Video output", "Widescreen (16:9)", "Frame-rate counter", "BACK screenshots", "Front LED effects",
+    "Use 128 MB RAM", "Rumble", "Controller", "  Stick dead zone", "  C-stick dead zone", "  Trigger click",
+    "Save and restart", "Save and close",
 };
 
 #define DIRS (XHW_BTN_UP | XHW_BTN_DOWN | XHW_BTN_LEFT | XHW_BTN_RIGHT)
@@ -119,6 +121,7 @@ static void row_text(int r, char* out, size_t cap) {
             if (pct(g->rumble)) snprintf(v, sizeof v, "%d%%", pct(g->rumble));
             else snprintf(v, sizeof v, "Off");
             break;
+        case ROW_LED: snprintf(v, sizeof v, "%s", g->led ? "On" : "Off"); break;
         case ROW_PORT:
             snprintf(v, sizeof v, "Port %d%s", s_port + 1, xsdk_pad_raw(s_port) ? "" : " (none)");
             break;
@@ -156,6 +159,7 @@ static void info_text(char* out, size_t cap) {
             snprintf(out, cap, "%s", s_has_128 ? "Upgraded consoles only (untested)" : "This console has 64 MB");
             break;
         case ROW_RUMBLE: snprintf(out, cap, "Controller motor strength"); break;
+        case ROW_LED: snprintf(out, cap, "Flashes on KOs, the last seconds, GAME!"); break;
         case ROW_PORT: snprintf(out, cap, "The three settings below are per port"); break;
         case ROW_STICK:
         case ROW_CSTICK:
@@ -201,7 +205,7 @@ static void draw_menu(void) {
                       : r >= ROW_RESTART           ? 0xB0C0E0
                                                    : 0xE0E4F0);
     }
-    add_row("", 0);
+    /* no blank line before the hint: 18 rows, the most that fit at 720p */
     info_text(line, sizeof line);
     add_row(line, 0xA0B4D8);
     if (s_msg_frames > 0) {
@@ -311,6 +315,11 @@ static void change(int dir, int wrap) {
         case ROW_RUMBLE:
             g->rumble = step(pct(g->rumble), dir, 25, 0, 100, wrap) / 100.0f;
             s_rumble = 20;   /* a third of a second at the new strength */
+            break;
+        case ROW_LED:
+            g->led = !g->led;
+            xhw_led_enable(g->led);   /* off: back to the SMC at once */
+            if (g->led) xhw_led_preview();
             break;
         case ROW_PORT: s_port = step(s_port, dir, 1, 0, 3, 1); break;
         case ROW_STICK: ps->stick_deadzone = step(pct(ps->stick_deadzone), dir, 5, 0, 60, wrap) / 100.0f; break;
