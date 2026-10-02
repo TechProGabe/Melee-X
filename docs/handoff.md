@@ -58,6 +58,7 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `gk` | human Kirby with Falcon's hat, Falcon Punch at frame 200 |
 | `corn`, `gg`, `gj` | Corneria, Green Greens 20 s, stage 12 |
 | `movie` | intro movie shots |
+| `settings` | title screen: the settings menu (BACK), a few rows changed, saved, reopened, Save and restart; read `[MENU]`/`[SETTINGS]` |
 
 ## Working notes (from the agent's memory)
 

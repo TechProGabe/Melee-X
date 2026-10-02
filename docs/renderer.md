@@ -175,6 +175,11 @@ misses in lookups and revalidation rather than useful work. v33:
   console waited ~3.6 ms a frame there on Fountain of Dreams; xemu, whose
   GPU is slow, went from 19 to ~33 fps in the standard match.
   `-DXGX_OVERLAP=0` restores the old order.
+  The settings menu on the title screen (`xgx_set_overlay`,
+  `xhw_overlay.c`) is the exception: its text is CPU writes into the
+  finished frame, so a present that shows it waits for the GPU before
+  writing (only there; the overlay lapses three presents after the title
+  stops refreshing it).
 - Display-list eviction scans a packed array of every slot's last use
   (8 KB) instead of a word from each 180-byte entry: 2048 cache misses per
   eviction, a few evictions a frame on Fountain of Dreams (~1.5% of the CPU).

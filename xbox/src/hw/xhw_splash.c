@@ -27,7 +27,7 @@
 #define SCR_W 640
 #define SCR_H 480
 
-static const unsigned char s_font[] = {
+const unsigned char xhw_font16[256 * 16] = {   /* also the overlay's (xhw_overlay.c) */
 #include <hal/font_unscii_16.h>
 };
 #define GLYPH_W 8
@@ -63,7 +63,7 @@ static void fill_bg(int y0, int y1) {
 
 static void draw_text(const char* s, int x, int y, int zoom, unsigned int col) {
     for (; *s; s++, x += GLYPH_W * zoom) {
-        const unsigned char* g = s_font + (unsigned char)*s * GLYPH_H;
+        const unsigned char* g = xhw_font16 + (unsigned char)*s * GLYPH_H;
         int gy, gx, zy, zx;
         for (gy = 0; gy < GLYPH_H; gy++) {
             for (gx = 0; gx < GLYPH_W; gx++) {

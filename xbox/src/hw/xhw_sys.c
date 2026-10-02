@@ -533,6 +533,42 @@ int xhw_copy_file(const char* from, const char* to) {
     return 1;
 }
 
+/* nxdk's MoveFileA never replaces (ReplaceIfExists = FALSE). The kernel's
+ * rename is asked to replace first; if FATX refuses, the destination is
+ * deleted and the rename tried again, so at worst `to` is missing and
+ * `from` holds the new contents (settings.c recovers from that). */
+static int rename_file(const char* from, const char* to, BOOLEAN replace) {
+    ANSI_STRING name;
+    OBJECT_ATTRIBUTES oa;
+    IO_STATUS_BLOCK iosb;
+    FILE_RENAME_INFORMATION ri;
+    HANDLE h;
+    NTSTATUS st;
+    RtlInitAnsiString(&name, from);
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, ObDosDevicesDirectory(), NULL);
+    if (!NT_SUCCESS(NtOpenFile(&h, DELETE | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT)))
+        return 0;
+    ri.ReplaceIfExists = replace;
+    ri.RootDirectory = ObDosDevicesDirectory();
+    RtlInitAnsiString(&ri.FileName, to);
+    st = NtSetInformationFile(h, &iosb, &ri, sizeof ri, FileRenameInformation);
+    NtClose(h);
+    return NT_SUCCESS(st);
+}
+
+int xhw_replace_file(const char* from, const char* to) {
+    int ok = rename_file(from, to, TRUE);
+    if (!ok) {
+        SetFileAttributesA(to, FILE_ATTRIBUTE_NORMAL);
+        DeleteFileA(to);
+        ok = rename_file(from, to, FALSE);
+        xhw_logf("[FILE] %s -> %s: replace refused, deleted and renamed (%s)", from, to, ok ? "ok" : "failed");
+    }
+    if (to[0] && to[1] == ':') xhw_flush_volume(to[0]);   /* FATX caches directory entries */
+    return ok;
+}
+
 int xhw_mkdir(const char* path) { return CreateDirectoryA(path, NULL) || GetLastError() == ERROR_ALREADY_EXISTS; }
 
 static void fill_entry(const WIN32_FIND_DATAA* fd, xhw_dir_entry* out) {

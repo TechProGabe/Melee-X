@@ -41,6 +41,11 @@ void xhw_autopad_apply(int port, struct xhw_pad* out);
 /* xhw_splash.c: "TechProGabe Presents..." title card */
 void xhw_splash_show(void);
 void xhw_splash_release(void);   /* the mode is about to change */
+extern const unsigned char xhw_font16[256 * 16];   /* unscii-16: 8x16, one byte a row, MSB left */
+
+/* xhw_overlay.c: the settings menu's text over a finished frame (CPU writes) */
+struct xgx_overlay;
+void xhw_overlay_draw(void* fb, int w, int h, int bpp, int pitch, const struct xgx_overlay* o);
 
 /* xhw_watchdog.c: hang dumper (hang.log + screen) */
 void xhw_watchdog_start(void);

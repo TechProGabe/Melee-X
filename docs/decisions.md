@@ -221,6 +221,21 @@ the Z-texture draw multiplies its alpha by it and alpha-tests it away
 Classic team card: fighter in front of a cleared background) but not a
 general depth replace: the draw keeps its own depth.
 
+**The settings menu is the platform's, over the title screen (after v2).**
+BACK on the title opens it (`xbox/src/sdk/menu.c`, `docs/platform.md`).
+Melee's Options menu is models and prebaked SIS strings: a page there
+would mean new menu data and many imported-code edits. The title is one
+scene with one input handler, so one `PORT:` hook there freezes it (no
+START, no attract demo) while the menu is up, and BACK is unmapped by
+default. The text is CPU writes into the finished frame with the boot
+card's 8x16 font (`xhw_overlay.c`): no GPU state, the same at 480 and at
+720p in 16-bit. A video mode, widescreen or 128 MB change is saved and
+waits for a restart (the mode, the NV2A's buffers and the pools are set up
+at boot; OpenCrossing-Xbox does the same), and "Save and restart"
+relaunches the XBE. `settings.ini` is written to a temporary file, read
+back and then renamed over the old one, so a failed write can't leave an
+empty or half file.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 
@@ -412,6 +427,10 @@ marked `PORT:`:
   was read byte-swapped, the platforms' x came out near -4e8 and
   `lbVector_WorldToScreen`'s range assert stopped the console on the first
   frame of a Big Blue match.
+- `src/melee/gm/gmtitle.c` (`gm_Scene_Title_OnFrame`), after v2: calls
+  `xsdk_menu_title_frame` (the Melee-X settings menu, BACK) first each
+  frame, under `TARGET_XBOX`; while the menu is up it returns early and
+  holds the attract timer at 0.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after

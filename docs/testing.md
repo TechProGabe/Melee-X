@@ -221,7 +221,7 @@ Everything is written to `E:\UDATA\4d580001\` (the title ID is `4d580001`):
 | `trace.log` | the `[DRAW]` lines of a `-DXGX_DEBUG_TRACE` build (COM1 still gets them), restarted at 64 MB |
 | `hang.log` | written by the watchdog: the log tail and a dump of every thread (also appended to `boot.log`) |
 | `crash.log` | written on a CPU exception: the last log lines, the fault, registers, XBE addresses found on the stack |
-| `shot00.bmp` .. `shot99.bmp` | screenshots, test builds only (`XHW_TEST_BUILD`): BACK on any controller (unmapped by default in `settings.ini`) writes the next frame as a 24-bit BMP and logs `[SHOT] wrote ...`; numbering restarts at 00 each boot. An autopad `BACK` line does the same in xemu. Y pressed while BACK is held drops every cached texture and display list at the frame end (`[DEBUG] ... caches flushed`): a surface that comes back right afterwards had its cached copy corrupted |
+| `shot00.bmp` .. `shot99.bmp` | screenshots, test builds only (`XHW_TEST_BUILD`): BACK on any controller (unmapped by default in `settings.ini`) writes the next frame as a 24-bit BMP and logs `[SHOT] wrote ...`; numbering restarts at 00 each boot. An autopad `BACK` line does the same in xemu. On the title screen BACK also opens the settings menu (in every build) Y pressed while BACK is held drops every cached texture and display list at the frame end (`[DEBUG] ... caches flushed`): a surface that comes back right afterwards had its cached copy corrupted |
 | `settings.ini` | options (`docs/platform.md`) |
 | `card_a\*.gci` | memory card saves |
 
@@ -338,7 +338,7 @@ report.
 | `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU instead of drawn by the GPU |
 | `-DXGX_DEPTH_CULL=1` | cull pixels whose depth falls outside the clip range instead of clamping it (the pre-v15 behaviour) |
 | `-DXGX_DEBUG_EFBLOG` | log the first 200 EFB copies (source rect, size, format, copy-clear depth) as `[EFB]` lines |
-| `-DXHW_TEST_BUILD=1` | console test tools: BACK takes a screenshot (BACK+Y flushes the caches) and the frame-rate counter defaults to on. Implied by `-DXHW_PROF=1` and `-DXHW_AUTOPAD=1`; a plain build is a release and has neither |
+| `-DXHW_TEST_BUILD=1` | console test tools: BACK takes a screenshot (BACK+Y flushes the caches) and the frame-rate counter defaults to on. Implied by `-DXHW_PROF=1` and `-DXHW_AUTOPAD=1`; a plain build is a release and has neither. `-DXHW_AUTOPAD=1 -DXHW_TEST_BUILD=0` is a release with scripted input (release defaults in xemu) |
 | `-DXSDK_FPS_DEFAULT=<0/1>` | the frame-rate counter's default when `settings.ini` has no `fps` line (default: `XHW_TEST_BUILD`) |
 | `-DXGX_DEBUG_TRACE` | log every draw (TEV stages, textures and their colours, konst, channels, lights, texgen matrices, screen box, blend, fog) of the frame an autopad `SHOT` or a console BACK screenshot captures, as `[DRAW]` lines (~400 KB each, in `trace.log`, not `boot.log`); on a BACK frame each EFB copy's source is also written as a `shotNN.bmp` (up to 8, announced by a `[DRAW] efb copy` line), and with `-DXHW_AUTOPAD=1` also streamed as `[FBDUMP]` (an autopad `BACK` in xemu, whose HDD is out of reach) |
 | `-DXGX_CHECK_VERTS` | check every position a display-list build decodes (model space): one at 2^20 or more, infinite or NaN is logged as `[WARN] dlist` (first 32) |
@@ -379,7 +379,8 @@ env XGX_SKIP=569-570           # -DXGX_DEBUG_TRACE: the traced frame leaves thos
 ```
 
 `MELEE_SEED=<n>` fixes the attract demo's pick, and `MELEE_NO_ATTRACT=1`
-turns the attract loop off. If a load in xemu is slow enough to trip the
+turns the attract loop off. `MELEE_BOOT_SCENE=title` starts on the title
+screen, where BACK opens the settings menu (`scenarios/settings`). If a load in xemu is slow enough to trip the
 watchdog ("frames stopped"), it logs `frames again` and the run carries on.
 
 ## First-boot checklist

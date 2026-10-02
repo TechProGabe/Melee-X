@@ -31,6 +31,11 @@
       diagnostic (BACK+Y)
 - [x] release packaging (`package_release.py`, `tools/make-xiso`), release builds
       without the test tools
+- [x] settings menu: BACK on the title screen opens a panel for `settings.ini`
+      (video output, widescreen, FPS counter, 128 MB, rumble, per-port dead zones
+      and trigger click). Counter and rumble apply live; video and RAM are saved
+      for a restart, which the menu offers (`docs/platform.md`). Button mapping
+      is still `settings.ini` only.
 - [ ] VS mode with 4 players on hardware at 60 fps
 - [ ] first public release (v36 is the candidate)
 
@@ -124,7 +129,8 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
    taking it from the game's ~7 MB.
 5. Open questions: why bank 2's real SFX fill can outgrow the game's SSM
    accounting (the overflow line logs the numbers if it happens again); the
-   FPS counter's options-menu toggle (now `settings.ini` `[video] fps`).
+   FPS counter's options-menu toggle (now the settings menu on the title
+   screen).
 
 ## Console history
 
@@ -179,13 +185,10 @@ Ideas left, in order:
 
 ## Future features
 
-- **Settings menu**: an in-game screen for what only `settings.ini` sets
-  today (`docs/platform.md`): video mode (720p / 480p / 480i, widescreen),
-  rumble, per-port button mapping and dead zones, the FPS counter. Options:
-  a page in Melee's own Options menu (imported menu code, `PORT:` edits),
-  or a separate Melee-X screen before the title (held button at boot, drawn
-  with the splash code). Writes `settings.ini`; a video-mode change needs a
-  restart (the NV2A and pools are sized at boot).
+- **Button mapping in the settings menu** (`xbox/src/sdk/menu.c`): a page
+  per port that waits for a press, as OpenCrossing's bindings page does.
+  Today the menu covers everything in `settings.ini` but the `[portN]`
+  button lines.
 
 - **Front LED effects**: the SMC takes a custom four-step red/green pattern
   over SMBus (`HalWriteSMBusValue(0x20, 0x08, 0, pattern)` then register

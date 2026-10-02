@@ -1,0 +1,30 @@
+# Settings menu on the title screen (xbox/src/sdk/menu.c): open it with BACK,
+# change a few rows, save and close, open it again, then Save and restart.
+# Build with -DXHW_AUTOPAD=1 (and -DXSDK_SETTINGS_RESET for a first boot);
+# read [MENU] and [SETTINGS] in the serial log. The restart relaunches
+# default.xbe, which runs this script again: stop the run on the second
+# boot's [SETTINGS] line or after it.
+env MELEE_BOOT_SCENE=title
+env MELEE_NO_ATTRACT=1
+400 SHOT            # title with the hint line
+430 BACK            # open
+470 SHOT            # the menu
+490 LEFT            # Video output: 480p -> 480i
+510 DOWN
+530 DOWN            # Frame-rate counter
+550 A               # on -> off (a test build's default is on), live
+570 DOWN
+590 DOWN            # Rumble
+610 LEFT            # 100% -> 75%
+630 DOWN
+650 DOWN            # Stick dead zone (port 1)
+670 RIGHT           # 20% -> 25%
+700 SHOT            # changed rows, restart mark, no counter
+720 B               # save and close
+750 SHOT            # hint line: saved, restart to apply
+800 BACK            # open again: the values stayed
+840 SHOT
+860 UP              # Save and close
+880 UP              # Save and restart
+900 SHOT
+920 A               # restart

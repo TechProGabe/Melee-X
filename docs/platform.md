@@ -139,7 +139,8 @@ started with `xhw_thread_start`.
 
 ## `settings.ini`
 
-`E:\UDATA\4d580001\settings.ini` is written with the defaults on first boot:
+`E:\UDATA\4d580001\settings.ini` is written with the defaults on first boot,
+and by the settings menu below:
 
 ```ini
 [video]
@@ -168,6 +169,49 @@ down = DOWN
 left = LEFT
 right = RIGHT
 ```
+
+Writing (`settings.c`): the file goes to `settings.tmp` first, is flushed,
+read back and parsed, and only a copy that holds the same settings is
+renamed over `settings.ini` (`xhw_replace_file`: the kernel's rename with
+replace, else delete and rename; then the volume's directory entries are
+flushed). A failed write leaves the old file and logs `[SETTINGS] save
+failed`. A `settings.tmp` with no `settings.ini` next to it is a verified
+save whose rename was cut off, and the next boot takes it. The writer
+regenerates the whole file, so comments and keys it doesn't know are
+dropped (as before). `[SETTINGS] in use: ...` and `[SETTINGS] saved: ...`
+log the values.
+
+### Settings menu (`menu.c`)
+
+BACK on the title screen ("PRESS START") opens a panel over the title; a
+hint line at the top of the title says so. `gmtitle.c` calls
+`xsdk_menu_title_frame` every title frame (`PORT:`); while the panel is up
+the title stands still (START does nothing, the attract demo's timer is
+held) and `PADRead` hands the game connected controllers with nothing
+pressed, also until the closing press is let go (one second at most).
+
+| row | values | applies |
+|---|---|---|
+| Video output | 480i, 480p, 720p (experimental) | after a restart |
+| Widescreen (16:9) | On, Off | after a restart |
+| Frame-rate counter | On, Off | at once |
+| Use 128 MB RAM | On, Off | after a restart |
+| Rumble | Off, 25-100% | at once, with a short pulse |
+| Controller | Port 1-4: the three rows below edit that port | |
+| Stick / C-stick dead zone | 0-60% in steps of 5, live stick readout | when the menu closes |
+| Trigger click | 5-255 in steps of 5, live trigger readout | when the menu closes |
+| Save and restart | writes `settings.ini`, relaunches the XBE by the name it was started with (`xhw_reboot_self`, also the game's own reset; the dashboard if that fails) | |
+| Save and close | writes `settings.ini` (B or BACK does too) | |
+
+Up/Down (D-pad or left stick) select, Left/Right or A change; every
+controller drives it, by its raw buttons, so a remapped pad still works.
+Values that only take effect after a restart get a `*` while they differ
+from the running ones; the video row says when the dashboard doesn't allow
+the chosen mode. Closing saves only when something changed. Button mapping
+stays in the file. The panel is drawn by the platform over the finished
+frame (`docs/renderer.md`), not by the game: Melee's own menus are models
+with prebaked text, and a page in its Options menu would mean new menu
+data.
 
 ## VI (`vi.c`, `xhw_video.c`)
 

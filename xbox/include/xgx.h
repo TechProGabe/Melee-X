@@ -178,6 +178,22 @@ void xgx_clear(const int32_t rect[4], const uint8_t rgba[4], uint32_t z24, int c
 /* End the frame and flip; black: output black (VISetBlack). */
 void xgx_present(int black);
 void xgx_set_fps_overlay(int on);   /* frame-rate counter in the corner (settings.ini [video] fps) */
+
+/* Text over the frame: the settings menu (xbox/src/sdk/menu.c), drawn by the
+ * CPU once the GPU has finished the frame (xhw_overlay.c). Rows of plain
+ * ASCII, each in one colour. It stays up for 3 presented frames after the
+ * last xgx_set_overlay, so whoever stops calling it takes it down. */
+#define XGX_OVERLAY_ROWS 20
+#define XGX_OVERLAY_COLS 52
+enum { XGX_OVERLAY_HINT = 0, XGX_OVERLAY_BOX = 1 };
+typedef struct xgx_overlay {
+    int32_t rows;                                   /* 0: nothing */
+    int32_t kind;                                   /* HINT: row 0 at the top; BOX: all rows on a panel */
+    int32_t cols;                                   /* BOX: panel width in characters (or the longest row) */
+    uint32_t rgb[XGX_OVERLAY_ROWS];                 /* 0xRRGGBB per row */
+    char text[XGX_OVERLAY_ROWS][XGX_OVERLAY_COLS];  /* NUL-terminated */
+} xgx_overlay;
+void xgx_set_overlay(const xgx_overlay* o);   /* copied; NULL takes it down */
 /* Frames presented so far (the watchdog's heartbeat line). */
 unsigned xgx_present_count(void);
 /* One [FBDUMP] screenshot of the next presented frame. */

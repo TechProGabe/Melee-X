@@ -1093,14 +1093,38 @@ static void fps_overlay(void) {
         }
 }
 
+/* The settings menu (xgx.h): the CPU writes it into the finished frame, so
+ * a frame that shows it waits for the GPU first. Only the title screen
+ * has it. */
+static xgx_overlay s_ovl;
+static int s_ovl_ttl;   /* presents left without a refresh */
+
+void xgx_set_overlay(const xgx_overlay* o) {
+    int r;
+    if (!o || o->rows <= 0) {
+        s_ovl_ttl = 0;
+        return;
+    }
+    s_ovl = *o;
+    if (s_ovl.rows > XGX_OVERLAY_ROWS) s_ovl.rows = XGX_OVERLAY_ROWS;
+    if (s_ovl.cols < 0 || s_ovl.cols > XGX_OVERLAY_COLS) s_ovl.cols = XGX_OVERLAY_COLS;
+    for (r = 0; r < s_ovl.rows; r++) s_ovl.text[r][XGX_OVERLAY_COLS - 1] = '\0';
+    s_ovl_ttl = 3;
+}
+
 void xgx_present(int black) {
+    int ovl;
     frame_open();
     if (black) clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 0, 0);
     pb_budget();   /* the frame's pushbuffer peak */
     if (s_fps_on && !black) fps_overlay();
+    ovl = s_ovl_ttl > 0 && !black;
     /* the next frame_open waits (XGX_OVERLAP); a screenshot reads the frame now */
-    if (!XGX_OVERLAP || s_fbdump_once || s_shot_once || (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0))
+    if (!XGX_OVERLAP || ovl || s_fbdump_once || s_shot_once ||
+        (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0))
         wait_idle();
+    if (ovl) xhw_overlay_draw(pb_back_buffer(), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch(), &s_ovl);
+    if (s_ovl_ttl > 0) s_ovl_ttl--;
     if (s_fbdump_once || (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0)) {
         s_fbdump_once = 0;
         xhw_fbdump(pb_back_buffer(), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());

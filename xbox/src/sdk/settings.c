@@ -16,7 +16,13 @@
  *   b = X               ; UP DOWN LEFT RIGHT, or NONE)
  *   ...
  *
- * Written with the defaults on first boot so it is there to edit. */
+ * Written with the defaults on first boot so it is there to edit, and by the
+ * settings menu (menu.c). A save writes settings.tmp and reads it back; only
+ * a copy that parses to the same settings replaces settings.ini
+ * (xhw_replace_file), so a failed write or a power cut leaves the old file.
+ * A settings.tmp found without a settings.ini is a verified save whose
+ * rename didn't finish, and is taken. The writer regenerates the whole
+ * file: comments and keys it doesn't know are not kept. */
 #include <dolphin/pad.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -34,6 +40,7 @@
 #endif
 
 xsdk_settings g_xsdk_settings;
+xsdk_settings g_xsdk_settings_boot;
 
 static const struct { const char* name; uint32_t bit; } k_xbox[] = {
     { "a", XHW_BTN_A }, { "b", XHW_BTN_B }, { "x", XHW_BTN_X }, { "y", XHW_BTN_Y },
@@ -70,16 +77,16 @@ static const char* gc_name(uint16_t bits) {
     return "NONE";
 }
 
-static void defaults(void) {
+static void defaults(xsdk_settings* st) {
     int p, i;
-    memset(&g_xsdk_settings, 0, sizeof g_xsdk_settings);
-    g_xsdk_settings.video_720p = 0;   /* experimental: GitHub issue #6 */
-    g_xsdk_settings.progressive = 1;
-    g_xsdk_settings.widescreen = 1;
-    g_xsdk_settings.fps = XSDK_FPS_DEFAULT;
-    g_xsdk_settings.rumble = 1.0f;
+    memset(st, 0, sizeof *st);
+    st->video_720p = 0;   /* experimental: GitHub issue #6 */
+    st->progressive = 1;
+    st->widescreen = 1;
+    st->fps = XSDK_FPS_DEFAULT;
+    st->rumble = 1.0f;
     for (p = 0; p < 4; p++) {
-        xsdk_port_settings* ps = &g_xsdk_settings.port[p];
+        xsdk_port_settings* ps = &st->port[p];
         ps->stick_deadzone = 0.20f;
         ps->cstick_deadzone = 0.25f;
         ps->trigger_click = 230;
@@ -91,6 +98,7 @@ static void defaults(void) {
 }
 
 static void path(char* out, size_t cap) { snprintf(out, cap, "%ssettings.ini", xhw_save_dir()); }
+static void tmp_path(char* out, size_t cap) { snprintf(out, cap, "%ssettings.tmp", xhw_save_dir()); }
 
 static char* trim(char* s) {
     char* e;
@@ -101,26 +109,15 @@ static char* trim(char* s) {
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+static int pct(float f) { return (int)(f * 100.0f + 0.5f); }
 
-void xsdk_settings_load(void) {
-    char p[260], line[256], section[32] = "";
-    FILE* f;
-    int saw_fps = 0, saw_progressive = 0, saw_ram128 = 0;
-    defaults();
-    path(p, sizeof p);
-#ifdef XSDK_SETTINGS_RESET
-    /* test builds: start from the settings.ini staged next to default.xbe
-     * (MX_STAGE_EXTRA), or from none, as on a first boot */
-    remove(p);
-    if (xhw_copy_file("D:\\settings.ini", p)) xhw_logf("[SETTINGS] %s from D:\\settings.ini (XSDK_SETTINGS_RESET)", p);
-    else xhw_logf("[SETTINGS] removed %s (XSDK_SETTINGS_RESET)", p);
-#endif
-    f = fopen(p, "r");
-    if (!f) {
-        xsdk_settings_save();
-        xgx_set_fps_overlay(g_xsdk_settings.fps);
-        return;
-    }
+enum { SAW_FPS = 1, SAW_PROGRESSIVE = 2, SAW_RAM128 = 4, SAW_PORT4 = 8 };
+
+/* the file's keys over the defaults into *st; returns the SAW_* found */
+static int parse(FILE* f, xsdk_settings* st) {
+    char line[256], section[32] = "";
+    int saw = 0;
+    defaults(st);
     while (fgets(line, sizeof line, f)) {
         char *s = trim(line), *eq, *key, *val;
         char* semi = strchr(s, ';');
@@ -131,6 +128,7 @@ void xsdk_settings_load(void) {
             char* end = strchr(s, ']');
             if (end) *end = '\0';
             snprintf(section, sizeof section, "%s", s + 1);
+            if (_stricmp(section, "port4") == 0) saw |= SAW_PORT4;
             continue;
         }
         if (!(eq = strchr(s, '='))) continue;
@@ -138,16 +136,16 @@ void xsdk_settings_load(void) {
         key = trim(s);
         val = trim(eq + 1);
         if (_stricmp(section, "video") == 0) {
-            if (_stricmp(key, "720p") == 0) g_xsdk_settings.video_720p = atoi(val) != 0;
-            else if (_stricmp(key, "progressive") == 0) g_xsdk_settings.progressive = atoi(val) != 0, saw_progressive = 1;
-            else if (_stricmp(key, "widescreen") == 0) g_xsdk_settings.widescreen = atoi(val) != 0;
-            else if (_stricmp(key, "fps") == 0) g_xsdk_settings.fps = atoi(val) != 0, saw_fps = 1;
+            if (_stricmp(key, "720p") == 0) st->video_720p = atoi(val) != 0;
+            else if (_stricmp(key, "progressive") == 0) st->progressive = atoi(val) != 0, saw |= SAW_PROGRESSIVE;
+            else if (_stricmp(key, "widescreen") == 0) st->widescreen = atoi(val) != 0;
+            else if (_stricmp(key, "fps") == 0) st->fps = atoi(val) != 0, saw |= SAW_FPS;
         } else if (_stricmp(section, "system") == 0) {
-            if (_stricmp(key, "ram128") == 0) g_xsdk_settings.ram128 = atoi(val) != 0, saw_ram128 = 1;
+            if (_stricmp(key, "ram128") == 0) st->ram128 = atoi(val) != 0, saw |= SAW_RAM128;
         } else if (_stricmp(section, "input") == 0) {
-            if (_stricmp(key, "rumble") == 0) g_xsdk_settings.rumble = clampi(atoi(val), 0, 100) / 100.0f;
+            if (_stricmp(key, "rumble") == 0) st->rumble = clampi(atoi(val), 0, 100) / 100.0f;
         } else if (_strnicmp(section, "port", 4) == 0 && section[4] >= '1' && section[4] <= '4') {
-            xsdk_port_settings* ps = &g_xsdk_settings.port[section[4] - '1'];
+            xsdk_port_settings* ps = &st->port[section[4] - '1'];
             int i;
             if (_stricmp(key, "stick_deadzone") == 0) ps->stick_deadzone = clampi(atoi(val), 0, 60) / 100.0f;
             else if (_stricmp(key, "cstick_deadzone") == 0) ps->cstick_deadzone = clampi(atoi(val), 0, 60) / 100.0f;
@@ -157,39 +155,129 @@ void xsdk_settings_load(void) {
                     if (_stricmp(key, k_xbox[i].name) == 0) ps->bind[i].gc = gc_bits(val);
         }
     }
+    return saw;
+}
+
+/* equal as the file holds them (percentages rounded) */
+int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
+    int p, i;
+    if (a->video_720p != b->video_720p || a->progressive != b->progressive || a->widescreen != b->widescreen ||
+        a->fps != b->fps || a->ram128 != b->ram128 || pct(a->rumble) != pct(b->rumble))
+        return 0;
+    for (p = 0; p < 4; p++) {
+        const xsdk_port_settings *x = &a->port[p], *y = &b->port[p];
+        if (pct(x->stick_deadzone) != pct(y->stick_deadzone) || pct(x->cstick_deadzone) != pct(y->cstick_deadzone) ||
+            x->trigger_click != y->trigger_click)
+            return 0;
+        for (i = 0; i < N_XBOX; i++)
+            if (x->bind[i].gc != y->bind[i].gc) return 0;
+    }
+    return 1;
+}
+
+static void log_summary(const char* what) {
+    const xsdk_settings* st = &g_xsdk_settings;
+    const xsdk_port_settings* p1 = &st->port[0];
+    xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, ram128 %d, rumble %d, port 1 dead "
+             "zones %d/%d, trigger click %d",
+             what, st->video_720p, st->progressive, st->widescreen, st->fps, st->ram128, pct(st->rumble),
+             pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click);
+}
+
+void xsdk_settings_load(void) {
+    char p[260], t[260];
+    FILE* f;
+    int saw;
+    path(p, sizeof p);
+    tmp_path(t, sizeof t);
+#ifdef XSDK_SETTINGS_RESET
+    /* test builds: start from the settings.ini staged next to default.xbe
+     * (MX_STAGE_EXTRA), or from none, as on a first boot */
+    remove(p);
+    remove(t);
+    if (xhw_copy_file("D:\\settings.ini", p)) xhw_logf("[SETTINGS] %s from D:\\settings.ini (XSDK_SETTINGS_RESET)", p);
+    else xhw_logf("[SETTINGS] removed %s (XSDK_SETTINGS_RESET)", p);
+#endif
+    f = fopen(p, "r");
+    if (!f && (f = fopen(t, "r")) != NULL) {
+        /* xsdk_settings_save only removes settings.ini once settings.tmp
+         * has been read back whole: a power cut between the two */
+        fclose(f);
+        f = NULL;
+        if (xhw_replace_file(t, p)) {
+            xhw_logf("[SETTINGS] %s taken from settings.tmp (an unfinished save)", p);
+            f = fopen(p, "r");
+        }
+    }
+    if (!f) {
+        defaults(&g_xsdk_settings);
+        xsdk_settings_save();
+        g_xsdk_settings_boot = g_xsdk_settings;
+        xgx_set_fps_overlay(g_xsdk_settings.fps);
+        return;
+    }
+    saw = parse(f, &g_xsdk_settings);
     fclose(f);
     xhw_logf("[SETTINGS] loaded %s", p);
     /* v1 wrote 720p = 1 and had no progressive line: 720p is opt-in now */
-    if (!saw_progressive) {
+    if (!(saw & SAW_PROGRESSIVE)) {
         g_xsdk_settings.video_720p = 0;
         xhw_logf("[SETTINGS] file from v1: 720p turned off (experimental now)");
     }
-    if (!saw_fps || !saw_progressive || !saw_ram128) xsdk_settings_save();   /* add the missing lines */
+    log_summary("in use");
+    if ((saw & (SAW_FPS | SAW_PROGRESSIVE | SAW_RAM128)) != (SAW_FPS | SAW_PROGRESSIVE | SAW_RAM128))
+        xsdk_settings_save();   /* add the missing lines */
+    g_xsdk_settings_boot = g_xsdk_settings;
     xgx_set_fps_overlay(g_xsdk_settings.fps);
 }
 
-void xsdk_settings_save(void) {
-    char p[260];
-    FILE* f;
+static void write_all(FILE* f, const xsdk_settings* st) {
     int port, i;
-    path(p, sizeof p);
-    f = fopen(p, "w");
-    if (!f) return;
     fprintf(f, "; Melee-X settings. Buttons: Xbox = GameCube (A B X Y Z L R START UP DOWN LEFT RIGHT NONE)\n");
     fprintf(f, "; Video: 720p = 1 is experimental (needs 720p on in the dashboard). progressive = 0 forces 480i.\n");
-    fprintf(f, "[video]\n720p = %d\nprogressive = %d\nwidescreen = %d\nfps = %d\n\n", g_xsdk_settings.video_720p,
-            g_xsdk_settings.progressive, g_xsdk_settings.widescreen, g_xsdk_settings.fps);
+    fprintf(f, "; BACK on the title screen opens a menu for the settings above the buttons.\n");
+    fprintf(f, "[video]\n720p = %d\nprogressive = %d\nwidescreen = %d\nfps = %d\n\n", st->video_720p, st->progressive,
+            st->widescreen, st->fps);
     fprintf(f, "; ram128 = 1 uses the RAM above 64 MB on an upgraded console (untested; off: it runs as 64 MB).\n");
-    fprintf(f, "[system]\nram128 = %d\n\n", g_xsdk_settings.ram128);
-    fprintf(f, "[input]\nrumble = %d\n\n", (int)(g_xsdk_settings.rumble * 100.0f + 0.5f));
+    fprintf(f, "[system]\nram128 = %d\n\n", st->ram128);
+    fprintf(f, "[input]\nrumble = %d\n\n", pct(st->rumble));
     for (port = 0; port < 4; port++) {
-        const xsdk_port_settings* ps = &g_xsdk_settings.port[port];
+        const xsdk_port_settings* ps = &st->port[port];
         fprintf(f, "[port%d]\nstick_deadzone = %d\ncstick_deadzone = %d\ntrigger_click = %d\n", port + 1,
-                (int)(ps->stick_deadzone * 100.0f + 0.5f), (int)(ps->cstick_deadzone * 100.0f + 0.5f),
-                ps->trigger_click);
+                pct(ps->stick_deadzone), pct(ps->cstick_deadzone), ps->trigger_click);
         for (i = 0; i < N_XBOX; i++) fprintf(f, "%s = %s\n", k_xbox[i].name, gc_name(ps->bind[i].gc));
         fprintf(f, "\n");
     }
+}
+
+int xsdk_settings_save(void) {
+    static xsdk_settings s_check;   /* the read-back */
+    char p[260], t[260];
+    FILE* f;
+    int ok;
+    path(p, sizeof p);
+    tmp_path(t, sizeof t);
+    f = fopen(t, "w");
+    if (!f) {
+        xhw_logf("[SETTINGS] save failed: can't create %s", t);
+        return 0;
+    }
+    write_all(f, &g_xsdk_settings);
     xhw_flush(f);
-    fclose(f);
+    ok = !ferror(f);
+    if (fclose(f) != 0) ok = 0;
+    /* only a complete copy replaces settings.ini */
+    if (ok && (f = fopen(t, "r")) != NULL) {
+        ok = (parse(f, &s_check) & SAW_PORT4) && xsdk_settings_equal(&s_check, &g_xsdk_settings);
+        fclose(f);
+    } else {
+        ok = 0;
+    }
+    if (!ok || !xhw_replace_file(t, p)) {
+        xhw_logf("[SETTINGS] save failed (%s): %s left as it was", ok ? "rename" : "write or read-back", p);
+        remove(t);
+        return 0;
+    }
+    log_summary("saved");
+    return 1;
 }

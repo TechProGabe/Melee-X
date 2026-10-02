@@ -29,6 +29,10 @@ void* xsdk_aram_base(void);
 u32 xsdk_aram_size(void);
 u32 xsdk_aram_disc_kb(void);   /* ARAM contents left on the disc image */
 
+/* pad.c: a controller as PADRead last read it (NULL: not connected) */
+struct xhw_pad;
+const struct xhw_pad* xsdk_pad_raw(int port);
+
 /* vi.c: frame boundary */
 void xsdk_frame_boundary(void);
 

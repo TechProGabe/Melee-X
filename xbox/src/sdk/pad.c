@@ -64,20 +64,39 @@ static u16 map_buttons(uint32_t b, const xsdk_port_settings* ps) {
     return out;
 }
 
+/* the controllers as PADRead last read them, for the settings menu (menu.c) */
+static xhw_pad s_raw[PORTS];
+static int s_raw_ok[PORTS];
+
+const xhw_pad* xsdk_pad_raw(int port) {
+    return port >= 0 && port < PORTS && s_raw_ok[port] ? &s_raw[port] : NULL;
+}
+
 u32 PADRead(PADStatus* status) {
     u32 motors = 0;
-    int i;
+    uint32_t all = 0;
+    int i, block;
     xhw_pad_poll();
+    for (i = 0; i < PORTS; i++) {
+        s_raw_ok[i] = xhw_pad_get(i, &s_raw[i]);
+        if (s_raw_ok[i]) all |= s_raw[i].buttons;
+    }
+    /* the settings menu is up, or its closing press is still held */
+    block = xsdk_menu_block(all);
     for (i = 0; i < PORTS; i++) {
         PADStatus* s = &status[i];
         const xsdk_port_settings* ps = &g_xsdk_settings.port[i];
-        xhw_pad p;
+        xhw_pad p = s_raw[i];
         memset(s, 0, sizeof *s);
-        if (!xhw_pad_get(i, &p)) {
+        if (!s_raw_ok[i]) {
             s->err = PAD_ERR_NO_CONTROLLER;
             continue;
         }
         s->err = PAD_ERR_NONE;
+        if (block) {   /* connected, nothing pressed */
+            motors |= 0x80000000u >> i;
+            continue;
+        }
         /* in-game reset: L + R + BACK + BLACK on any controller, back to
          * the dashboard (not the usual BACK + START: L + R + START is
          * Melee's own reset from the pause menu) */

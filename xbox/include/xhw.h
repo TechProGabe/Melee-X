@@ -117,6 +117,9 @@ const char* xhw_save_dir(void);
 int xhw_mkdir(const char* path);
 /* Copies a file, replacing the destination; 0 on failure. */
 int xhw_copy_file(const char* from, const char* to);
+/* Renames `from` over `to` (same volume) and flushes the volume's directory
+ * entries; 0 on failure. */
+int xhw_replace_file(const char* from, const char* to);
 typedef struct xhw_dir_entry { char name[64]; int is_dir; uint32_t size; } xhw_dir_entry;
 /* pattern like "E:\\dir\\*.gci"; returns a handle (NULL: nothing found).
  * xhw_dir_next returns 0 at the end and closes the handle. */

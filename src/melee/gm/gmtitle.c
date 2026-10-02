@@ -282,10 +282,24 @@ HSD_Archive* gmTitle_801A1AC0(void)
     return archive;
 }
 
+#ifdef TARGET_XBOX
+/* PORT: the Melee-X settings menu (xbox/src/sdk/menu.c) */
+int xsdk_menu_title_frame(void);
+#endif
+
 void gm_Scene_Title_OnFrame(void)
 {
     int input = gm_GetButtonsTriggered(PAD_MAX_CONTROLLERS);
     int* tmp;
+#ifdef TARGET_XBOX
+    /* PORT: BACK opens the settings menu over the title. While it is up
+     * the title stands still: no START, and the attract demo's timer
+     * starts again once it closes. */
+    if (xsdk_menu_title_frame()) {
+        frame_count = 0;
+        return;
+    }
+#endif
     if (countdown_timer != 0) {
         countdown_timer--;
         return;
