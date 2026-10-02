@@ -13,9 +13,31 @@
 
 int melee_main(void);
 
+/* BACK held on any controller while Melee-X starts (the splash says so):
+ * 480i for a TV that doesn't show the mode the settings ask for (720p by
+ * default where the dashboard allows it). Read before the settings load,
+ * so the press can't reach the BACK screenshot. */
+static int safe_video_held(void) {
+    xhw_pad p;
+    int i;
+    xhw_pad_poll();
+    for (i = 0; i < 4; i++)
+        if (xhw_pad_get(i, &p) && (p.buttons & XHW_BTN_BACK)) return 1;
+    return 0;
+}
+
 /* before the video mode is chosen */
 void xsdk_early(void) {
+    int safe = safe_video_held();
     xsdk_settings_load();
+    if (safe) {
+        /* saved, so the next boot stays visible too; the menu turns them back on */
+        g_xsdk_settings.video_720p = 0;
+        g_xsdk_settings.progressive = 0;
+        xsdk_settings_save();
+        g_xsdk_settings_boot = g_xsdk_settings;
+        xhw_logf("[VIDEO] BACK held at boot: 480i (720p and progressive off in settings.ini)");
+    }
     xhw_video_set_pref_720p(g_xsdk_settings.video_720p);
     xhw_video_set_pref_480p(g_xsdk_settings.progressive);
     if (!g_xsdk_settings.ram128) {

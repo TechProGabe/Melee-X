@@ -2,8 +2,9 @@
  *
  * 640x480 at 32 bits by default: progressive when the dashboard allows 480p
  * (settings.ini can force 480i), 16:9 when the dashboard is set to
- * widescreen. 720p is experimental and opt-in (settings.ini `720p = 1`, and
- * the dashboard must allow it on this AV pack): 1280x720, always 16:9, at
+ * widescreen. 720p is the default where the dashboard allows it on this AV
+ * pack (settings.ini `720p = 1`; BACK held at boot gives 480i, boot.c):
+ * 1280x720, always 16:9, at
  * 16-bit colour with a Z16 depth buffer, since three 1280x720x32
  * framebuffers plus depth don't fit next to the game in 64 MB
  * (OpenCrossing-Xbox's measurement). */

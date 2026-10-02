@@ -8,7 +8,7 @@ This isn't an emulator. The [doldecomp](https://github.com/doldecomp/melee) proj
 
 - 4 players on the 4 controller ports, with rumble
 - 480i or 480p, 4:3 or 16:9, picked from your dashboard's video settings. Tested on composite and on component cables to an HDTV
-- 720p is experimental and off until you turn it on. It's a lot faster than it used to be (Final Destination with 4 players runs around 45 fps), but busy stages still dip and a few textures are off
+- 720p when your dashboard has it turned on. It's sharp and holds up well now, though busy stages still dip below 60. Hold **Back** while Melee-X starts if your TV ever shows nothing, and you'll get 480i
 - A settings menu right on the title screen: press **Back** there (more below)
 - Hold L + R + Back + Black to quit back to the dashboard
 - The Xbox's front light joins in: it flashes in a player's colour when they lose a stock, counts down the last seconds of a timed match and goes wild on GAME!
@@ -99,10 +99,12 @@ Your dashboard decides what your TV and cables can handle. Melee-X never goes pa
 
 - **480i** works on everything, composite included. This is what you get if the dashboard has 480p turned off.
 - **480p** needs component cables (or a VGA/HDMI adapter) and 480p turned on in the dashboard. Sharper, and the best way to play right now.
-- **720p** needs component cables and 720p turned on in the dashboard, plus turning it on in Melee-X. It's experimental: it's sharp and runs fine on simpler stages, but heavier ones dip and a few textures are still off.
+- **720p** needs component cables and 720p turned on in the dashboard. Melee-X uses it whenever the dashboard allows it. It's the sharpest option; busy stages dip below 60 there, a bit more than at 480.
 - **Widescreen** shows more of the stage left and right instead of stretching it. Set widescreen in the dashboard and leave it on in Melee-X. 720p is always widescreen.
 
 If you pick something in the menu that your dashboard doesn't allow, the menu tells you what you'll actually get, like `480p -> 480i`.
+
+**Black screen?** Some TVs don't show 720p even when the dashboard has it turned on. Hold **Back** on any controller while Melee-X starts (the loading screen says so). That boot comes up in 480i, which every TV shows, and it switches 720p and 480p off in your settings so it stays that way. Turn them back on in the menu whenever you like.
 
 ## Settings menu
 
@@ -110,7 +112,7 @@ Press **Back** on the title screen ("Press Start") and the settings menu opens. 
 
 | option | what it does |
 |---|---|
-| Video output | 480i, 480p or 720p (experimental). Takes effect after a restart |
+| Video output | 480i, 480p or 720p. Takes effect after a restart |
 | Widescreen (16:9) | 16:9 at 480i/480p when the dashboard is set to widescreen. After a restart |
 | Frame-rate counter | shows the fps in the top left corner, right away |
 | BACK screenshots | when on, pressing Back saves a screenshot (`shotNN.bmp`) next to your settings. Handy for bug reports |
@@ -124,11 +126,11 @@ Anything that needs a restart gets a `*` next to it. Button remapping isn't in t
 
 ## Settings file
 
-Everything the menu changes lives in `E:\UDATA\4d580001\settings.ini`, and you can edit it over FTP too. Melee-X writes it the first time it boots. Delete it if you ever want to go back to the defaults. A file written by v1 is updated on the first boot of v2: 720p is switched off there, since v1 turned it on by default.
+Everything the menu changes lives in `E:\UDATA\4d580001\settings.ini`, and you can edit it over FTP too. Melee-X writes it the first time it boots. Delete it if you ever want to go back to the defaults.
 
 | section | setting | what it does |
 |---|---|---|
-| `[video]` | `720p` | experimental: 1 uses 720p when your dashboard has it turned on (needs component cables). Off by default; a dashboard set to 720p still gets 480p. Busy stages still dip at 720p |
+| `[video]` | `720p` | 1 (the default) uses 720p when your dashboard has it turned on (needs component cables); otherwise you get 480p or 480i. 0 sticks to 480 |
 | | `progressive` | 0 forces 480i even when your dashboard allows 480p |
 | | `widescreen` | 1 draws 16:9 at 480i/480p when the dashboard is set to widescreen |
 | | `fps` | 1 shows a frame counter in the top left corner (off by default) |

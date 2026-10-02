@@ -1,7 +1,7 @@
 /* settings.c - E:\UDATA\<title>\settings.ini
  *
  *   [video]
- *   720p = 1            ; use 720p (16:9) when the dashboard allows it
+ *   720p = 1            ; use 720p (16:9) when the dashboard allows it (default)
  *   widescreen = 1      ; 16:9 at 480 when the dashboard is set to widescreen
  *   fps = 1             ; frame-rate counter in the top-left corner
  *   [system]
@@ -82,7 +82,7 @@ static const char* gc_name(uint16_t bits) {
 static void defaults(xsdk_settings* st) {
     int p, i;
     memset(st, 0, sizeof *st);
-    st->video_720p = 0;   /* experimental: GitHub issue #6 */
+    st->video_720p = 1;   /* only where the dashboard allows 720p (xhw_video.c); BACK at boot: 480i */
     st->progressive = 1;
     st->widescreen = 1;
     st->fps = XSDK_FPS_DEFAULT;
@@ -237,11 +237,6 @@ void xsdk_settings_load(void) {
     saw = parse(f, &g_xsdk_settings);
     fclose(f);
     xhw_logf("[SETTINGS] loaded %s", p);
-    /* v1 wrote 720p = 1 and had no progressive line: 720p is opt-in now */
-    if (!(saw & SAW_PROGRESSIVE)) {
-        g_xsdk_settings.video_720p = 0;
-        xhw_logf("[SETTINGS] file from v1: 720p turned off (experimental now)");
-    }
     /* a hand-edited ram128 = 1 on a 64 MB console: off (written as 0 by
      * the next save) */
     if (g_xsdk_settings.ram128 && !xhw_mem_has_upper()) {
@@ -260,7 +255,8 @@ void xsdk_settings_load(void) {
 static void write_all(FILE* f, const xsdk_settings* st) {
     int port, i;
     fprintf(f, "; Melee-X settings. Buttons: Xbox = GameCube (A B X Y Z L R START UP DOWN LEFT RIGHT NONE)\n");
-    fprintf(f, "; Video: 720p = 1 is experimental (needs 720p on in the dashboard). progressive = 0 forces 480i.\n");
+    fprintf(f, "; Video: 720p = 1 uses 720p when the dashboard allows it. progressive = 0 forces 480i.\n");
+    fprintf(f, "; Hold BACK while Melee-X starts for 480i (sets 720p = 0 and progressive = 0).\n");
     fprintf(f, "; BACK on the title screen opens a menu for the settings above the buttons.\n");
     fprintf(f, "[video]\n720p = %d\nprogressive = %d\nwidescreen = %d\nfps = %d\n\n", st->video_720p, st->progressive,
             st->widescreen, st->fps);

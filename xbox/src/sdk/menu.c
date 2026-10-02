@@ -87,7 +87,7 @@ static int video_used(const xsdk_settings* st) {
     return st->progressive && s_dash_480p ? 1 : 0;
 }
 static const char* const k_video_short[3] = { "480i", "480p", "720p" };
-static const char* const k_video[3] = { "480i", "480p", "720p (experimental)" };
+static const char* const k_video[3] = { "480i", "480p", "720p" };
 
 static int stick_pct(int16_t x, int16_t y) {
     float fx = x / 32767.0f, fy = y / 32767.0f, m = sqrtf(fx * fx + fy * fy);

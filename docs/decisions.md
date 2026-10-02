@@ -9,7 +9,7 @@ changing one, update this file.
 |---|---|
 | Game data | Read the user's own `GALE01` (NTSC-U 1.02, revision 2) disc image at runtime, from `.iso`, `.gcm` or `.ciso` next to `default.xbe`. Nothing from the disc is converted ahead of time or committed. |
 | 720p aspect | 16:9 widescreen (hor+) at 720p, using melee-pc's widescreen code. 480 follows the dashboard's 4:3 / 16:9 setting. |
-| Video defaults | 480i/480p from the dashboard; 720p experimental and opt-in (`720p = 1`). v1 used 720p whenever the dashboard allowed it, and only 480i 4:3 had been tested on hardware (the intro hang in #5/#6 turned out to be the flip bug in `xgx_present`, not the mode). `progressive = 0` forces 480i. |
+| Video defaults | 720p where the dashboard allows it (`720p = 1` by default since v45; console-tested at v44: no faults, textures right after the Z16 depth remap), else 480p/480i from the dashboard. BACK held at boot gives 480i and saves `720p = 0`, `progressive = 0`, so a TV that can't show the dashboard's 720p is never stuck on a black screen. History: v1 used 720p by default; v2-v44 kept it opt-in while it was slow and had faults. `progressive = 0` forces 480i. |
 | OpenCrossing-Xbox | Reuse its port layer where it applies: the audio drivers, the crash reporter, the TEV -> register combiner compiler, pbkit patches, video mode rules and hardware notes. |
 | Controller layout | GameCube-like by position: A=A, X=B, B=X, Y=Y, White/Black=Z, triggers=analog L/R, right stick=C-stick. It can be remapped per port. |
 | Players | 4, one per physical controller port. |

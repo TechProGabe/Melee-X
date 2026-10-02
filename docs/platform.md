@@ -144,7 +144,7 @@ and by the settings menu below:
 
 ```ini
 [video]
-720p = 0            ; 1: use 720p (16:9) when the dashboard allows it (experimental)
+720p = 1            ; use 720p (16:9) when the dashboard allows it; 0: 480 only
 progressive = 1     ; 0: 480i even where the dashboard allows 480p
 widescreen = 1      ; 16:9 at 480 when the dashboard is set to widescreen
 fps = 0             ; frame-rate counter in the top-left corner (default: 1 in test builds, 0 in a release)
@@ -206,7 +206,7 @@ by the next save.
 
 | row | values | applies |
 |---|---|---|
-| Video output | 480i, 480p, 720p (experimental); `480p -> 480i` etc. when the dashboard doesn't allow the chosen mode (the ini only allows a mode) | after a restart |
+| Video output | 480i, 480p, 720p; `480p -> 480i` etc. when the dashboard doesn't allow the chosen mode (the ini only allows a mode) | after a restart |
 | Widescreen (16:9) | On, Off; `On -> Off` at 480 when the dashboard is 4:3 | after a restart |
 | Frame-rate counter | On, Off | at once |
 | BACK screenshots | On, Off (`[system] screenshots`; on in test builds): BACK saves `shotNN.bmp` next to `settings.ini` | at once |
@@ -292,8 +292,12 @@ LED; the `[LED]` lines are the test.
 
 ## VI (`vi.c`, `xhw_video.c`)
 
-- 720p is experimental and opt-in: it is used when `720p = 1`, the
-  dashboard allows it and at least 32 MB is free at boot. Otherwise the
+- 720p is the default: it is used when `720p = 1` (the default), the
+  dashboard allows it and at least 32 MB is free at boot. BACK held on any
+  controller while Melee-X starts (`boot.c`, read once the splash has
+  enumerated the pads) gives 480i and saves `720p = 0`, `progressive = 0`:
+  the way out for a TV that doesn't show the dashboard's 720p. The splash
+  itself is in the dashboard's mode and says so. Otherwise the
   mode is 640x480 at 32 bits: 480p when the dashboard allows it and
   `progressive = 1`, else 480i; 16:9 if the dashboard is set to widescreen.
   The game sees progressive through `VIGetDTVStatus`.

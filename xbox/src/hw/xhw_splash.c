@@ -127,6 +127,8 @@ void xhw_splash_show(void) {
         draw_centered(SPLASH_TEXT, TITLE_Y, TITLE_ZOOM, rgb(v, v, v));
         Sleep(30);
     }
+    /* the splash is in the dashboard's own mode, so this shows on any TV */
+    draw_centered("Hold BACK for 480i (safe video)", SCR_H - 64, 1, rgb(110, 120, 140));
     xhw_splash_progress(0.0f);
     xhw_logf("[BOOT] splash: %s", SPLASH_TEXT);
 #ifdef XHW_SPLASH_DUMP
