@@ -127,7 +127,9 @@ console's address in `MX_FTP_HOST`):
 3. `console.py deploy vNN` deletes the console's old logs and shots, then
    uploads (the XBE and icon to `/F/Applications/Melee-X/`, the dashboard
    files to `/E/UDATA/4d580001/`) and re-downloads each file to compare.
-4. The user plays; in a test build BACK takes a screenshot of anything wrong.
+4. The user plays; BACK takes a screenshot of anything wrong (test builds, or
+   a release with the settings menu's "BACK screenshots" on). `boot.log` of the
+   boot before is kept as `boot_prev.log` (a restart no longer loses it).
 5. `console.py pull vNN` fetches `boot*.log`, `trace.log`, `crash.log`,
    `hang.log` and the `shotNN.bmp` files into `logsNN/`; symbolize with that
    build's map. Pull before the game is launched again: each boot deletes

@@ -85,8 +85,12 @@ void xhw_flush_handle(HANDLE h) {
 }
 
 void xhw_log_open_file(void) {
-    char path[MAX_PATH];
+    char path[MAX_PATH], prev[MAX_PATH];
     snprintf(path, sizeof path, "%sboot.log", xhw_save_dir());
+    /* the previous boot's log stays as boot_prev.log: a "Save and restart"
+     * or a relaunch after a freeze would otherwise wipe the one that matters */
+    snprintf(prev, sizeof prev, "%sboot_prev.log", xhw_save_dir());
+    if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) xhw_replace_file(path, prev);
     s_bootlog = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     /* the previous session's continuation files would read as this one's */
     snprintf(path, sizeof path, "%sboot2.log", xhw_save_dir());

@@ -8,7 +8,8 @@ This isn't an emulator. The [doldecomp](https://github.com/doldecomp/melee) proj
 
 - 4 players on the 4 controller ports, with rumble
 - 480i or 480p, 4:3 or 16:9, picked from your dashboard's video settings. Tested on composite and on component cables to an HDTV
-- 720p is experimental and stays off unless you turn it on in `settings.ini` (matches run slowly there and some graphics are wrong)
+- 720p is experimental and off until you turn it on. It's a lot faster than it used to be (Final Destination with 4 players runs around 45 fps), but busy stages still dip and a few textures are off
+- A settings menu right on the title screen: press **Back** there (more below)
 - Hold L + R + Back + Black to quit back to the dashboard
 - Saves use the GameCube `.gci` format, so your Dolphin or memory card save works here and the other way around
 
@@ -91,17 +92,46 @@ To bring over a save from Dolphin or a real memory card:
 
 Going the other way works too: copy the `.gci` off the Xbox and import it into Dolphin.
 
-## Settings
+## Video modes, the short version
 
-Settings are in `E:\UDATA\4d580001\settings.ini`. Melee-X writes it the first time it boots, and you can edit it over FTP. A file written by v1 is updated on the first boot of v2: 720p is switched off there, since v1 turned it on by default.
+Your dashboard decides what your TV and cables can handle. Melee-X never goes past what the dashboard allows, it can only pick something lower.
+
+- **480i** works on everything, composite included. This is what you get if the dashboard has 480p turned off.
+- **480p** needs component cables (or a VGA/HDMI adapter) and 480p turned on in the dashboard. Sharper, and the best way to play right now.
+- **720p** needs component cables and 720p turned on in the dashboard, plus turning it on in Melee-X. It's experimental: it's sharp and runs fine on simpler stages, but heavier ones dip and a few textures are still off.
+- **Widescreen** shows more of the stage left and right instead of stretching it. Set widescreen in the dashboard and leave it on in Melee-X. 720p is always widescreen.
+
+If you pick something in the menu that your dashboard doesn't allow, the menu tells you what you'll actually get, like `480p -> 480i`.
+
+## Settings menu
+
+Press **Back** on the title screen ("Press Start") and the settings menu opens. Up and down pick a row, left and right (or A) change it, and B saves and closes.
+
+| option | what it does |
+|---|---|
+| Video output | 480i, 480p or 720p (experimental). Takes effect after a restart |
+| Widescreen (16:9) | 16:9 at 480i/480p when the dashboard is set to widescreen. After a restart |
+| Frame-rate counter | shows the fps in the top left corner, right away |
+| BACK screenshots | when on, pressing Back saves a screenshot (`shotNN.bmp`) next to your settings. Handy for bug reports |
+| Use 128 MB RAM | only for consoles upgraded to 128 MB. On a stock 64 MB Xbox it's locked off, so you can't break anything |
+| Rumble | off, or 25% to 100% |
+| Controller, dead zones, trigger click | pick a port, then set its stick dead zones and how far the triggers go in before they count as a full press |
+| Save and restart | saves and relaunches Melee-X, so video changes kick in |
+
+Anything that needs a restart gets a `*` next to it. Button remapping isn't in the menu yet, that's still done in the file below.
+
+## Settings file
+
+Everything the menu changes lives in `E:\UDATA\4d580001\settings.ini`, and you can edit it over FTP too. Melee-X writes it the first time it boots. Delete it if you ever want to go back to the defaults. A file written by v1 is updated on the first boot of v2: 720p is switched off there, since v1 turned it on by default.
 
 | section | setting | what it does |
 |---|---|---|
-| `[video]` | `720p` | experimental: 1 uses 720p when your dashboard has it turned on (needs component cables). Off by default; a dashboard set to 720p still gets 480p. Matches run slowly at 720p for now |
+| `[video]` | `720p` | experimental: 1 uses 720p when your dashboard has it turned on (needs component cables). Off by default; a dashboard set to 720p still gets 480p. Busy stages still dip at 720p |
 | | `progressive` | 0 forces 480i even when your dashboard allows 480p |
 | | `widescreen` | 1 draws 16:9 at 480i/480p when the dashboard is set to widescreen |
 | | `fps` | 1 shows a frame counter in the top left corner (off by default) |
-| `[system]` | `ram128` | 1 lets a console upgraded to 128 MB use all of it. Off by default: Melee-X then runs in the first 64 MB, the setup it was tested on |
+| `[system]` | `ram128` | 1 lets a console upgraded to 128 MB use all of it. Off by default: Melee-X then runs in the first 64 MB, the setup it was tested on. Ignored on a 64 MB console |
+| | `screenshots` | 1 makes Back save a screenshot (`shotNN.bmp` in the same folder) |
 | `[input]` | `rumble` | rumble strength in percent, 0 turns it off |
 | `[port1]` to `[port4]` | `stick_deadzone`, `cstick_deadzone` | stick dead zones in percent |
 | | `trigger_click` | how far (0-255) a trigger goes in before it counts as a full L/R press |
@@ -128,7 +158,7 @@ Hold **L + R + Back + Black** on any controller to quit to the dashboard.
 
 ## If something breaks
 
-Logs go to `E:\UDATA\4d580001\`: `boot.log` always, plus `crash.log` or `hang.log` if it went wrong. Attach those (and a photo if the screen showed an error) when you open an issue.
+Logs go to `E:\UDATA\4d580001\`: `boot.log` always, `boot_prev.log` from the launch before that, plus `crash.log` or `hang.log` if it went wrong. Attach those (and a photo if the screen showed an error) when you open an issue. If something looks wrong rather than crashing, turn on BACK screenshots in the settings menu and press Back when you see it.
 
 ## Building it yourself
 

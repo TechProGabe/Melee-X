@@ -30,11 +30,11 @@
 #include "xsdk_settings.h"
 
 enum {
-    ROW_VIDEO, ROW_WIDE, ROW_FPS, ROW_RAM, ROW_RUMBLE, ROW_PORT, ROW_STICK, ROW_CSTICK, ROW_TRIGGER,
+    ROW_VIDEO, ROW_WIDE, ROW_FPS, ROW_SHOTS, ROW_RAM, ROW_RUMBLE, ROW_PORT, ROW_STICK, ROW_CSTICK, ROW_TRIGGER,
     ROW_RESTART, ROW_CLOSE, N_ROWS
 };
 static const char* const k_label[N_ROWS] = {
-    "Video output", "Widescreen (16:9)", "Frame-rate counter", "Use 128 MB RAM", "Rumble", "Controller",
+    "Video output", "Widescreen (16:9)", "Frame-rate counter", "BACK screenshots", "Use 128 MB RAM", "Rumble", "Controller",
     "  Stick dead zone", "  C-stick dead zone", "  Trigger click", "Save and restart", "Save and close",
 };
 
@@ -78,6 +78,13 @@ static int restart_needed(void) {
 }
 
 static int video_index(const xsdk_settings* st) { return st->video_720p ? 2 : st->progressive ? 1 : 0; }
+/* what the console would run with these settings: the ini only allows a
+ * mode, the dashboard has to allow it too (xhw_video.c) */
+static int video_used(const xsdk_settings* st) {
+    if (st->video_720p && s_dash_720p) return 2;
+    return st->progressive && s_dash_480p ? 1 : 0;
+}
+static const char* const k_video_short[3] = { "480i", "480p", "720p" };
 static const char* const k_video[3] = { "480i", "480p", "720p (experimental)" };
 
 static int stick_pct(int16_t x, int16_t y) {
@@ -92,14 +99,18 @@ static void row_text(int r, char* out, size_t cap) {
     int sel = r == s_sel, boot_only = 0;
     switch (r) {
         case ROW_VIDEO:
-            snprintf(v, sizeof v, "%s", k_video[video_index(g)]);
+            if (video_used(g) == video_index(g)) snprintf(v, sizeof v, "%s", k_video[video_index(g)]);
+            else snprintf(v, sizeof v, "%s -> %s", k_video_short[video_index(g)], k_video_short[video_used(g)]);
             boot_only = video_index(g) != video_index(&g_xsdk_settings_boot);
             break;
         case ROW_WIDE:
-            snprintf(v, sizeof v, "%s", g->widescreen ? "On" : "Off");
+            /* 720p is 16:9 whatever this says; at 480 the dashboard must agree */
+            if (g->widescreen && !s_dash_wide && video_used(g) < 2) snprintf(v, sizeof v, "On -> Off");
+            else snprintf(v, sizeof v, "%s", g->widescreen ? "On" : "Off");
             boot_only = g->widescreen != g_xsdk_settings_boot.widescreen;
             break;
         case ROW_FPS: snprintf(v, sizeof v, "%s", g->fps ? "On" : "Off"); break;
+        case ROW_SHOTS: snprintf(v, sizeof v, "%s", g->shots ? "On" : "Off"); break;
         case ROW_RAM:
             snprintf(v, sizeof v, "%s", !s_has_128 ? "Off (64 MB console)" : g->ram128 ? "On" : "Off");
             boot_only = g->ram128 != g_xsdk_settings_boot.ram128;
@@ -140,6 +151,7 @@ static void info_text(char* out, size_t cap) {
             else snprintf(out, cap, "At 480 lines; 720p is always 16:9");
             break;
         case ROW_FPS: snprintf(out, cap, "Frames per second, top-left corner"); break;
+        case ROW_SHOTS: snprintf(out, cap, "BACK saves shotNN.bmp next to settings.ini"); break;
         case ROW_RAM:
             snprintf(out, cap, "%s", s_has_128 ? "Upgraded consoles only (untested)" : "This console has 64 MB");
             break;
@@ -287,6 +299,10 @@ static void change(int dir, int wrap) {
         case ROW_FPS:
             g->fps = !g->fps;
             xgx_set_fps_overlay(g->fps);
+            break;
+        case ROW_SHOTS:
+            g->shots = !g->shots;
+            xhw_pad_set_shots(g->shots);
             break;
         case ROW_RAM:
             if (!s_has_128) return;   /* 64 MB: stays off */

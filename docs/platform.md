@@ -202,9 +202,10 @@ by the next save.
 
 | row | values | applies |
 |---|---|---|
-| Video output | 480i, 480p, 720p (experimental) | after a restart |
-| Widescreen (16:9) | On, Off | after a restart |
+| Video output | 480i, 480p, 720p (experimental); `480p -> 480i` etc. when the dashboard doesn't allow the chosen mode (the ini only allows a mode) | after a restart |
+| Widescreen (16:9) | On, Off; `On -> Off` at 480 when the dashboard is 4:3 | after a restart |
 | Frame-rate counter | On, Off | at once |
+| BACK screenshots | On, Off (`[system] screenshots`; on in test builds): BACK saves `shotNN.bmp` next to `settings.ini` | at once |
 | Use 128 MB RAM | On, Off; on a 64 MB console "Off (64 MB console)", greyed, can't be changed | after a restart |
 | Rumble | Off, 25-100% | at once, with a short pulse |
 | Controller | Port 1-4: the three rows below edit that port | |
@@ -216,8 +217,9 @@ by the next save.
 Up/Down (D-pad or left stick) select, Left/Right or A change; every
 controller drives it, by its raw buttons, so a remapped pad still works.
 Values that only take effect after a restart get a `*` while they differ
-from the running ones; the video row says when the dashboard doesn't allow
-the chosen mode. Closing saves only when something changed. Button mapping
+from the running ones; the video and widescreen rows show what the console
+will actually run (`chosen -> used`) when the dashboard doesn't allow the
+chosen mode. Closing saves only when something changed. Button mapping
 stays in the file. The panel is drawn by the platform over the finished
 frame (`docs/renderer.md`), not by the game: Melee's own menus are models
 with prebaked text, and a page in its Options menu would mean new menu

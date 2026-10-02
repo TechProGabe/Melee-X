@@ -151,6 +151,7 @@ enum {
     XHW_BTN_RIGHT = 1u << 13,
 };
 void xhw_pad_poll(void);                       /* once per PADRead */
+void xhw_pad_set_shots(int on);                /* BACK screenshots (always on in test builds) */
 int xhw_pad_get(int port, xhw_pad* out);       /* port 0..3; returns connected */
 void xhw_pad_rumble(int port, uint16_t low, uint16_t high);
 /* BACK+Y: drop every cached texture and display list at the next frame end

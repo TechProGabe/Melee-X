@@ -13,9 +13,10 @@ env MELEE_NO_ATTRACT=1
 510 DOWN
 530 DOWN            # Frame-rate counter
 550 A               # on -> off (a test build's default is on), live
-570 DOWN
-590 DOWN            # Rumble
-610 LEFT            # 100% -> 75%
+570 DOWN            # BACK screenshots
+590 DOWN
+600 DOWN            # Rumble
+615 LEFT            # 100% -> 75%
 630 DOWN
 650 DOWN            # Stick dead zone (port 1)
 670 RIGHT           # 20% -> 25%

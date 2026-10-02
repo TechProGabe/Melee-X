@@ -31,7 +31,7 @@ USER = os.environ.get("MX_FTP_USER", "xbox")
 PASS = os.environ.get("MX_FTP_PASS", "xbox")
 APP = "/F/Applications/Melee-X"
 UDATA = "/E/UDATA/4d580001"
-LOGS = re.compile(r"^(shot\d+\.bmp|boot\d?\.log|trace\.log|crash\.log|hang\.log)$")
+LOGS = re.compile(r"^(shot\d+\.bmp|boot(\d|_prev)?\.log|trace\.log|crash\.log|hang\.log)$")
 FILES = {"default.xbe": APP, "default.tbn": APP, "TitleImage.xbx": UDATA, "TitleMeta.xbx": UDATA}
 
 
