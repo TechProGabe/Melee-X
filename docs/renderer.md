@@ -124,6 +124,12 @@ was a render pass of its own (~75 µs of emulation, ~90% of a match frame).
   batch they join may be open already, and a stale read of their four
   vertices puts the quad anywhere. Both are the v40 candidate fix for the
   console's `LIMIT_COLOR` stall on the copy quad's `END` (`roadmap.md`).
+- An EFB copy reads exactly its source rect: a target pixel's centre
+  samples the source pixel under it (`efb_copy_gpu`'s corners, `pix_x`/
+  `pix_y` in `read_rect_cpu`). Until v40 both paths sampled one pixel right
+  and down; the scissor's extra column had covered that, and with the exact
+  scissor the shadow maps' last row and column read black past their white
+  background (black bands across the stage floor near fighters).
 - Build switches undo these v26 GPU-side changes one at a time, to bisect
   the console's GPU stalls (Pokémon Stadium, v27/v28): `-DXGX_PB_KICK=4096`,
   `-DXGX_VB_CACHE_BREAK=0`, `-DXGX_VBUF_FREE_NOW=0`. A stall report

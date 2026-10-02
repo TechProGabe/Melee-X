@@ -98,6 +98,10 @@ void xgx_content_size(uint32_t* w, uint32_t* h) {
 /* logical (EFB) -> framebuffer, edges rounded so abutting rects stay abutting */
 static int map_x(float x) { return s_cx + (int)floorf(x * (float)s_cw / XGX_EFB_W + 0.5f); }
 static int map_y(float y) { return s_cy + (int)floorf(y * (float)s_ch / XGX_EFB_H + 0.5f); }
+/* the framebuffer pixel that holds an EFB position (map_x/map_y round an edge
+ * to the nearest pixel boundary; a sample point takes the pixel it is in) */
+static int pix_x(float x) { return s_cx + (int)floorf(x * (float)s_cw / XGX_EFB_W); }
+static int pix_y(float y) { return s_cy + (int)floorf(y * (float)s_ch / XGX_EFB_H); }
 
 /* ======================================================================
  * Contiguous memory: texture pool and vertex ring
@@ -2429,11 +2433,11 @@ static void read_rect_cpu(const int32_t src[4], uint32_t dw, uint32_t dh, uint32
     if (dw > 1024) dw = 1024;
     /* the column map is the same for every row: once per copy, not per pixel */
     for (x = 0; x < dw; x++) {
-        int fx = map_x(src[0] + (x + 0.5f) * (float)src[2] / (float)dw);
+        int fx = pix_x(src[0] + (x + 0.5f) * (float)src[2] / (float)dw);
         col[x] = fx >= s_fbw ? s_fbw - 1 : fx < 0 ? 0 : fx;
     }
     for (y = 0; y < dh; y++) {
-        int fy = map_y(src[1] + (y + 0.5f) * (float)src[3] / (float)dh);
+        int fy = pix_y(src[1] + (y + 0.5f) * (float)src[3] / (float)dh);
         const uint8_t* row;
         uint32_t* out = argb + y * dw;
         if (fy >= s_fbh) fy = s_fbh - 1;
@@ -2523,8 +2527,8 @@ static void copy_combiners(int mode) {
 static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     static const VpKey k_copy = { .copy = 1 };
     uint32_t pw = t->w, ph = t->h, fb = (uint32_t)pb_back_buffer() & 0x03FFFFFF, i;
-    float u0 = s_cx + src[0] * (float)s_cw / XGX_EFB_W + 0.5f, u1 = u0 + src[2] * (float)s_cw / XGX_EFB_W;
-    float v0 = s_cy + src[1] * (float)s_ch / XGX_EFB_H + 0.5f, v1 = v0 + src[3] * (float)s_ch / XGX_EFB_H;
+    float u0 = s_cx + src[0] * (float)s_cw / XGX_EFB_W, u1 = u0 + src[2] * (float)s_cw / XGX_EFB_W;
+    float v0 = s_cy + src[1] * (float)s_ch / XGX_EFB_H, v1 = v0 + src[3] * (float)s_ch / XGX_EFB_H;
     /* nearest, unless the copy is smaller than its source (copy_dim) */
     uint32_t filt = (float)pw < u1 - u0 - 0.5f || (float)ph < v1 - v0 - 0.5f ? 2 : 1;
     float* v;
@@ -2541,8 +2545,12 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
         xhw_perf_leave(pf);
         return;
     }
-    /* x y z u v: the texture's corners and the source rect's, in texels
-     * (+0.5: nearest sampling picks the texel the CPU path rounds to) */
+    /* x y z u v: the texture's corners and the source rect's, in texels.
+     * A target pixel's centre then samples the centre of the source pixel
+     * under it. (Until v40 both corners had +0.5, and read_rect_cpu rounded
+     * the same way: each texel read the next pixel along. The scissor's
+     * old extra column covered that; with the scissor exact, the copy's
+     * last row and column read black past the shadow map's background.) */
     {
         const float q[4][5] = { { 0, 0, 1, u0, v0 }, { (float)pw, 0, 1, u1, v0 },
                                 { 0, (float)ph, 1, u0, v1 }, { (float)pw, (float)ph, 1, u1, v1 } };
