@@ -116,7 +116,9 @@ static void row_text(int r, char* out, size_t cap) {
         case ROW_TRIGGER: snprintf(v, sizeof v, "%d", ps->trigger_click); break;
     }
     if (!v[0]) snprintf(out, cap, "%s %s", sel ? ">" : " ", k_label[r]);
-    else if (sel) snprintf(out, cap, "> %-20s < %s >%s", k_label[r], v, boot_only ? " *" : "");
+    else if (sel && !(r == ROW_RAM && !s_has_128))   /* no arrows on the locked row */
+        snprintf(out, cap, "> %-20s < %s >%s", k_label[r], v, boot_only ? " *" : "");
+    else if (sel) snprintf(out, cap, "> %-20s   %s", k_label[r], v);
     else snprintf(out, cap, "  %-20s   %s%s", k_label[r], v, boot_only ? " *" : "");
 }
 
