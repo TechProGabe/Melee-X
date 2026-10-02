@@ -109,6 +109,12 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
 - Fountain of Dreams runs ~40 fps on the console in a 1v1 (v2 report:
   ~55k vertices and ~540 draws a frame, render 11-12 ms). Frame rate work
   is in "Next".
+- Fox costs more than other characters: four Foxes on Fountain of Dreams
+  run ~10 fps lower than a mixed 4-player match (console, v43-era build).
+  Not profiled yet. Suspects: his reflector/shine and blaster effects,
+  afterimage trails, or a heavier model (vertex/draw count). A
+  `-DXHW_PROF=1` run with 4x Fox vs 4x another character should show
+  whether it is sim or render time.
 - Results screen (a tester's console, RC1 = v42): the winner's portrait box (1st
   place, under the crown) draws black; the 2nd-4th portraits are fine.
   Not looked into yet; the results screen also does ~6 EFB copies a frame.
