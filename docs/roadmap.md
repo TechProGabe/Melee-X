@@ -211,6 +211,13 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   113 min without a stall; retest 100-Man on the next tester build. If it
   comes back: check the zeta DMA context and limit at the clear after a
   copy.
+- Adventure, Corneria (console, v43): in the cutscene that cuts to the
+  Star Fox team in their Arwings, nobody speaks (no voice lines) and
+  Falco's face just stares (no mouth or face animation). Suspects: the
+  voice clips (a separate sound bank or stream not loaded or not played)
+  and the face animation that is driven with them; or the comm window is
+  a render-to-texture / EFB copy showing a stale frame. Reproduce with
+  Adventure's Corneria stage (or a boot-scene shortcut to it).
 - Credits: the screen goes black now and then (issue #5, not reproduced
   yet; `scenarios/toy` with a second START shows ~10 s of them fine).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
