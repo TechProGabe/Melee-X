@@ -1,28 +1,46 @@
 # Handoff: state and working notes
 
-Updated 2026-10-01 after the Windows round (v33-v36). The agent's memory
+The agent's memory
 notes don't travel between machines, so what they held is here. Read
 `CLAUDE.md`, then this, then `docs/roadmap.md`.
 
 ## Where it stands
 
-- **On the console: v36** = commit `e1aa2f4`, a plain (release) build. Its
-  map and static-symbol list are `tools/xbox/maps/melee_x.v36.map(.statics)`.
-  Release candidate: "fully playable, 30-60 fps". `bce3d0f` after it only
-  makes plain builds drop the test tools (no BACK screenshots, counter off).
-- **v36 playtest** (2026-10-01, ~30 min, last boot's log ~14 min): no
-  crash, no hang, one `AC97 polled` line. A 10-minute match held 30-54 fps
-  (36.7 average, sim ~8 ms + render ~12 ms a frame, 1.6 ticks per render).
-  Big Blue plays (v35 stopped on its first frame). Details and what the log
-  showed: `docs/roadmap.md` "Where it stands".
-- **Performance so far** (console, 4-CPU Fountain of Dreams): v32 ~21 fps,
-  v33 24-27 (CPU/GPU overlap), v34 28-33 (prefetch, cheaper back end), v35
-  envelope memo on top. Where the time goes and what's left:
-  `docs/roadmap.md` "Performance plan".
+Updated 2026-10-02 (Mac round, v39-v45).
+
+- **On the console: v45** = commit `52ccaff`, a plain (release) build, the
+  release candidate (RC2). Stage and map: `~/xemu/hw/stage-v45`,
+  `~/xemu/hw/melee_x.v45.map`. The tester copy is
+  `~/Downloads/Melee-X-RC2/` (+ `.zip`, with `README.txt`); it goes out only
+  after the console checks pass (user's rule: test on our hardware first).
+- **v45 over v43:** results winner portrait and 1P Stage Clear freeze frame
+  fixed; 720p z-fighting fixed (Z16 depth remap, `-DXGX_Z16_DEPTH_RATIO`);
+  Fountain of Dreams reflection skips fighters outside it (4x Fox much
+  faster); front LED effects (`led = 1`, menu row); 720p is the default
+  where the dashboard allows it, BACK held at boot gives 480i and saves
+  `720p = 0`, `progressive = 0`.
+- **Console results:** v43 ran 60 min on Fountain + 47 min on Peach's
+  Castle (480i) without the GPU stall, then a whole-system freeze at 113 min
+  uptime (no fault, no hang report; same as v39). v44 at 480 and 720p:
+  clean, LED works, winner portrait fixed, Fountain faster, 720p textures
+  right. v45 not checked yet: first boot in 720p, BACK-at-boot 480i, then a
+  60-min 720p burn-in (Fountain, 4 CPUs, items) - pull its logs.
+- **Open, in `docs/roadmap.md` "Known issues":** memory leak since v39
+  (~55 KB/min in 192 KB steps, `[BEAT]` free), long-uptime whole-system
+  freeze, Pokémon Stadium screen flicker (cause found; the first fix broke
+  Stage Clear), Peach's Castle Bullet Bill stuck + endless quake, Fire
+  Flower flame missing, Corneria Arwing cutscene silent, trophy lighting,
+  100-Man freeze (tester, v42; retest on RC2).
+- **Merge gate** (user's rule): every subagent branch gets the main
+  session's code review plus before/after FBDUMP shots (gl vs the v43
+  baseline `~/xemu/mc/v43_00{1,2,3}.png`, and the scenes it touches) before
+  it goes on `dev`. Gate script and shot diff helper: see the session notes
+  in the agent memory; scenarios `res`, `clear`, `toy` are new.
 - **Releases build on GitHub** (user's rule): the `build` workflow with a
   `release` tag builds, tests, packages and publishes (`docs/toolchain.md`
-  "Release"). v1 is the first. The repo stays private until the user says
-  to make it public. Never commit or push without the user's go-ahead.
+  "Release"). The repo stays private until the user says to make it public.
+  Never commit or push without the user's go-ahead; `dev` is the working
+  branch, `main` is releases only.
 
 ## Windows setup
 
