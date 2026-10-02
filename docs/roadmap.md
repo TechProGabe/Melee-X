@@ -150,6 +150,25 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   is spawned in the second phase, nothing frees it and the Bill frees
   itself without it. Reproduce in xemu with Peach's Castle and Bullet
   Bills; log the phase changes, `xCA`, and the anim end check.
+- Fire Flower (console, v43, 480i, Temple): the flame stream is not drawn
+  at all while Mario holds and fires it. The flame is a particle effect
+  (`src/sysdolphin/baselib/psdisp.c` / the item's effect), so check its
+  draw path: blend/TEV mode, texture format, or a primitive type the
+  back end drops. Other particles (smoke, hits) do draw.
+- Whole-system freeze after a long uptime, twice: v39 (results screen,
+  ~82 min) and v43 (Peach's Castle, 113 min: 60 on Fountain, 47 on
+  Peach's). The log stops between two 5 s heartbeats with normal
+  `[PERF]` before it; no first fault, no hang report (the watchdog thread
+  stopped too), audio repeats its last buffer. Not the GPU stall path.
+  Suspects: an interrupt-level or kernel lockup, or a GPU hang that
+  takes the memory bus with it.
+- Memory leak, new after v39: `[BEAT]` free memory falls ~55 KB a minute
+  in 192 KB steps during matches (v42: 8.9 -> 5.5 MB in 33 min; v43:
+  9.7 -> 3.6 MB in 110 min; v39 stayed at 8.7 MB for 75 min). MEM1+ARAM
+  barely moves (+64 KB), no overflow texture pool, no new allocation in
+  the v39..v43 diff; "ARAM on disc" was 12 MB vs 9.6 MB in v39. Would run
+  out after ~3 hours. Next: log a per-subsystem memory breakdown each
+  minute and run 15-20 min in xemu.
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
