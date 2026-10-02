@@ -184,5 +184,6 @@ Not affiliated with or endorsed by Nintendo or Microsoft. Super Smash Bros. Mele
 - [encounter/aurora](https://github.com/encounter/aurora) for the Dolphin SDK headers
 - [nxdk](https://github.com/XboxDev/nxdk), [xemu](https://xemu.app) and [xdvdfs](https://github.com/antangelo/xdvdfs), the open Xbox toolchain, emulator and ISO packer
 - maple72, for testing release candidates on real hardware and reporting what broke
+- wadeonxbox, for the early hardware reports and logs that tracked down the v1 boot hang
 
 > AI tools (Claude) were used in developing this port.
