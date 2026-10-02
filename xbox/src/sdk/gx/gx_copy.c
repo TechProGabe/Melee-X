@@ -81,7 +81,7 @@ void GXSetTexCopyDst(u16 wd, u16 ht, GXTexFmt fmt, GXBool mipmap) {
  * unless the format has its own alpha), and the R/G/B/A copies are sampled
  * as I4/I8 of that channel. Shadow maps are GX_CTF_R4. */
 static int copy_mode(uint32_t fmt) {
-    if (fmt & _GX_TF_ZTF) return XGX_COPY_ALPHA;   /* depth: the mask xgx_ztex_mask leaves in alpha */
+    if (fmt & _GX_TF_ZTF) return XGX_COPY_ALPHA;   /* depth: the mask xgx_ztex_mask leaves (GXCopyTex) */
     switch (fmt) {
         case GX_TF_I4: case GX_TF_I8: return XGX_COPY_LUMA;
         case GX_TF_IA4: case GX_TF_IA8: return XGX_COPY_LUMA_ALPHA;
@@ -113,7 +113,7 @@ void GXCopyTex(void* dest, GXBool clear) {
     /* a depth copy for GXSetZTexture: in front of the depth this copy's
      * clear primes is what the Z-texture draw lets through (the Classic
      * team cards copy each fighter's depth and draw them back masked) */
-    if ((g_gx.tex_copy_fmt & _GX_TF_ZTF) && !xgx_ztex_mask(g_gx.tex_copy_src, g_gx.clear_z)) mode = XGX_COPY_COLOR;
+    if (g_gx.tex_copy_fmt & _GX_TF_ZTF) mode = xgx_ztex_mask(g_gx.tex_copy_src, g_gx.clear_z, clear);
     tex = xgx_tex_from_efb(g_gx.tex_copy_src, w, h, mode, gx_tex_efb_texture(dest));
     /* pool full: the overflow pool when only this frame's textures are left
      * (as uploads do), else evict and copy again (eviction may have taken

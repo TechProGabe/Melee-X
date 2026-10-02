@@ -2936,13 +2936,16 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
  * rect, then a quad just in front of z24 that writes alpha 1 where the
  * stored depth is nearer still (GREATER). The copy that follows takes that
  * alpha (XGX_COPY_ALPHA); the draw multiplies its alpha by it and drops
- * the 0s (derive_units, emit_fixed). */
-int xgx_ztex_mask(const int32_t src[4], uint32_t z24) {
+ * the 0s (derive_units, emit_fixed). R5G6B5 (720p) has no alpha: there the
+ * mask goes into green (XGX_COPY_GREEN, which the copy also puts in its
+ * alpha), but only when the copy clears the rect after itself, as the team
+ * card's does; it overwrites the rect's colour. */
+int xgx_ztex_mask(const int32_t src[4], uint32_t z24, int clears) {
 #if XGX_EFB_GPU_COPY
     static const VpKey k_mask = { .copy = 1 };
     int x0, y0, x1, y1, i;
     float z, *v;
-    if (s_bpp != 32) return 0;   /* R5G6B5 has no alpha */
+    if (s_bpp != 32 && !clears) return XGX_COPY_COLOR;
     x0 = map_x((float)src[0]);
     y0 = map_y((float)src[1]);
     x1 = map_x((float)(src[0] + src[2]));
@@ -2951,11 +2954,11 @@ int xgx_ztex_mask(const int32_t src[4], uint32_t z24) {
     if (y0 < 0) y0 = 0;
     if (x1 > s_fbw) x1 = s_fbw;
     if (y1 > s_fbh) y1 = s_fbh;
-    if (x1 <= x0 || y1 <= y0) return 0;
+    if (x1 <= x0 || y1 <= y0) return XGX_COPY_COLOR;
     frame_open();
     pb_budget();
     v = (float*)xgx_vtx_alloc(4, 20);
-    if (!v) return 0;
+    if (!v) return XGX_COPY_COLOR;
     /* a little in front of z24: the cleared background holds exactly z24,
      * and the quad's interpolated depth there must not round past it */
     z24 &= 0xFFFFFFu;
@@ -2972,13 +2975,14 @@ int xgx_ztex_mask(const int32_t src[4], uint32_t z24) {
     put1(NV097_SET_BLEND_ENABLE, 0);
     put1(NV097_SET_LOGIC_OP_ENABLE, 0);
     put1(NV097_SET_CULL_FACE_ENABLE, 0);
-    put1(NV097_SET_COLOR_MASK, NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE);
+    put1(NV097_SET_COLOR_MASK,
+         s_bpp == 32 ? NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE : NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE);
+    if (s_bpp != 32) put1(NV097_SET_DITHER_ENABLE, 0);   /* on for every 16-bit draw (emit_fixed) */
     put1(NV097_SET_WINDOW_CLIP_HORIZONTAL, (uint32_t)(s_fbw - 1) << 16);   /* max inclusive */
     put1(NV097_SET_WINDOW_CLIP_VERTICAL, (uint32_t)(s_fbh - 1) << 16);
     for (i = 0; i < 4; i++) put1(NV097_SET_TEXTURE_CONTROL0 + i * 64, 0);
     put1(NV097_SET_SHADER_STAGE_PROGRAM, 0);
     put1(NV097_SET_COMBINER_CONTROL, 1u | (1u << 12) | (1u << 16));
-    put1(NV097_SET_COMBINER_COLOR_ICW, CR_ONE << 24 | CR_ONE << 16);
     put1(NV097_SET_COMBINER_COLOR_OCW, CR_AB_TO(CR_R0));
     put1(NV097_SET_COMBINER_SPECULAR_FOG_CW0, (uint32_t)CR_R0 << 8);   /* out = R0 */
     put1(NV097_SET_COMBINER_SPECULAR_FOG_CW1, (uint32_t)(CR_R0 | 1 << 4) << 8 | 0x80);
@@ -2998,17 +3002,20 @@ int xgx_ztex_mask(const int32_t src[4], uint32_t z24) {
      * everywhere. 1: alpha 0. 2: alpha 1 where the depth buffer is nearer
      * than z (GREATER: the quad is behind what was drawn). */
     for (i = 0; i < 3; i++) {
+        uint32_t c = i == 2 ? CR_ONE : CR_ZERO;
         put1(NV097_SET_DEPTH_TEST_ENABLE, i != 1);
         put1(NV097_SET_DEPTH_FUNC, i ? 0x204 : 0x200);
         put1(NV097_SET_DEPTH_MASK, i == 0);
-        put1(NV097_SET_COMBINER_ALPHA_ICW, (i == 2 ? CR_ONE : CR_ZERO) << 24 | CR_ONE << 16);
+        /* the colour mask keeps alpha only, or green only at 16-bit */
+        put1(NV097_SET_COMBINER_COLOR_ICW, c << 24 | CR_ONE << 16);
+        put1(NV097_SET_COMBINER_ALPHA_ICW, c << 24 | CR_ONE << 16);
         put1(NV097_SET_COMBINER_ALPHA_OCW, CR_AB_TO(CR_R0));
         put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_TRIANGLE_STRIP);
         *P++ = 1u << 18 | NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_DRAW_ARRAYS);
         *P++ = 3u << 24;   /* 4 vertices from 0 */
         put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
     }
-    put1(NV097_WAIT_FOR_IDLE, 0);   /* the alpha is in the framebuffer before the copy reads it */
+    put1(NV097_WAIT_FOR_IDLE, 0);   /* the mask is in the framebuffer before the copy reads it */
     put1(NV097_SET_STENCIL_TEST_ENABLE, 1);   /* as pbkit leaves it */
 
     /* the game's state goes back at the next draw */
@@ -3018,11 +3025,12 @@ int xgx_ztex_mask(const int32_t src[4], uint32_t z24) {
     s_rc_valid = 0;
     s_vp_cur = -1;
     s_draw_force = XGX_DIRTY_ALL;
-    return 1;
+    return s_bpp == 32 ? XGX_COPY_ALPHA : XGX_COPY_GREEN;
 #else
     (void)src;
     (void)z24;
-    return 0;
+    (void)clears;
+    return XGX_COPY_COLOR;
 #endif
 }
 

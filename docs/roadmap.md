@@ -124,6 +124,10 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   `-DXHW_PROF=1` round on the console (the frame rate, and what is left
   of `render`/`sim` at 720p), and an A/B of `-DOCX_Z16_TILE_FLAGS`
   (`0x80000001`, `0x00000001`) against the visual faults.
+  v38 left no screenshots of the faults; in xemu 720p matches look like
+  480 (no z-fighting at Z16). Fixed on dev: Classic team cards unmasked at
+  720p (the Z-texture mask now goes into green, `renderer.md`). Take BACK
+  screenshots of what is wrong on the console.
 - Fixed on dev: at 16:9 (console, v38, 480p; 720p too) the in-match timer
   sat right of centre. melee-pc's wide HUD anchored it to the right edge,
   but its joint is at x = 0, top centre, which hor+ already keeps centred

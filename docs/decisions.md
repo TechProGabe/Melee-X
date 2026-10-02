@@ -219,7 +219,9 @@ writes a 0/1 mask into the framebuffer's alpha, the copy carries it, and
 the Z-texture draw multiplies its alpha by it and alpha-tests it away
 (`docs/renderer.md`). That is exact for what Melee uses it for (the
 Classic team card: fighter in front of a cleared background) but not a
-general depth replace: the draw keeps its own depth.
+general depth replace: the draw keeps its own depth. At 16-bit colour
+(720p) there is no alpha, so the mask is written into green, and only for
+a depth copy that clears its rect afterwards (the colour there is lost).
 
 **The settings menu is the platform's, over the title screen (after v2).**
 BACK on the title opens it (`xbox/src/sdk/menu.c`, `docs/platform.md`).

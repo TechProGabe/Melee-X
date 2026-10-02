@@ -253,11 +253,13 @@ enum {
     XGX_COPY_ALPHA,
 };
 uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int mode, uint32_t reuse);
-/* Before a depth-format copy of the logical rect: writes the framebuffer's
- * alpha there as 1 where the depth is in front of z24 and 0 elsewhere, for
- * an XGX_COPY_ALPHA copy to carry (the Z-texture emulation, XgxState.ztex).
- * 0 when the framebuffer has no alpha (16-bit 720p). */
-int xgx_ztex_mask(const int32_t src[4], uint32_t z24);
+/* Before a depth-format copy of the logical rect: writes a mask there, 1
+ * where the depth is in front of z24 and 0 elsewhere, for the copy to carry
+ * (the Z-texture emulation, XgxState.ztex). Returns the XGX_COPY_* mode that
+ * reads it: XGX_COPY_ALPHA, or at 16-bit (no alpha) XGX_COPY_GREEN, written
+ * over the rect's colour and so only when the copy clears it (clears != 0);
+ * XGX_COPY_COLOR when no mask was drawn. */
+int xgx_ztex_mask(const int32_t src[4], uint32_t z24, int clears);
 /* EFB -> CPU (GXCopyTex into memory the game reads): logical rect, RGBA8 out */
 void xgx_read_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, uint8_t* rgba);
 

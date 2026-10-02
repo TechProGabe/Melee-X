@@ -267,6 +267,10 @@ the interval's peak and mid-frame restarts.
   converts them to the surface's format: `clear_fb` converted them to
   R5G6B5 first as well, so every 16-bit clear colour (a stage's fog-coloured
   clear) came out near black.
+  Z16 with Melee's near 0.1 / far 16384 has about `d^2 / 6550` units of
+  depth resolution at distance `d`; xemu 0.8 floors depth to 16 bits as
+  the hardware does, and the 720p Dream Land and Pokémon Stadium runs show
+  no z-fighting.
 
 ## Vertex programs (`nv2a_vp.c`)
 
@@ -448,9 +452,12 @@ Current limits:
   work only in the movie recipe;
 - TEV swap tables: permutations are approximated by the identity;
 - indirect texturing: only what the NV2A's BUMPENVMAP can do (below);
-- destination alpha is missing at 720p (R5G6B5 has no alpha), and an EFB
-  copy there samples alpha 1 (an I4/R4 copy's alpha is its intensity on
-  the GameCube; HSD's shadow maps take alpha from APREV, not the map);
+- destination alpha: R5G6B5 (720p) has none, so `GX_BL_DSTALPHA` reads 1
+  there. That is what the GameCube does too: HSD only ever sets
+  `GX_PF_RGB8_Z24` (`HSD_StartRender`), an EFB without alpha. The 32-bit
+  framebuffer keeps an alpha channel GX wouldn't have. An EFB copy at
+  720p samples alpha 1 (an I4/R4 copy's alpha is its intensity on the
+  GameCube; HSD's shadow maps take alpha from APREV, not the map);
 - texture-matrix index attributes (TEXnMTXIDX) are ignored.
 
 ## Indirect texturing (`nv2a.c`)
@@ -737,7 +744,11 @@ Dolphin:
   has depth writes on and `NEVER` as its test: it changes nothing, but
   xemu only rebinds its depth buffer for a draw that may write depth, and
   after the EFB colour copy just before (a swizzled target) it had none,
-  so every pixel passed. Not at 720p (16-bit colour, no alpha): there the
-  depth copy stays a colour copy, as before.
+  so every pixel passed. At 720p (R5G6B5, no alpha) the mask goes into
+  green instead and the copy reads it as `XGX_COPY_GREEN` (which also
+  fills the copy's alpha). That overwrites the rect's colour, so it is only
+  done when the depth copy clears the rect after itself, as the team
+  card's does (`gm_1832.c`: colour copy first, then the depth copy with
+  clear); otherwise the copy stays a colour copy and the draw is unmasked.
 - Known wrong in xemu: Mute City's distant skyline band renders as white
   speckle.
