@@ -121,6 +121,12 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   graphics for a few frames when it switches to the fight camera. The
   screen is an EFB copy (640x406 -> copy_dim); a stale or wrong-size copy
   target on the switch is the first suspect. Third copy-related report.
+- Trophy transition (same tester, RC1, 480; the trophy-to-table view,
+  e.g. after Classic): lighting looks wrong, the trophy's body dark
+  (Fox's jacket near black, the stand black) under the spotlight, and
+  corrupted graphics flash in the background for a moment. Suspects: GX
+  spot/distance attenuation (GX_AF_SPOT, nv2a lights), and another EFB
+  copy for the background.
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
