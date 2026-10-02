@@ -139,14 +139,17 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   copy for the background.
 - Peach's Castle (console, v43, 480i, 4 CPUs, burn-in): ~30 min in, the
   stage or camera shakes a lot, more than usual; the game keeps running.
-  The shake is constant, and the user thinks it started with a Bullet
-  Bill. Lead: stage part 2's per-frame callback (`grCastle_801CE860`,
-  `src/melee/gr/grcastle.c`) calls `Camera_RequestQuake(QuakeKind_Loop)`
-  every frame without a condition, also after its three animation phases
-  end; once that part exists the loop quake never runs out. Check against
-  the original (the asm / upstream decomp: is the quake inside the phase
-  `if`, or is the part freed after phase 3?) and when the part is
-  created, before changing anything.
+  The shake is constant and the Bullet Bill never leaves either (it
+  stays on the stage for good; BACK screenshot on the console). The Bill
+  is `grCastle_801CE260`/`801CE578` (`src/melee/gr/grcastle.c`): when its
+  timer `xCA` runs out it spawns part 2 into `xCC`, and part 2's update
+  (`grCastle_801CE860`) requests `QuakeKind_Loop` every frame. Part 2 is
+  freed only where the Bill's first animation ends (`grAnime_801C83D0`).
+  Two ways to get stuck: that animation-end check never returns true (an
+  anim/frame-count port bug), or it fires before `xCA` runs out, so part 2
+  is spawned in the second phase, nothing frees it and the Bill frees
+  itself without it. Reproduce in xemu with Peach's Castle and Bullet
+  Bills; log the phase changes, `xCA`, and the anim end check.
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
