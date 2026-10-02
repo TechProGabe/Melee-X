@@ -235,7 +235,10 @@ misses in lookups and revalidation rather than useful work. v33:
   draws that rebuild the units rebind one map, not all of them. The
   combiner constants (`pack_const` per stage) are rebuilt only when the
   program is sent or a TEV colour or konst colour changed
-  (`XGX_DIRTY_TEVREG`), not on every map or TEV change.
+  (`XGX_DIRTY_TEVREG`), not on every map or TEV change. A draw that only
+  rebinds textures (no TEV, texgen or indirect change) to the same set of
+  maps keeps the derived units and combiner program (`derive_units`, whose
+  only other input from the maps is which hold a texture).
 
 `xgx.h` is compiled by both triples (game and nxdk), so its structs hold only
 32-bit scalars, floats and byte arrays: no bit-fields, no 64-bit members.

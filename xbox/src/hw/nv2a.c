@@ -2346,6 +2346,7 @@ static const RcProg* s_d_rp;
 static int s_d_unit_map[4], s_d_unit_tc[4], s_d_nunits, s_d_unit_miss, s_d_tg_posmtx;
 static VpKey s_d_vk;
 static uint32_t s_d_spec_lights, s_d_layout = 0xFFFFFFFFu;
+static uint32_t s_d_maps;   /* derive_units: the maps that held a texture, bit per map */
 
 #define DIRTY_UNITS (XGX_DIRTY_TEV | XGX_DIRTY_MAPS)
 #define DIRTY_VK (DIRTY_UNITS | XGX_DIRTY_CHANS | XGX_DIRTY_TEXGEN | XGX_DIRTY_LIGHTS)
@@ -2484,6 +2485,16 @@ static uint8_t swap_bits(const uint8_t t[4]) {
     return (uint8_t)((t[0] & 3) | (t[1] & 3) << 2 | (t[2] & 3) << 4 | (t[3] & 3) << 6);
 }
 
+/* the maps holding a texture, bit per map: all derive_units reads of the
+ * maps when no indirect stage is on */
+static uint32_t bound_maps(const XgxState* st) {
+    uint32_t m = 0;
+    int i;
+    for (i = 0; i < XGX_MAX_MAPS; i++)
+        if (st->map[i].tex) m |= 1u << i;
+    return m;
+}
+
 /* texture units (one per distinct texcoord/texmap the TEV samples) and the combiner setup */
 static void derive_units(const XgxState* st) {
     RcCfg* rc = &s_d_rc;
@@ -2613,6 +2624,7 @@ static void derive_units(const XgxState* st) {
         rc->nstages++;
     }
     s_d_nunits = nunits;
+    s_d_maps = bound_maps(st);
     s_d_rp = rc_lookup(rc);
 }
 
@@ -2727,7 +2739,13 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     }
     s_draw_force = 0;
     lay = (layout->off_nrm >= 0) | (layout->off_col[0] >= 0) << 1 | (layout->off_col[1] >= 0) << 2;
-    if (d & DIRTY_UNITS) derive_units(st);
+    /* Its inputs, without indirect stages: the TEV stages, swap tables and
+     * Z texture (XGX_DIRTY_TEV), the texgens a bump pair uses (TEXGEN) and
+     * which maps hold a texture. A draw that only rebinds textures (MAPS
+     * alone, the common case) to the same maps derives the same units. */
+    if ((d & DIRTY_UNITS) &&
+        ((d & (XGX_DIRTY_TEV | XGX_DIRTY_TEXGEN)) || st->nind || bound_maps(st) != s_d_maps))
+        derive_units(st);
     if ((d & DIRTY_VK) || lay != s_d_layout) {
         VpKey old = s_d_vk;
         derive_vk(st, layout);
