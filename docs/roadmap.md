@@ -178,7 +178,8 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   commands, so the pusher may have run off into other data (as in issue
   #6). The GPU stall family; v42 predates v43's zeta fix. Needs the
   tester's `hang.log` and `boot.log` (the photo lacks the top lines:
-  GET/PUT, pushbuffer base, first fault).
+  GET/PUT, pushbuffer base, first fault). Parked: the tester runs an
+  older build; retest 100-Man on the next tester build before digging.
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
