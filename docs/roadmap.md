@@ -112,6 +112,11 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
 - Results screen (a tester's console, RC1 = v42): the winner's portrait box (1st
   place, under the crown) draws black; the 2nd-4th portraits are fine.
   Not looked into yet; the results screen also does ~6 EFB copies a frame.
+- 1P Stage Clear (same tester, RC1): the background behind the bonus
+  list is black; it should be the sepia freeze frame of the clear
+  (`lb_800122F0`: an EFB copy read through TEV swap tables 1-3, new in
+  v41). Likely the same family as the winner portrait: a captured image
+  drawn back black. Ask which video mode (16-bit 720p copies differ).
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
