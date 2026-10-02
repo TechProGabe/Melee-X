@@ -438,19 +438,21 @@ void GXPosition3s8(s8 x, s8 y, s8 z) { float f[3] = { q(x, GX_VA_POS), q(y, GX_V
 /* The GX FIFO takes components as a stream, so code that writes an XYZ
  * format's positions as pairs (HSD's shadow background quad: 12 floats in
  * six GXPosition2f32 calls) still makes whole vertices. Collect them. */
+static void pos_stream(float v) {
+    B.pos_carry[B.npos_carry++] = v;
+    if (B.npos_carry == 3) {
+        imm_floats(GX_VA_POS, B.pos_carry, 3);
+        B.npos_carry = 0;
+    }
+}
+
+static int pos_streams(void) { return B.open && g_gx.vat[B.vtxfmt][GX_VA_POS].cnt == GX_POS_XYZ; }
+
 void GXPosition2f32(f32 x, f32 y) {
     float f[3] = { x, y, 0 };
-    if (B.open && g_gx.vat[B.vtxfmt][GX_VA_POS].cnt == GX_POS_XYZ) {
-        B.pos_carry[B.npos_carry++] = x;
-        if (B.npos_carry == 3) {
-            imm_floats(GX_VA_POS, B.pos_carry, 3);
-            B.npos_carry = 0;
-        }
-        B.pos_carry[B.npos_carry++] = y;
-        if (B.npos_carry == 3) {
-            imm_floats(GX_VA_POS, B.pos_carry, 3);
-            B.npos_carry = 0;
-        }
+    if (pos_streams()) {
+        pos_stream(x);
+        pos_stream(y);
         return;
     }
     imm_floats(GX_VA_POS, f, 3);
@@ -523,7 +525,21 @@ void GXTexCoord2u16(u16 s, u16 t) { imm_tex(tq(s), tq(t)); }
 void GXTexCoord2s16(s16 s, s16 t) { imm_tex(tq(s), tq(t)); }
 void GXTexCoord2u8(u8 s, u8 t) { imm_tex(tq(s), tq(t)); }
 void GXTexCoord2s8(s8 s, s8 t) { imm_tex(tq(s), tq(t)); }
-void GXTexCoord1f32(f32 s) { imm_tex(s, 0); }
+/* With no texture coordinate in the vertex, the floats are the next
+ * position components: the Classic team card primes its depth plane with
+ * a position-only quad written as twelve GXTexCoord1f32 (fn_80185408), and
+ * without its positions the card's Z-texture tiles had nothing to test
+ * against. */
+void GXTexCoord1f32(f32 s) {
+    int a;
+    for (a = GX_VA_TEX0; a <= GX_VA_TEX7; a++)
+        if (g_gx.desc[a] != GX_NONE) break;
+    if (a > GX_VA_TEX7 && g_gx.desc[GX_VA_POS] == GX_DIRECT && pos_streams()) {
+        pos_stream(s);
+        return;
+    }
+    imm_tex(s, 0);
+}
 void GXTexCoord1u16(u16 s) { imm_tex(tq(s), 0); }
 void GXTexCoord1s16(s16 s) { imm_tex(tq(s), 0); }
 void GXTexCoord1u8(u8 s) { imm_tex(tq(s), 0); }

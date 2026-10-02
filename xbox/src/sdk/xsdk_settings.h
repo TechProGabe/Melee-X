@@ -22,6 +22,7 @@ typedef struct {
     int progressive;         /* 1: 480p when the dashboard allows it; 0: 480i */
     int widescreen;          /* 1: 16:9 at 480 when the dashboard says widescreen */
     int fps;                 /* 1: frame-rate counter on screen */
+    int ram128;              /* 1: use the RAM above 64 MB on a 128 MB console (untested) */
     float rumble;            /* 0..1 */
     xsdk_port_settings port[4];
 } xsdk_settings;

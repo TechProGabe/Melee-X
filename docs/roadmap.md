@@ -78,13 +78,25 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   tail first, which is why no test build ever hung. Found with the
   first-fault pushbuffer dump on the console (v37), confirmed in xemu with
   a release build.
-- A mid-match GPU stall at 480i on a 128 MB console (Classic, issue #5:
-  `LIMIT_COLOR` on a `DRAW_ARRAYS`, then the GPU stops).
-- Classic's team cards (Team DK/Kirby/Jigglypuff, stage 8) draw the right
-  half black around the team: the fighters are drawn as tiles masked by a
-  depth copy (`GXSetZTexture`), which isn't emulated. Visual only. Reproduce
-  with `MELEE_BOOT_SCENE=classic`, `MELEE_CLASSIC_STAGE_OVERRIDE=8`,
+- A mid-match GPU stall, twice, both on the same kind of console (128 MB,
+  480i): Classic (issue #5, v1, `LIMIT_COLOR` on a game `DRAW_ARRAYS`) and
+  a VS match on Fountain of Dreams (v2, `LIMIT_COLOR` on the `END` of an
+  EFB shadow copy, frame 9302). The GPU stops after the fault. Not seen on
+  a 64 MB console. Since v3 a 128 MB console runs in its first 64 MB unless
+  `settings.ini` says `ram128 = 1` (`xhw_mem_hold_upper`), and the first
+  fault also logs PGRAPH 0x400800-0x40080C and the last EFB copy's target.
+  If it comes back with `ram128 = 0`, those lines are the next lead.
+- Fixed: Classic's team cards (Team DK/Kirby/Jigglypuff, stage 8) drew the
+  right half black. Two bugs: the depth plane was never primed
+  (`GXTexCoord1f32` positions dropped) and `GXSetZTexture` wasn't emulated
+  (now a mask, `docs/renderer.md`). Reproduce with
+  `MELEE_BOOT_SCENE=classic`, `MELEE_CLASSIC_STAGE_OVERRIDE=8`,
   `MELEE_CLASSIC_TEAM=dk`.
+- Fixed: star KOs (knocked off the top) could end at once instead of the
+  fighter flying into the background (`ft_0D31.c`, `docs/decisions.md`).
+- Fountain of Dreams runs ~40 fps on the console in a 1v1 (v2 report:
+  ~55k vertices and ~540 draws a frame, render 11-12 ms). Frame rate work
+  is in "Next".
 - Credits: the screen goes black now and then (issue #5, not reproduced yet).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB

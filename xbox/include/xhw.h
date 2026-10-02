@@ -103,6 +103,10 @@ void xhw_lazy_set_fill(const void* base, void (*fill)(void* chunk));
 int xhw_lazy_is_committed(const void* p);
 void xhw_lazy_decommit(void* chunk);
 uint32_t xhw_mem_free_kb(void);
+/* 128 MB consoles: takes the RAM above 64 MB for good, so the game and the
+ * kernel run in the low 64 MB as on a stock console (settings.ini
+ * ram128 = 0, the default). Returns the KB held; 0 on a 64 MB console. */
+uint32_t xhw_mem_hold_upper(void);
 
 /* ---- files and paths ---- */
 /* The folder default.xbe runs from, mounted as D:\ ("D:\\"). */

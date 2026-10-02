@@ -237,7 +237,13 @@ Lines worth reading first:
   software put, put, get), with the pusher's GET and PUT at that moment,
   the pushbuffer's base, the frame and the draw count, then the 96
   pushbuffer words around that GET. Later faults are usually its
-  consequences. `[NV2A] GPU stalled` dumps the words at the current GET only
+  consequences. `[NV2A]  first fault pgraph 400800:` follows with PGRAPH
+  0x400800-0x40080C read at the fault (pbkit's "limit details" for
+  `LIMIT_COLOR`/`LIMIT_ZETA`, nsource 0x10/0x20) and the last EFB copy's
+  target (offset, size, frame).
+- `[MEM] 128 MB console: running in 64 MB, N KB above it held back`: the
+  RAM above 64 MB was allocated at boot and is never used
+  (`settings.ini` `ram128 = 0`, the default; `xhw_mem_hold_upper`). `[NV2A] GPU stalled` dumps the words at the current GET only
   when that address is mapped.
 - `[PERF]`: see "Measuring on the console". `ticks per render` near 5 means
   the game can't keep up and is slowing down (5 is the cap).
@@ -327,7 +333,7 @@ report.
 | `-DXHW_PROF_SECS=<n>`, `-DXHW_PROF_TOP=<n>` | profiler report period (default 20 s); buckets and call sites per report (default 192) |
 | `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU instead of drawn by the GPU |
 | `-DXGX_DEPTH_CULL=1` | cull pixels whose depth falls outside the clip range instead of clamping it (the pre-v15 behaviour) |
-| `-DXGX_DEBUG_EFBLOG` | log the first 200 EFB copies (source rect, size, format) as `[EFB]` lines |
+| `-DXGX_DEBUG_EFBLOG` | log the first 200 EFB copies (source rect, size, format, copy-clear depth) as `[EFB]` lines |
 | `-DXHW_TEST_BUILD=1` | console test tools: BACK takes a screenshot (BACK+Y flushes the caches) and the frame-rate counter defaults to on. Implied by `-DXHW_PROF=1` and `-DXHW_AUTOPAD=1`; a plain build is a release and has neither |
 | `-DXSDK_FPS_DEFAULT=<0/1>` | the frame-rate counter's default when `settings.ini` has no `fps` line (default: `XHW_TEST_BUILD`) |
 | `-DXGX_DEBUG_TRACE` | log every draw (TEV stages, textures and their colours, konst, channels, lights, texgen matrices, screen box, blend, fog) of the frame an autopad `SHOT` or a console BACK screenshot captures, as `[DRAW]` lines (~400 KB each, in `trace.log`, not `boot.log`); on a BACK frame each EFB copy's source is also written as a `shotNN.bmp` (up to 8, announced by a `[DRAW] efb copy` line), and with `-DXHW_AUTOPAD=1` also streamed as `[FBDUMP]` (an autopad `BACK` in xemu, whose HDD is out of reach) |

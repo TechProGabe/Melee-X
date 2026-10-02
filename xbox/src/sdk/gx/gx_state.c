@@ -758,7 +758,15 @@ void GXSetFieldMask(GXBool odd, GXBool even) { (void)odd; (void)even; }
 void GXSetLineWidth(u8 width, GXTexOffset off) { (void)width; (void)off; }
 void GXSetPointSize(u8 size, GXTexOffset off) { (void)size; (void)off; }
 void GXEnableTexOffsets(GXTexCoordID coord, GXBool line, GXBool point) { (void)coord; (void)line; (void)point; }
-void GXSetZTexture(GXZTexOp op, GXTexFmt fmt, u32 bias) { (void)op; (void)fmt; (void)bias; }
+void GXSetZTexture(GXZTexOp op, GXTexFmt fmt, u32 bias) {
+    uint32_t on = op != GX_ZT_DISABLE;
+    (void)fmt;
+    (void)bias;
+    if (g_xgx.ztex == on) return;
+    FLUSH();
+    g_xgx.ztex = on;
+    DIRTY(XGX_DIRTY_TEV | XGX_DIRTY_PIXEL);
+}
 void GXSetCoPlanar(GXBool on) { (void)on; }
 
 /* Applied by the back end (nv2a_fog.c); HSD_FogSet calls this for every

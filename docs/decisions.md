@@ -205,6 +205,22 @@ the log alternates between `boot2.log` and `boot3.log` (2 MB each), and
 `[DRAW]` trace lines go to `trace.log`: v28's trace filled the old 2 MB cap
 at ~145 s and its GPU hang at ~500 s left no stall report.
 
+**128 MB consoles run in 64 MB by default (after v2).** Both mid-match GPU
+stalls reported so far (`LIMIT_COLOR`) came from a 128 MB console, and
+every console and emulator this was tested on has 64 MB. At boot,
+`xhw_mem_hold_upper` allocates the RAM above 64 MB and never frees it, so
+the kernel and the game only get pages in the low 64 MB, as on a stock
+console. `settings.ini` `[system] ram128 = 1` skips that. xemu with
+`mem_limit = '128'` still reports 64 MB with a stock BIOS, so this path is
+untested there.
+
+**`GXSetZTexture` as a mask (after v2).** The depth test at a depth copy
+writes a 0/1 mask into the framebuffer's alpha, the copy carries it, and
+the Z-texture draw multiplies its alpha by it and alpha-tests it away
+(`docs/renderer.md`). That is exact for what Melee uses it for (the
+Classic team card: fighter in front of a cleared background) but not a
+general depth replace: the draw keeps its own depth.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 
@@ -216,6 +232,12 @@ marked `PORT:`:
 - `src/pc/libm/pc_libm.h`, `pc_rem_pio2f.c`: accept `FLT_EVAL_METHOD == -1`
   under `TARGET_XBOX`. clang reports -1 for SSE float with x87 double, and
   melee-pc's libm is still exact there.
+- `src/melee/ft/ft_0D31.c` (`ftCo_DeadUpStar_Anim`): the star KO reads
+  `p_ftCommonData->x508`..`x51C_radians` by name. The imported function
+  copied `x504` into a local and indexed past it (`data[1]`, `data + 3`,
+  `data + 6`), so the KO's frame counts, speeds and spin came from the
+  stack: a fighter knocked off the top could vanish at once instead of
+  flying into the background (v2 player report).
 - `src/melee/gm/gmclassic.c`: melee-pc's `MELEE_CLASSIC_STAGE_OVERRIDE` /
   `MELEE_CLASSIC_TEAM` test hooks moved into `pc_classic_stage_override`,
   which the `MELEE_BOOT_SCENE=classic` shortcut now calls too (it skips the

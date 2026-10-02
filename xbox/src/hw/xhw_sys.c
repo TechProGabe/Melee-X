@@ -488,6 +488,25 @@ uint32_t xhw_mem_free_kb(void) {
     return MmQueryStatistics(&st) >= 0 ? (uint32_t)(st.AvailablePages * 4) : 0;
 }
 
+/* Every console these builds were tested on has 64 MB, and the two GPU
+ * faults reported mid-match (LIMIT_COLOR, issue #5 and the v2 report after
+ * it) both came from a 128 MB console. Until that is understood, the RAM
+ * above 64 MB is allocated here once, before anything else is, and never
+ * given back: the kernel and the game then only get pages in the low
+ * 64 MB. Big blocks first, then smaller ones for what is left between the
+ * kernel's own allocations up there. */
+uint32_t xhw_mem_hold_upper(void) {
+    static const uint32_t sizes[] = { 4096u * 1024, 1024u * 1024, 64u * 1024, 4096u };
+    MM_STATISTICS st;
+    uint32_t held = 0, i;
+    memset(&st, 0, sizeof st);
+    st.Length = sizeof st;
+    if (MmQueryStatistics(&st) < 0 || st.TotalPhysicalPages * 4096ull <= 64ull * 1024 * 1024) return 0;
+    for (i = 0; i < sizeof sizes / sizeof sizes[0]; i++)
+        while (MmAllocateContiguousMemoryEx(sizes[i], 0x04000000u, 0x07FFFFFFu, 0, PAGE_READWRITE)) held += sizes[i];
+    return held / 1024;
+}
+
 void xhw_mem_log(const char* where) {
     MM_STATISTICS st;
     memset(&st, 0, sizeof st);

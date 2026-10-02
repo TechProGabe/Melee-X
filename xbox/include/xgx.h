@@ -121,6 +121,11 @@ typedef struct {
     float fog_start, fog_end, fog_near, fog_far;
     uint8_t fog_color[4];
     uint32_t dither;
+    /* GXSetZTexture REPLACE/ADD: the last TEV stage's texture is a depth
+     * copy. Emulated as a mask (nv2a.c, xgx_ztex_mask): the copy holds 1
+     * where the copied depth was in front of the clear depth, and the draw
+     * keeps only those pixels. */
+    uint32_t ztex;
 
     /* textures */
     XgxMap map[XGX_MAX_MAPS];
@@ -232,6 +237,11 @@ enum {
     XGX_COPY_ALPHA,
 };
 uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int mode, uint32_t reuse);
+/* Before a depth-format copy of the logical rect: writes the framebuffer's
+ * alpha there as 1 where the depth is in front of z24 and 0 elsewhere, for
+ * an XGX_COPY_ALPHA copy to carry (the Z-texture emulation, XgxState.ztex).
+ * 0 when the framebuffer has no alpha (16-bit 720p). */
+int xgx_ztex_mask(const int32_t src[4], uint32_t z24);
 /* EFB -> CPU (GXCopyTex into memory the game reads): logical rect, RGBA8 out */
 void xgx_read_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, uint8_t* rgba);
 

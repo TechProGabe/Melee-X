@@ -393,6 +393,10 @@ static volatile uint32_t s_gf_count, s_gf_storms, s_gf_last[5];
 /* The first fault, with where the pusher was and which draw of which frame
  * the CPU had reached: later ones are usually its consequences. */
 static volatile uint32_t s_gf_first[9], s_gf_first_logged;
+/* at the first fault: PGRAPH 0x400800-0x40080C (pbkit's "limit details" for
+ * LIMIT_COLOR/LIMIT_ZETA), and the last EFB copy's target (offset, w, h, frame) */
+static volatile uint32_t s_gf_limit[4];
+static uint32_t s_last_copy[4];
 static void log_first_fault(void);
 
 /* A GPU that stops fetching (bad method or state) otherwise hangs the game
@@ -489,6 +493,9 @@ static void log_first_fault(void) {
              (unsigned)s_gf_first[4], (unsigned)s_gf_first[5], (unsigned)s_gf_first[6], (uint32_t)s_pb_base & 0x03FFFFFFu,
              (unsigned)s_gf_first[7], (unsigned)s_gf_first[8]);
     s_gf_first_logged = 1;
+    xhw_logf("[NV2A]  first fault pgraph 400800: %08x %08x %08x %08x | last EFB copy to %08x %ux%u in frame %u",
+             (unsigned)s_gf_limit[0], (unsigned)s_gf_limit[1], (unsigned)s_gf_limit[2], (unsigned)s_gf_limit[3],
+             s_last_copy[0], s_last_copy[1], s_last_copy[2], s_last_copy[3]);
     {   /* what the pusher had just read: 64 words before GET, 32 from it */
         const uint32_t* w = (const uint32_t*)(0x80000000u | (s_gf_first[5] & 0x03FFFFFCu));
         int i;
@@ -510,6 +517,10 @@ void ocx_pb_gpu_fault(unsigned kind, unsigned a, unsigned b, unsigned c, unsigne
         s_gf_first[6] = *(volatile uint32_t*)(0xFD000000u + 0x3240);   /* DMA PUT */
         s_gf_first[7] = s_frame;
         s_gf_first[8] = s_draws;
+        s_gf_limit[0] = *(volatile uint32_t*)(0xFD400800u);
+        s_gf_limit[1] = *(volatile uint32_t*)(0xFD400804u);
+        s_gf_limit[2] = *(volatile uint32_t*)(0xFD400808u);
+        s_gf_limit[3] = *(volatile uint32_t*)(0xFD40080Cu);
     }
     s_gf_last[0] = kind;
     s_gf_last[1] = a;
@@ -1855,6 +1866,11 @@ static void emit_fixed(const XgxState* st) {
         else if (op == GX_AOP_OR && c1 == GX_NEVER) { fn = c0; ref = r0; }
         else if (op == GX_AOP_OR && c0 == GX_NEVER) { fn = c1; ref = r1; }
         else if (op == GX_AOP_OR && (c0 == GX_ALWAYS || c1 == GX_ALWAYS)) en = 0;
+        if (st->ztex && !en) {   /* the Z-texture mask (derive_units): drop alpha 0 */
+            en = 1;
+            fn = GX_GREATER;
+            ref = 0;
+        }
         SETF(15, NV097_SET_ALPHA_TEST_ENABLE, en);
         if (en) {
             SETF(16, NV097_SET_ALPHA_FUNC, 0x200 + (fn & 7));
@@ -2181,6 +2197,24 @@ static void derive_units(const XgxState* st) {
         if (u >= 0) rc->units_used |= (uint8_t)(1u << u);
         if (r->ras == 1) rc->v1_used = 1;
     }
+    /* GXSetZTexture: the last stage's texture is the mask xgx_ztex_mask put
+     * in the depth copy; one more stage multiplies the alpha by it
+     * (APREV * TEXA, colour passed on), and the alpha test drops the 0s */
+    if (st->ztex && rc->nstages < RC_MAX_TEV && rc->st[rc->nstages - 1].unit >= 0) {
+        const RcStage* last = &rc->st[rc->nstages - 1];
+        RcStage* r = &rc->st[rc->nstages];
+        memset(r, 0, sizeof *r);
+        r->cin[0] = r->cin[1] = r->cin[2] = 15;   /* GX_CC_ZERO */
+        r->cin[3] = 0;                            /* GX_CC_CPREV */
+        r->ain[0] = 7;                            /* GX_CA_ZERO */
+        r->ain[1] = 0;                            /* GX_CA_APREV */
+        r->ain[2] = 4;                            /* GX_CA_TEXA */
+        r->ain[3] = 7;
+        r->cclamp = r->aclamp = 1;
+        r->unit = last->unit;
+        r->ras = 2;
+        rc->nstages++;
+    }
     s_d_nunits = nunits;
     s_d_rp = rc_lookup(rc);
 }
@@ -2497,6 +2531,10 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     s_st_efb++;
     frame_open();
     pb_budget();
+    s_last_copy[0] = (uint32_t)t->mem & 0x03FFFFFF;
+    s_last_copy[1] = pw;
+    s_last_copy[2] = ph;
+    s_last_copy[3] = s_frame;
     v = (float*)xgx_vtx_alloc(4, 20);
     if (!v) {
         xhw_perf_leave(pf);
@@ -2582,6 +2620,105 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     xhw_perf_leave(pf);
 }
 #endif
+
+/* GXSetZTexture emulation, the copy side. A Z-texture draw replaces each
+ * pixel's depth with the texel and compares it with the depth buffer: the
+ * Classic team card copies each fighter's depth and draws the tiles back
+ * against a plane primed in front of the cleared background, so only the
+ * fighter shows. The NV2A can't replace depth from a texture, and its
+ * depth buffer is compressed (pbkit's tile 1), so it can't be sampled
+ * either. The depth test itself makes the mask instead: alpha 0 over the
+ * rect, then a quad just in front of z24 that writes alpha 1 where the
+ * stored depth is nearer still (GREATER). The copy that follows takes that
+ * alpha (XGX_COPY_ALPHA); the draw multiplies its alpha by it and drops
+ * the 0s (derive_units, emit_fixed). */
+int xgx_ztex_mask(const int32_t src[4], uint32_t z24) {
+#if XGX_EFB_GPU_COPY
+    static const VpKey k_mask = { .copy = 1 };
+    int x0, y0, x1, y1, i;
+    float z, *v;
+    if (s_bpp != 32) return 0;   /* R5G6B5 has no alpha */
+    x0 = map_x((float)src[0]);
+    y0 = map_y((float)src[1]);
+    x1 = map_x((float)(src[0] + src[2]));
+    y1 = map_y((float)(src[1] + src[3]));
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > s_fbw) x1 = s_fbw;
+    if (y1 > s_fbh) y1 = s_fbh;
+    if (x1 <= x0 || y1 <= y0) return 0;
+    frame_open();
+    pb_budget();
+    v = (float*)xgx_vtx_alloc(4, 20);
+    if (!v) return 0;
+    /* a little in front of z24: the cleared background holds exactly z24,
+     * and the quad's interpolated depth there must not round past it */
+    z24 &= 0xFFFFFFu;
+    z = (float)(z24 > 0x100u ? z24 - 0x100u : 0u) * (s_zmax / 16777215.0f);
+    {
+        const float q[4][5] = { { (float)x0, (float)y0, z, 0, 0 }, { (float)x1, (float)y0, z, 0, 0 },
+                                { (float)x0, (float)y1, z, 0, 0 }, { (float)x1, (float)y1, z, 0, 0 } };
+        memcpy(v, q, sizeof q);
+    }
+    pb_open();
+    put1(NV097_SET_DEPTH_MASK, 0);
+    put1(NV097_SET_STENCIL_TEST_ENABLE, 0);
+    put1(NV097_SET_ALPHA_TEST_ENABLE, 0);
+    put1(NV097_SET_BLEND_ENABLE, 0);
+    put1(NV097_SET_LOGIC_OP_ENABLE, 0);
+    put1(NV097_SET_CULL_FACE_ENABLE, 0);
+    put1(NV097_SET_COLOR_MASK, NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE);
+    put1(NV097_SET_WINDOW_CLIP_HORIZONTAL, (uint32_t)s_fbw << 16);
+    put1(NV097_SET_WINDOW_CLIP_VERTICAL, (uint32_t)s_fbh << 16);
+    for (i = 0; i < 4; i++) put1(NV097_SET_TEXTURE_CONTROL0 + i * 64, 0);
+    put1(NV097_SET_SHADER_STAGE_PROGRAM, 0);
+    put1(NV097_SET_COMBINER_CONTROL, 1u | (1u << 12) | (1u << 16));
+    put1(NV097_SET_COMBINER_COLOR_ICW, CR_ONE << 24 | CR_ONE << 16);
+    put1(NV097_SET_COMBINER_COLOR_OCW, CR_AB_TO(CR_R0));
+    put1(NV097_SET_COMBINER_SPECULAR_FOG_CW0, (uint32_t)CR_R0 << 8);   /* out = R0 */
+    put1(NV097_SET_COMBINER_SPECULAR_FOG_CW1, (uint32_t)(CR_R0 | 1 << 4) << 8 | 0x80);
+    vp_select(&k_mask);
+    s_attr_base = s_draw_base;
+    attr(VPI_POS, 0, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 3, 20);
+    attr(VPI_MTX, -1, 0, 0, 0);
+    attr(VPI_NRM, -1, 0, 0, 0);
+    attr(VPI_COL0, -1, 0, 0, 0);
+    attr(VPI_COL1, -1, 0, 0, 0);
+    for (i = 0; i < 8; i++) attr(vpi_tex(i), i ? -1 : 12, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 2, 20);
+    /* three passes over the rect. 0: depth writes on but nothing passes
+     * (NEVER), which changes nothing; xemu only binds its depth buffer for
+     * a draw that may write depth, and the EFB copy just before (another
+     * surface shape) had unbound it, so the GREATER below passed
+     * everywhere. 1: alpha 0. 2: alpha 1 where the depth buffer is nearer
+     * than z (GREATER: the quad is behind what was drawn). */
+    for (i = 0; i < 3; i++) {
+        put1(NV097_SET_DEPTH_TEST_ENABLE, i != 1);
+        put1(NV097_SET_DEPTH_FUNC, i ? 0x204 : 0x200);
+        put1(NV097_SET_DEPTH_MASK, i == 0);
+        put1(NV097_SET_COMBINER_ALPHA_ICW, (i == 2 ? CR_ONE : CR_ZERO) << 24 | CR_ONE << 16);
+        put1(NV097_SET_COMBINER_ALPHA_OCW, CR_AB_TO(CR_R0));
+        put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_TRIANGLE_STRIP);
+        *P++ = 1u << 18 | NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_DRAW_ARRAYS);
+        *P++ = 3u << 24;   /* 4 vertices from 0 */
+        put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
+    }
+    put1(NV097_WAIT_FOR_IDLE, 0);   /* the alpha is in the framebuffer before the copy reads it */
+    put1(NV097_SET_STENCIL_TEST_ENABLE, 1);   /* as pbkit leaves it */
+
+    /* the game's state goes back at the next draw */
+    memset(s_fixed, 0xFF, sizeof s_fixed);
+    memset(s_tex_shadow, 0xFF, sizeof s_tex_shadow);
+    s_tex_prog = 0xFFFFFFFFu;
+    s_rc_valid = 0;
+    s_vp_cur = -1;
+    s_draw_force = XGX_DIRTY_ALL;
+    return 1;
+#else
+    (void)src;
+    (void)z24;
+    return 0;
+#endif
+}
 
 /* An EFB copy's texture side: the nearest power of two, not the next one
  * (the copy is resampled to it and sampled with normalized coordinates, so

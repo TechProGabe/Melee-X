@@ -18,7 +18,7 @@ The Xbox side grew out of [OpenCrossing-Xbox](https://github.com/GabeConway/Open
 
 ## What you need
 
-- A modded original Xbox (softmod or modchip) that runs homebrew. A stock 64 MB console is fine.
+- A modded original Xbox (softmod or modchip) that runs homebrew. A stock 64 MB console is fine. On a console upgraded to 128 MB, Melee-X uses only 64 MB unless you turn on `ram128` (see Settings).
 - A way to copy files to it. Usually that's FTP from your dashboard (UnleashX, XBMC4Gamers, EvolutionX and friends all have a server built in).
 - A disc image of **Super Smash Bros. Melee, NTSC-U, version 1.02** (game ID `GALE01`, revision 2), dumped from your own disc. `.iso`, `.gcm` and `.ciso` all work, and the filename doesn't matter. PAL and Japanese copies won't boot. The 1.00 and 1.01 revisions start, but only 1.02 has been tested.
 - A controller. The Duke and the Controller S both work.
@@ -101,6 +101,7 @@ Settings are in `E:\UDATA\4d580001\settings.ini`. Melee-X writes it the first ti
 | | `progressive` | 0 forces 480i even when your dashboard allows 480p |
 | | `widescreen` | 1 draws 16:9 at 480i/480p when the dashboard is set to widescreen |
 | | `fps` | 1 shows a frame counter in the top left corner (off by default) |
+| `[system]` | `ram128` | 1 lets a console upgraded to 128 MB use all of it. Off by default: Melee-X then runs in the first 64 MB, the setup it was tested on |
 | `[input]` | `rumble` | rumble strength in percent, 0 turns it off |
 | `[port1]` to `[port4]` | `stick_deadzone`, `cstick_deadzone` | stick dead zones in percent |
 | | `trigger_click` | how far (0-255) a trigger goes in before it counts as a full L/R press |

@@ -595,5 +595,25 @@ Dolphin:
   XYZ: HSD's shadow code writes its background quad as 12 floats in six
   `GXPosition2f32` calls. Taking each call as a vertex left the shadow maps
   black, and the stages that multiply them in (Mute City's road) went black.
+  With no texture coordinate in the vertex, `GXTexCoord1f32` feeds that
+  stream too: the Classic team card primes its depth plane with a
+  position-only quad written as twelve `GXTexCoord1f32` (`fn_80185408`),
+  and dropping them left the plane unprimed.
+- `GXSetZTexture` (the Classic team cards: each costume's depth is copied,
+  and the tiles are drawn back with that depth so only the fighter shows)
+  is emulated as a mask. The NV2A can't replace a fragment's depth from a
+  texture, and pbkit's depth buffer is compressed, so it can't be sampled
+  either. At a depth-format copy (`GXCopyTex` with a `_GX_TF_ZTF` format)
+  `xgx_ztex_mask` draws the copy rect into the framebuffer's alpha: 0, then
+  1 where the depth test (GREATER) says the stored depth is in front of a
+  quad just before the copy's clear depth. The copy takes that alpha
+  (`XGX_COPY_ALPHA`); a draw with `ztex` set gets one more combiner stage
+  (`APREV * TEXA` of the last stage's texture, `derive_units`) and an alpha
+  test that drops 0 (`emit_fixed`). The mask pass starts with a quad that
+  has depth writes on and `NEVER` as its test: it changes nothing, but
+  xemu only rebinds its depth buffer for a draw that may write depth, and
+  after the EFB colour copy just before (a swizzled target) it had none,
+  so every pixel passed. Not at 720p (16-bit colour, no alpha): there the
+  depth copy stays a colour copy, as before.
 - Known wrong in xemu: Mute City's distant skyline band renders as white
   speckle.
