@@ -462,9 +462,15 @@ Current limits:
 - destination alpha: R5G6B5 (720p) has none, so `GX_BL_DSTALPHA` reads 1
   there. That is what the GameCube does too: HSD only ever sets
   `GX_PF_RGB8_Z24` (`HSD_StartRender`), an EFB without alpha. The 32-bit
-  framebuffer keeps an alpha channel GX wouldn't have. An EFB copy at
-  720p samples alpha 1 (an I4/R4 copy's alpha is its intensity on the
-  GameCube; HSD's shadow maps take alpha from APREV, not the map);
+  framebuffer keeps an alpha channel GX wouldn't have, so `GX_BL_DSTALPHA`
+  reads what the draws left there at 480. EFB copies don't: a colour,
+  IA or RA copy has alpha 1 at every bpp, as from GX's RGB8 EFB (an I4/R4
+  copy's alpha is its intensity, as on the GameCube; HSD's shadow maps
+  take alpha from APREV, not the map). Until v43 a 32-bit copy kept the
+  back buffer's alpha, often 0: the 1P clear's sepia freeze frame, drawn
+  with the copy's alpha (`lb_80012994`), was transparent and the
+  background behind the bonus list black. Only the Z-texture mask
+  (`XGX_COPY_ALPHA`) reads the back buffer's alpha;
 - texture-matrix index attributes (TEXnMTXIDX) are ignored.
 
 ## Indirect texturing (`nv2a.c`)

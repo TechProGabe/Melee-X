@@ -2775,7 +2775,11 @@ static void read_rect(const int32_t src[4], uint32_t dw, uint32_t dh, uint32_t* 
  * the copy between the draws before it and the draws that sample it.
  *
  * The combiners keep the channel the copy format stores (XGX_COPY_*), as
- * the CPU path below does. Afterwards the back buffer is the target again
+ * the CPU path below does. Alpha is 1 except in the Z-texture mask
+ * (XGX_COPY_ALPHA): HSD's EFB is GX_PF_RGB8_Z24, which has no alpha, and
+ * the back buffer's is whatever the draws left (the 1P clear's freeze
+ * frame, drawn with the copy's alpha, came out transparent: black).
+ * Afterwards the back buffer is the target again
  * and xgx_draw re-sends every state group. The target has the back buffer's
  * format: A8R8G8B8 with Z24S8 surfaces, or R5G6B5 with Z16 at 16 bits
  * (720p), as the NV2A wants colour and depth surfaces of the same width
@@ -2804,7 +2808,7 @@ static void copy_combiners(int mode) {
         cicw[0] = CR_IN(CR_T0, 0, 0) << 24 | CR_IN(CR_C0, 0, 0) << 16;
         cocw[0] = CR_AB_TO(CR_R0) | CR_AB_DOT;
         if (mode == XGX_COPY_LUMA_ALPHA || mode == XGX_COPY_RED_ALPHA) {
-            aicw[0] = CR_IN(CR_T0, 1, 0) << 24 | CR_ONE << 16;
+            aicw[0] = CR_ONE << 24 | CR_ONE << 16;   /* the EFB's alpha: 1 */
             aocw[0] = CR_AB_TO(CR_R0);
         } else {
             /* alpha = the same value: R0's blue, in a second stage */
@@ -2813,10 +2817,10 @@ static void copy_combiners(int mode) {
             n = 2;
         }
     } else {
-        /* colour as is, or alpha in every channel */
+        /* colour as is with alpha 1, or the mask's alpha in every channel */
         cicw[0] = CR_IN(CR_T0, mode == XGX_COPY_ALPHA, 0) << 24 | CR_ONE << 16;
         cocw[0] = CR_AB_TO(CR_R0);
-        aicw[0] = CR_IN(CR_T0, 1, 0) << 24 | CR_ONE << 16;
+        aicw[0] = (mode == XGX_COPY_ALPHA ? CR_IN(CR_T0, 1, 0) : CR_ONE) << 24 | CR_ONE << 16;
         aocw[0] = CR_AB_TO(CR_R0);
     }
     put1(NV097_SET_COMBINER_CONTROL, (uint32_t)n | (1u << 12) | (1u << 16));
@@ -3138,15 +3142,17 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
         if (!buf) return 0;
     }
     read_rect(src, pw, ph, buf);   /* waits for the GPU: nothing is reading `reuse` now */
-    if (mode != XGX_COPY_COLOR)
+    if (mode == XGX_COPY_COLOR)   /* alpha 1, as copy_combiners */
+        for (i = 0; i < n; i++) buf[i] |= 0xFF000000u;
+    else
         for (i = 0; i < n; i++) {
-            uint32_t c = buf[i], a = c >> 24, r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF, v;
+            uint32_t c = buf[i], a = 0xFF, r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF, v;
             switch (mode) {
                 case XGX_COPY_LUMA: case XGX_COPY_LUMA_ALPHA: v = (r * 77 + g * 150 + b * 29) >> 8; break;
                 case XGX_COPY_RED: case XGX_COPY_RED_ALPHA: v = r; break;
                 case XGX_COPY_GREEN: v = g; break;
                 case XGX_COPY_BLUE: v = b; break;
-                default: v = a; break;
+                default: v = c >> 24; break;
             }
             if (mode != XGX_COPY_LUMA_ALPHA && mode != XGX_COPY_RED_ALPHA) a = v;
             buf[i] = a << 24 | v << 16 | v << 8 | v;

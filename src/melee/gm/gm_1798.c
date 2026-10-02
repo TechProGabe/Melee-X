@@ -195,7 +195,11 @@ void fn_80179990(HSD_GObj* arg0, int arg1, int arg2)
             }
         } else {
             if (ftLib_IsFramesRemaining(Player_GetEntity(arg2)) == 0) {
-                if (disp->state.player_flags[arg2] == 0 && disp->state.x0_6) {
+                /* PORT: lbl_8046E3AC itself, not disp->state: the layout
+                 * reads it at lbl_8046E1B0 + 0x1FC, which is only
+                 * lbl_8046E3AC in the GameCube's link order. The winner's
+                 * portrait (this branch) was never copied and drew black. */
+                if (lbl_8046E3AC.player_flags[arg2] == 0 && lbl_8046E3AC.x0_6) {
                     fn_80179990_set_erase_color(match_end, arg2);
                     HSD_CObjEraseScreen(cobj, 1, 0, 0);
                     Camera_800313E0(arg0, 0);

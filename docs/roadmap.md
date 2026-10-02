@@ -119,24 +119,42 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   afterimage trails, or a heavier model (vertex/draw count). A
   `-DXHW_PROF=1` run with 4x Fox vs 4x another character should show
   whether it is sim or render time.
-- Results screen (a tester's console, RC1 = v42): the winner's portrait box (1st
-  place, under the crown) draws black; the 2nd-4th portraits are fine.
-  Not looked into yet; the results screen also does ~6 EFB copies a frame.
-- 1P Stage Clear (same tester, RC1): the background behind the bonus
-  list is black; it should be the sepia freeze frame of the clear
-  (`lb_800122F0`: an EFB copy read through TEV swap tables 1-3, new in
-  v41). Likely the same family as the winner portrait: a captured image
-  drawn back black. Tester runs 480 (32-bit), so not the 16-bit path.
+- Fixed on dev: the results screen's winner portrait (1st place, under the
+  crown) drew black (a tester's console, RC1 = v42; xemu too). The
+  1st-place branch of `fn_80179990` read its flags through a struct
+  overlay that matches `lbl_8046E3AC` only in the GameCube's link order,
+  so the portrait was never copied from the EFB (`docs/decisions.md`).
+  `scenarios/res`: Fox (port 1) walks off Final Destination, Mario wins.
+- Fixed on dev: the 1P Stage Clear / Game Clear background behind the
+  bonus list was black (same tester, RC1, 480; xemu too). A 32-bit EFB
+  copy kept the back buffer's alpha, often 0, and the sepia freeze frame
+  is drawn with the copy's alpha; copies now have alpha 1 as from GX's
+  RGB8 EFB (`renderer.md` "Current limits"). The swap tables were fine.
+  `scenarios/clear` (Classic stage 1, `MELEE_INSTANT_WIN`).
 - Pokémon Stadium (same tester, RC1, 480): the big screen shows corrupted
-  graphics for a few frames when it switches to the fight camera. The
-  screen is an EFB copy (640x406 -> copy_dim); a stale or wrong-size copy
-  target on the switch is the first suspect. Third copy-related report.
+  graphics for a few frames when it switches to the fight camera. Root
+  cause found in xemu (one frame there): an EFB copy unused for 600
+  frames is released like a texture (`gx_tex_frame_end`), and when the
+  screen goes back to the fight after ~10 s on other views the display
+  binds the 640x406 destination before that frame's copy, so it uploads
+  the destination's memory, which the GPU copy never writes (garbage, or
+  black in xemu). Same for the 124x80 corner view. Candidate fix, not yet
+  run in xemu: keep EFB copies past the idle release (they still go under
+  pool pressure and at a scene change once idle) and drop one only when a
+  sampled hash of its destination memory shows the CPU wrote there.
 - Trophy transition (same tester, RC1, 480; the trophy-to-table view,
   e.g. after Classic): lighting looks wrong, the trophy's body dark
   (Fox's jacket near black, the stand black) under the spotlight, and
   corrupted graphics flash in the background for a moment. Suspects: GX
   spot/distance attenuation (GX_AF_SPOT, nv2a lights), and another EFB
-  copy for the background.
+  copy for the background. `scenarios/toy` reaches the scene in xemu: it
+  copies a 490x480 colour and a Z24X8 (Z-texture mask) image twice a
+  frame into ping-pong buffers, and no destination was bound before its
+  copy there. Not judged against the GameCube yet. Two differences from
+  GX in `nv2a_vp.c` worth checking: normals are normalized (GX doesn't,
+  and HSD's inverse-transpose normal matrix scales them by 1 / the model's
+  scale, which the trophy has), and the spot cosine isn't clamped at 0
+  before `a0 + a1 cos + a2 cos^2` (GX_SP_COS2 lights behind the spot).
 - Peach's Castle (console, v43, 480i, 4 CPUs, burn-in): ~30 min in, the
   stage or camera shakes a lot, more than usual; the game keeps running.
   The shake is constant and the Bullet Bill never leaves either (it
@@ -186,7 +204,8 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
   113 min without a stall; retest 100-Man on the next tester build. If it
   comes back: check the zeta DMA context and limit at the clear after a
   copy.
-- Credits: the screen goes black now and then (issue #5, not reproduced yet).
+- Credits: the screen goes black now and then (issue #5, not reproduced
+  yet; `scenarios/toy` with a second START shows ~10 s of them fine).
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
   free. Experimental and opt-in only; a dashboard set to 720p gets 480.

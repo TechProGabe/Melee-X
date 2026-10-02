@@ -60,6 +60,9 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `movie` | intro movie shots |
 | `settings` | title screen: the settings menu (BACK), a few rows changed, saved, reopened, Save and restart; read `[MENU]`/`[SETTINGS]` |
 | `inv` | Fountain of Dreams 4-CPU, players 1-2 cloaked (`MELEE_DEBUG_VS_INVISIBLE=3`: indirect refraction) |
+| `res` | results screen with a winner: Fox (port 1) walks off Final Destination in a 15 s match, Mario wins (portrait EFB copies) |
+| `clear` | Classic stage 1 won at once (`MELEE_INSTANT_WIN`): the Stage Clear screen's sepia freeze frame |
+| `toy` | Classic's last stage won at once, Game Clear, START: the trophy fall (`gmregtyfall.c`, scene 15 of mode 21; a second START goes on to the credits) |
 
 ## Working notes (from the agent's memory)
 

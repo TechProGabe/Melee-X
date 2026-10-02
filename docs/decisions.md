@@ -484,6 +484,11 @@ marked `PORT:`:
   `xsdk_menu_title_frame` (the Melee-X settings menu, BACK) first each
   frame, under `TARGET_XBOX`; while the menu is up it returns early and
   holds the attract timer at 0.
+- `src/melee/gm/gm_1798.c` (`fn_80179990`): the results screen's 1st-place
+  branch reads `player_flags` and `x0_6` from `lbl_8046E3AC`, not through
+  `ResultsDisplayLayout`'s `state`, which overlays it only in the
+  GameCube's link order (`lbl_8046E1B0` + 0x1FC). The winner's portrait
+  was never copied from the EFB and its box drew black.
 - Front LED effects (`xbox/src/hw/xhw_led.c`, `docs/platform.md` "Front
   LED"), under `TARGET_XBOX`: `src/melee/ft/ft_0D31.c` (`ftCo_800D34E0`,
   the KO bookkeeping) calls `xhw_led_ko` with the port and the stocks left

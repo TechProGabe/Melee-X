@@ -243,14 +243,14 @@ void xgx_vtx_use(const void* verts);
  * and returned. Otherwise a new texture is made. The copy is read at the next
  * power-of-two size, so it is never resampled. */
 enum {
-    XGX_COPY_COLOR,        /* RGB(A) formats: as rendered */
+    XGX_COPY_COLOR,        /* RGB(A) formats: as rendered, alpha 1 (GX's RGB8 EFB has none) */
     XGX_COPY_LUMA,         /* I4/I8: luma in every channel, alpha included */
-    XGX_COPY_LUMA_ALPHA,   /* IA4/IA8: luma, alpha kept */
+    XGX_COPY_LUMA_ALPHA,   /* IA4/IA8: luma, alpha 1 */
     XGX_COPY_RED,          /* R4/R8: red in every channel */
     XGX_COPY_RED_ALPHA,    /* RA4/RA8 */
     XGX_COPY_GREEN,
     XGX_COPY_BLUE,
-    XGX_COPY_ALPHA,
+    XGX_COPY_ALPHA,        /* the back buffer's alpha in every channel: xgx_ztex_mask's mask */
 };
 uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, int mode, uint32_t reuse);
 /* Before a depth-format copy of the logical rect: writes a mask there, 1
