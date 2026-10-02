@@ -336,7 +336,9 @@ report.
 | `-DXSDK_ARAM_VERIFY=1` | compares every ARAM copy left on the disc (`ar.c`) with the image; `[AR] verify:` lines |
 | `-DXHW_PROF=1` | sampling profiler: `[PROF]` lines every 20 s (`xhw_prof.c`, `tools/xbox/prof_report.py`) |
 | `-DXHW_PROF_SECS=<n>`, `-DXHW_PROF_TOP=<n>` | profiler report period (default 20 s); buckets and call sites per report (default 192) |
-| `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU instead of drawn by the GPU |
+| `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU (into A8R8G8B8 textures) instead of drawn by the GPU, at every bpp; 720p used the CPU readback always until the GPU copy learned R5G6B5 targets |
+| `-DXHW_VIDEO_480_BPP=16` | 640x480 at 16 bits: R5G6B5 colour, Z16 depth and 720p's pool sizes, the 720p rendering path at a size xemu can show (xemu has no 720p). Test only: shots and `[FBDUMP]` are 16-bit |
+| `-DOCX_Z16_TILE_FLAGS=<flags>` | pbkit's tile flags for a Z16 depth buffer (720p, or the switch above); default `0x84000001`, pbkit's own: compression tags with the 32-bit flag. Console A/B: `0x80000001` (tags, no 32-bit flag), `0x00000001` (uncompressed); a console-only test |
 | `-DXGX_DEPTH_CULL=1` | cull pixels whose depth falls outside the clip range instead of clamping it (the pre-v15 behaviour) |
 | `-DXGX_DEBUG_EFBLOG` | log the first 200 EFB copies (source rect, size, format, copy-clear depth) as `[EFB]` lines |
 | `-DXHW_TEST_BUILD=1` | console test tools: BACK takes a screenshot (BACK+Y flushes the caches) and the frame-rate counter defaults to on. Implied by `-DXHW_PROF=1` and `-DXHW_AUTOPAD=1`; a plain build is a release and has neither. `-DXHW_AUTOPAD=1 -DXHW_TEST_BUILD=0` is a release with scripted input (release defaults in xemu) |

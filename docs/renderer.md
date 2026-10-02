@@ -42,10 +42,11 @@ memcpy, memmove, memset and memcmp are compiler builtins everywhere
 real call. That was ~18% of a match frame on the console.
 
 Display lists are cached (`gx_vtx.c`, up to 2048 lists): the first call
-decodes the list into a vertex buffer from its own pool (4 MB at 480, 3 MB
-at 720p) and later calls replay the draws. One 4-CPU match fills about 3
-MB; over a long session (several stages and characters) all 2048 slots and
-the whole pool stay in use, and the LRU eviction below rebuilds a few dozen
+decodes the list into a vertex buffer from its own pool (4 MB; 720p had 3
+MB, which the first 720p match on the console filled, v38) and later calls
+replay the draws. One 4-CPU match fills about 3 MB; over a long session
+(several stages and characters) all 2048 slots and the whole pool stay in
+use, and the LRU eviction below rebuilds a few dozen
 to a few hundred lists every 10 s (v36 console log). Entries are keyed by the
 list's address and size and by the vertex descriptor and the formats (VAT)
 the list uses: HSD draws some small lists under different formats (shared
@@ -171,9 +172,13 @@ misses in lookups and revalidation rather than useful work. v33:
   there. Everything after `frame_open` still sees an idle GPU at the start
   of the frame (the vertex ring and pushbuffer restart, `xgx_vbuf_free_now`).
   `GXCopyDisp`'s clear, which comes right after the present, is queued
-  until the frame opens. A screenshot frame still waits in the present. The
-  console waited ~3.6 ms a frame there on Fountain of Dreams; xemu, whose
-  GPU is slow, went from 19 to ~33 fps in the standard match.
+  until the frame opens. `frame_open`'s own clear of the whole
+  framebuffer (the bars around a pillarboxed content rect, a defined EFB)
+  is skipped when the first queued clear writes colour and depth over all
+  of it anyway: there are no bars then, and it was a second full fill and
+  depth clear (and a GPU wait) per frame. A screenshot frame still waits
+  in the present. The console waited ~3.6 ms a frame there on Fountain of
+  Dreams; xemu, whose GPU is slow, went from 19 to ~33 fps in the standard match.
   `-DXGX_OVERLAP=0` restores the old order.
   The settings menu on the title screen (`xgx_set_overlay`,
   `xhw_overlay.c`) is the exception: its text is CPU writes into the
@@ -252,7 +257,16 @@ the interval's peak and mid-frame restarts.
   60.000 Hz and runs the alarms (`vi.c`).
 - Framebuffers: 640x480x32 + Z24S8, or 1280x720 R5G6B5 + Z16 at 720p
   (32-bit colour doesn't fit in 64 MB next to the game). `pb_DepthFmt` is
-  made settable by `tools/xbox/patch_pbkit.py`.
+  made settable by `tools/xbox/patch_pbkit.py`. Everything 16-bit keys on
+  the mode's bpp, not its size, so `-DXHW_VIDEO_480_BPP=16` runs 640x480 as
+  R5G6B5 + Z16 with 720p's pool sizes: the 720p path in xemu, which has no
+  720p. pbkit gives the depth buffer's tile compression tags with the
+  32-bit flag (`0x84000001`) also for Z16; `-DOCX_Z16_TILE_FLAGS` sets the
+  Z16 tile's flags for a console A/B (`docs/testing.md`), the default is
+  unchanged. Clear colours go to pbkit's `pb_fill` as A8R8G8B8, which
+  converts them to the surface's format: `clear_fb` converted them to
+  R5G6B5 first as well, so every 16-bit clear colour (a stage's fog-coloured
+  clear) came out near black.
 
 ## Vertex programs (`nv2a_vp.c`)
 
@@ -434,7 +448,9 @@ Current limits:
   work only in the movie recipe;
 - TEV swap tables: permutations are approximated by the identity;
 - indirect texturing: only what the NV2A's BUMPENVMAP can do (below);
-- destination alpha is missing at 720p (R5G6B5 has no alpha);
+- destination alpha is missing at 720p (R5G6B5 has no alpha), and an EFB
+  copy there samples alpha 1 (an I4/R4 copy's alpha is its intensity on
+  the GameCube; HSD's shadow maps take alpha from APREV, not the map);
 - texture-matrix index attributes (TEXnMTXIDX) are ignored.
 
 ## Indirect texturing (`nv2a.c`)
@@ -678,13 +694,20 @@ Dolphin:
   re-sent. The copy's texture is the nearest power of two per side, not
   the next one (`copy_dim`), filtered linearly when that is smaller than
   the source: Pokémon Stadium's screen copies 640x406, which was 1024x512
-  ARGB8 (2 MB of the pool) and is now 512x512. The CPU readback
-  (`-DXGX_EFB_GPU_COPY=0`, and 720p, whose 16-bit
-  depth buffer can't pair with a 32-bit texture target) cost ~8 ms per
-  256x256 shadow map on the console: the framebuffer is write-combined, so
-  each read is an uncached bus cycle. Reading it through 0x80000000 |
-  physical does not help: contiguous memory already lives there, and the
-  write-combine attribute is on those same page-table entries.
+  ARGB8 (2 MB of the pool) and is now 512x512. The target has the back
+  buffer's format: A8R8G8B8 with a Z24S8 surface format, or R5G6B5 with
+  Z16 at 16 bits (720p; the NV2A wants colour and depth surfaces of the
+  same width even with depth off), and the back buffer is bound as
+  `LU_IMAGE_R5G6B5` there. An R5G6B5 copy has no alpha: it samples 1
+  ("Current limits"). Until this, 720p's 16-bit depth kept it on the CPU
+  readback: a 4-CPU match there spent ~60 ms a frame in it (`efb`, v38
+  console, 7.5 fps; 378 copies and ~380 extra GPU waits per 600 frames).
+  The CPU readback (`-DXGX_EFB_GPU_COPY=0`, ARGB8 at every bpp) cost ~8 ms
+  per 256x256 shadow map on the console: the framebuffer is
+  write-combined, so each read is an uncached bus cycle. Reading it
+  through 0x80000000 | physical does not help: contiguous memory already
+  lives there, and the write-combine attribute is on those same page-table
+  entries.
 - Levels are swizzled into a cached buffer and then copied in order:
   swizzled stores straight into write-combined texture memory defeat write
   combining.

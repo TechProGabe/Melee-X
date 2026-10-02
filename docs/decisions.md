@@ -260,6 +260,20 @@ replaces the coordinate instead of offsetting it) or dot-product stages
 wrap, accumulation) draws direct, as before; `-DXGX_NO_INDIRECT=1` turns
 it all off.
 
+**720p frame rate, first batch (after v40).** EFB copies at 16 bits are
+drawn by the GPU into R5G6B5 textures, as at 32 bits into A8R8G8B8: the
+v38 console match at 720p spent ~60 ms of a 133 ms frame reading the
+framebuffer back on the CPU. The cost: an EFB copy at 720p samples alpha
+1 (no alpha in R5G6B5), where the CPU path gave I/R copies their
+intensity as alpha; Melee's shadow maps take alpha from APREV, and the
+Z-texture mask was already off at 720p. 720p's display-list pool is 4 MB
+like 480's (1 MB more RAM; the 3 MB one was full in the first match), and
+`frame_open` skips its full clear when `GXCopyDisp`'s queued clear covers
+the whole framebuffer (16-bit clears also lose a second colour
+conversion that made them near black). The Z16 depth tile's flags are a
+switch (`-DOCX_Z16_TILE_FLAGS`) with pbkit's value as the default until a
+console A/B, and `-DXHW_VIDEO_480_BPP=16` puts the 16-bit path in reach of xemu.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 

@@ -18,7 +18,9 @@ Here:
     GPU interrupt so threads can run and the watchdog can report;
   - the depth format can be set before pb_init (pb_DepthFmt no longer static,
     Z16 sized and scaled): 720p pairs a 16-bit colour buffer with Z16, as
-    NV2x wants matching colour and depth widths (xbox/src/hw/nv2a.c);
+    NV2x wants matching colour and depth widths (xbox/src/hw/nv2a.c); the
+    Z16 depth tile's flags can be set with -DOCX_Z16_TILE_FLAGS (default
+    pbkit's 0x84000001);
   - ocx_pb_layout() reports the pushbuffer, framebuffers and depth buffer
     addresses for the layout line at boot;
   - ocx_pb_retarget_back_buffer() points rendering back at the current back
@@ -103,6 +105,17 @@ sub(r'int DepthBpp = 32;\n    assert\(pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZE
     "int DepthBpp = pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? 16 : 32;\n"
     "    assert(pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z24S8 || pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16);\n"
     "    pb_ZScale = pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? (float)0xFFFF : (float)0xFFFFFF;")
+
+# The depth buffer's tile (1) always gets 0x84000001: compression tags on
+# (bit 31) with the 32-bit flag (bit 26), also for Z16 at 720p. Behind a
+# switch until a console A/B says which is right: -DOCX_Z16_TILE_FLAGS=
+# 0x80000001 (tags, no 32-bit flag) or 0x00000001 (uncompressed) for Z16.
+sub(r'\nvoid pb_assign_tile\(',
+    "\n#ifndef OCX_Z16_TILE_FLAGS\n#define OCX_Z16_TILE_FLAGS 0x84000001u   /* Melee-X: Z16 depth tile, stock */\n#endif\n\n"
+    "void pb_assign_tile(")
+sub(r'0x84000001          //DWORD tile_flags \(0x04000000 for 32 bits\)',
+    "(pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? OCX_Z16_TILE_FLAGS : 0x84000001) "
+    "//DWORD tile_flags (0x04000000 for 32 bits)")
 
 src += """
 

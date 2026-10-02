@@ -45,18 +45,25 @@ int xhw_video_widescreen_set(void) { return (XVideoGetEncoderSettings() & VIDEO_
 void xhw_video_set_pref_720p(int on) { s_pref_720p = on; }
 void xhw_video_set_pref_480p(int on) { s_pref_480p = on; }
 
+/* Test switch: -DXHW_VIDEO_480_BPP=16 runs 480 the way 720p runs (R5G6B5
+ * colour, Z16 depth, 720p's pool sizes), so xemu, which has no 720p, can
+ * run the 16-bit path. */
+#ifndef XHW_VIDEO_480_BPP
+#define XHW_VIDEO_480_BPP 32
+#endif
+
 /* 640x480x32: 480p when the dashboard allows it and settings.ini doesn't
  * say otherwise. XVideoSetMode always picks 480p on an HDTV pack set to
  * 480p, so 480i there is set with nxdk's own XVideoInit, after
  * XVideoSetMode has recorded the size for pbkit (XVideoGetMode). */
 static void set_mode_480(void) {
     int p480 = xhw_video_480p_allowed();
-    XVideoSetMode(640, 480, 32, REFRESH_DEFAULT);
+    XVideoSetMode(640, 480, XHW_VIDEO_480_BPP, REFRESH_DEFAULT);
     if (p480 && !s_pref_480p && (XVideoGetEncoderSettings() & VIDEO_ADAPTER_MASK) == AV_PACK_HDTV)
-        XVideoInit(XHW_MODE_640x480I_HDTV, 640, 480, 32);
+        XVideoInit(XHW_MODE_640x480I_HDTV, 640, 480, XHW_VIDEO_480_BPP);
     s_mode.width = 640;
     s_mode.height = 480;
-    s_mode.bpp = 32;
+    s_mode.bpp = XHW_VIDEO_480_BPP;
     s_mode.progressive = p480 && (s_pref_480p || (XVideoGetEncoderSettings() & VIDEO_ADAPTER_MASK) != AV_PACK_HDTV);
 }
 

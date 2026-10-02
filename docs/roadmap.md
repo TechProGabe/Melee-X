@@ -113,6 +113,17 @@ The v36 playtest (~30 minutes, `C:\xemu\hw\logs36`; only the last boot's
 - 720p (console, v38, `720p = 1`): runs, but matches draw ~7.5 fps (menus
   55-59) with visual faults, and the 6 MB texture pool runs down to ~95 KB
   free. Experimental and opt-in only; a dashboard set to 720p gets 480.
+  `[PERF]` had `efb 60.0` ms a frame: at 16 bits every EFB copy (the
+  shadow maps, ~4 a frame) was read back on the CPU, with a GPU wait each
+  (978 idle waits per 600 frames). On dev the copies are drawn by the GPU
+  into R5G6B5 textures, the vertex pool is 4 MB (was 3, full),
+  `frame_open` skips a redundant full clear, and 16-bit clear colours are
+  no longer converted twice (they came out near black; `renderer.md`). In
+  xemu with `-DXHW_VIDEO_480_BPP=16` (the same path at 640x480): `efb` ~13 -> ~0.2 ms
+  a frame, 2994 -> 603 idle waits per 600 frames. Still needed: a 720p
+  `-DXHW_PROF=1` round on the console (the frame rate, and what is left
+  of `render`/`sim` at 720p), and an A/B of `-DOCX_Z16_TILE_FLAGS`
+  (`0x80000001`, `0x00000001`) against the visual faults.
 - Fixed on dev: at 16:9 (console, v38, 480p; 720p too) the in-match timer
   sat right of centre. melee-pc's wide HUD anchored it to the right edge,
   but its joint is at x = 0, top centre, which hor+ already keeps centred

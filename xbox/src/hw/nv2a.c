@@ -125,9 +125,10 @@ static int pix_y(float y) { return s_cy + (int)floorf(y * (float)s_ch / XGX_EFB_
 #define XGX_EFB_GPU_COPY 1   /* EFB -> texture copies drawn by the GPU (efb_copy_gpu); 0: CPU readback */
 #endif
 /* cached display lists (gx_vtx.c); the results screen (6500 draws) filled
- * 2 MB and rebuilt lists every frame */
+ * 2 MB and rebuilt lists every frame. 720p has 4 MB too: its 3 MB was
+ * full in the first match on the console (v38, 0 KB free) */
 #define VB_POOL_480 (4096u * 1024)
-#define VB_POOL_720 (3072u * 1024)
+#define VB_POOL_720 (4096u * 1024)
 #define VB_POOL_MIN (2048u * 1024)
 /* pbkit ignores a size that isn't a power of two and keeps its 512 KB: the
  * 1.5 MB asked for before left PB_GUARD past the real end, and Pokémon
@@ -929,11 +930,9 @@ static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int d
     if (y + h > s_fbh) h = s_fbh - y;
     if (w <= 0 || h <= 0) return;
     pb_close();
-    if (color) {
-        uint32_t c = argb;
-        if (s_bpp == 16) c = ((c >> 8) & 0xF800) | ((c >> 5) & 0x07E0) | ((c >> 3) & 0x001F);
-        pb_fill(x, y, w, h, c);
-    }
+    /* A8R8G8B8: pb_fill converts to the surface's format itself (converted
+     * here as well, 16-bit clears came out near black) */
+    if (color) pb_fill(x, y, w, h, argb);
     if (depth) {
         uint32_t* p = pb_begin();
         uint32_t zv = pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? (z24 >> 8) : (z24 << 8);
@@ -1015,8 +1014,14 @@ static void frame_open(void) {
     }
     s_ring_pos = 0;
     s_frame_open = 1;
-    /* the bars outside the content rect, and a defined EFB */
-    clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 1, 0xFFFFFF);
+    /* the bars outside the content rect, and a defined EFB. Not when the
+     * first pending clear (GXCopyDisp's) writes colour and depth over the
+     * whole framebuffer anyway, as it does without a pillarbox: there are
+     * no bars, and the fill and the wait for it were spent for nothing. */
+    if (!s_npending_clear || !s_pending_clear[0].color || !s_pending_clear[0].depth || s_pending_clear[0].x > 0 ||
+        s_pending_clear[0].y > 0 || s_pending_clear[0].x + s_pending_clear[0].w < s_fbw ||
+        s_pending_clear[0].y + s_pending_clear[0].h < s_fbh)
+        clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 1, 0xFFFFFF);
     for (i = 0; i < s_npending_clear; i++)
         clear_fb(s_pending_clear[i].x, s_pending_clear[i].y, s_pending_clear[i].w, s_pending_clear[i].h,
                  s_pending_clear[i].argb, s_pending_clear[i].color, s_pending_clear[i].depth, s_pending_clear[i].z24);
@@ -2748,9 +2753,13 @@ static void read_rect(const int32_t src[4], uint32_t dw, uint32_t dh, uint32_t* 
  *
  * The combiners keep the channel the copy format stores (XGX_COPY_*), as
  * the CPU path below does. Afterwards the back buffer is the target again
- * and xgx_draw re-sends every state group. 32-bit framebuffers only: at
- * 720p the depth buffer is 16-bit, and the NV2A wants colour and depth
- * surfaces of the same width. */
+ * and xgx_draw re-sends every state group. The target has the back buffer's
+ * format: A8R8G8B8 with Z24S8 surfaces, or R5G6B5 with Z16 at 16 bits
+ * (720p), as the NV2A wants colour and depth surfaces of the same width
+ * even with depth off. An R5G6B5 copy samples alpha 1: the I/R copies HSD
+ * makes (shadow maps) are read for colour only, alpha comes from APREV
+ * (tobj.c, TObjSetupTevModulateShadow). At 720p this was the CPU readback,
+ * ~60 ms a match frame on the console (v38). */
 enum { CR_ZERO = 0, CR_C0 = 1, CR_T0 = 8, CR_R0 = 12 };
 #define CR_IN(reg, alpha, inv) ((uint32_t)(reg) | (uint32_t)(alpha) << 4 | (uint32_t)(inv) << 5)
 #define CR_ONE CR_IN(CR_ZERO, 0, 1)
@@ -2801,7 +2810,7 @@ static void copy_combiners(int mode) {
 
 static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     static const VpKey k_copy = { .copy = 1 };
-    uint32_t pw = t->w, ph = t->h, fb = (uint32_t)pb_back_buffer() & 0x03FFFFFF, i;
+    uint32_t pw = t->w, ph = t->h, fb = (uint32_t)pb_back_buffer() & 0x03FFFFFF, i, bytes = (uint32_t)s_bpp / 8;
     float u0 = s_cx + src[0] * (float)s_cw / XGX_EFB_W, u1 = u0 + src[2] * (float)s_cw / XGX_EFB_W;
     float v0 = s_cy + src[1] * (float)s_ch / XGX_EFB_H, v1 = v0 + src[3] * (float)s_ch / XGX_EFB_H;
     /* nearest, unless the copy is smaller than its source (copy_dim) */
@@ -2836,11 +2845,13 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
 
     /* target: the texture, through pbkit's DMA object over all of RAM (3) */
     put1(NV097_SET_CONTEXT_DMA_COLOR, 3);
-    put1(NV097_SET_SURFACE_FORMAT, NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8 |
-                                       NV097_SET_SURFACE_FORMAT_ZETA_Z24S8 << 4 |
+    put1(NV097_SET_SURFACE_FORMAT, (s_bpp == 16 ? NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5 |
+                                                      NV097_SET_SURFACE_FORMAT_ZETA_Z16 << 4
+                                                : NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8 |
+                                                      NV097_SET_SURFACE_FORMAT_ZETA_Z24S8 << 4) |
                                        NV097_SET_SURFACE_FORMAT_TYPE_SWIZZLE << 8 |
                                        (uint32_t)log2i((int)pw) << 16 | (uint32_t)log2i((int)ph) << 24);
-    put1(NV097_SET_SURFACE_PITCH, pw * 4 | (pw * 4) << 16);
+    put1(NV097_SET_SURFACE_PITCH, pw * bytes | (pw * bytes) << 16);
     put1(NV097_SET_SURFACE_COLOR_OFFSET, (uint32_t)t->mem & 0x03FFFFFF);
     put1(NV097_SET_SURFACE_CLIP_HORIZONTAL, pw << 16);
     put1(NV097_SET_SURFACE_CLIP_VERTICAL, ph << 16);
@@ -2864,7 +2875,10 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     /* source: the back buffer as a linear texture, texel coordinates, filt */
     put1(NV097_SET_TEXTURE_OFFSET, fb);
     put1(NV097_SET_TEXTURE_FORMAT, 1 | (1u << 3) | (2u << 4) |
-                                       (uint32_t)NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8 << 8 | (1u << 16));
+                                       (uint32_t)(s_bpp == 16 ? NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_R5G6B5
+                                                              : NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8)
+                                           << 8 |
+                                       (1u << 16));
     put1(NV097_SET_TEXTURE_ADDRESS, 3 | (3u << 8) | (3u << 16));
     put1(NV097_SET_TEXTURE_CONTROL0, 0x4003FFC0u);
     put1(NV097_SET_TEXTURE_CONTROL1, pb_back_buffer_pitch() << 16);
@@ -3055,15 +3069,18 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
         }
     }
 #endif
-    reusable = reuse && reuse < MAX_TEX && s_tex[reuse].used && s_tex[reuse].w == pw && s_tex[reuse].h == ph &&
-               s_tex[reuse].levels == 1 && !s_tex[reuse].rect && s_tex[reuse].nvfmt == nv_format(XGX_TEX_ARGB8);
 #if XGX_EFB_GPU_COPY
-    if (s_bpp == 32) {
-        uint32_t tex = reusable ? reuse : xgx_tex_create(pw, ph, 1, XGX_TEX_ARGB8, NULL);
+    {   /* the target has the back buffer's format (efb_copy_gpu) */
+        uint32_t cfmt = s_bpp == 32 ? XGX_TEX_ARGB8 : XGX_TEX_RGB565, tex;
+        reusable = reuse && reuse < MAX_TEX && s_tex[reuse].used && s_tex[reuse].w == pw && s_tex[reuse].h == ph &&
+                   s_tex[reuse].levels == 1 && !s_tex[reuse].rect && s_tex[reuse].nvfmt == nv_format(cfmt);
+        tex = reusable ? reuse : xgx_tex_create(pw, ph, 1, cfmt, NULL);
         if (tex) efb_copy_gpu(src, &s_tex[tex], mode);
         return tex;
     }
 #endif
+    reusable = reuse && reuse < MAX_TEX && s_tex[reuse].used && s_tex[reuse].w == pw && s_tex[reuse].h == ph &&
+               s_tex[reuse].levels == 1 && !s_tex[reuse].rect && s_tex[reuse].nvfmt == nv_format(XGX_TEX_ARGB8);
     n = pw * ph;
     if (n > buf_texels) {
         free(buf);
@@ -3193,7 +3210,8 @@ int xgx_init(void) {
             pb_kill();
         }
         xhw_logf("[NV2A] %dx%d start failed (pb_init %d)", vm->width, vm->height, err);
-        if (vm->bpp == 32) xhw_fatal("Graphics init failed", "The NV2A could not be started.");
+        /* 480 is the fallback, also at 16 bits (-DXHW_VIDEO_480_BPP=16) */
+        if (vm->height == 480) xhw_fatal("Graphics init failed", "The NV2A could not be started.");
         xhw_video_fallback_480();
     }
     /* optional: without it display lists are decoded every call */

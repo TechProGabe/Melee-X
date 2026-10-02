@@ -58,7 +58,7 @@ here than on x86-64:
 | NV2A: 720p R5G6B5 x3 + Z16 | 7.4 MB |
 | NV2A: texture pool | 6 MB at 720p, 8 MB at 480 |
 | pushbuffer (1 MB) + vertex ring (1.5 MB) | 2.5 MB |
-| NV2A: display-list vertex cache | 4 MB at 480, 3 MB at 720p (down to 2 MB if short) |
+| NV2A: display-list vertex cache | 4 MB (down to 2 MB if short; 720p had 3 MB) |
 
 MEM1 and ARAM are reserved at fixed VAs and committed 64 KB at a time
 (`xhw_reserve_lazy`). The first touch of a chunk faults, and the SEH
