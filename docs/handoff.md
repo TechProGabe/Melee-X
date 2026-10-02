@@ -19,10 +19,10 @@ notes don't travel between machines, so what they held is here. Read
   v33 24-27 (CPU/GPU overlap), v34 28-33 (prefetch, cheaper back end), v35
   envelope memo on top. Where the time goes and what's left:
   `docs/roadmap.md` "Performance plan".
-- **No release published yet.** When the user asks: plain build,
-  `package_release.py <name>`, then a GitHub release with the zip
-  (`docs/toolchain.md` "Release"). Never commit or push without the user's
-  go-ahead.
+- **Releases build on GitHub** (user's rule): the `build` workflow with a
+  `release` tag builds, tests, packages and publishes (`docs/toolchain.md`
+  "Release"). v1 is the first. The repo stays private until the user says
+  to make it public. Never commit or push without the user's go-ahead.
 
 ## Windows setup
 

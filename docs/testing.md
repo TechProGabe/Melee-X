@@ -14,9 +14,9 @@ tools/xbox/test_pool.py          # nv2a.c's pool allocator: random allocations a
 tools/xbox/test_anim_mtx.py      # HSD keyframe interpreter, HSD_MtxSRT, envelope blend vs the code before the rewrites [--full]
 ```
 
-CI (`.github/workflows/build.yml`, started by hand only: builds and tests
-run locally) runs them all after building `default.xbe`, and uploads the
-XBE with its link map.
+CI (`.github/workflows/build.yml`, started by hand; it also builds the
+releases) runs them all after building `default.xbe`, and uploads the XBE
+with its link map.
 
 `tools/xbox/vp_policy.py [boot.log]` replays vertex-program selects (a
 `-DXGX_DEBUG_VPTRACE` log, or a synthetic 4-CPU Fountain of Dreams frame

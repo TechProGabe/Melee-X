@@ -1,10 +1,20 @@
 # Builds default.xbe and runs the host tests. No game data is involved: the
-# XBE reads the user's own disc image at runtime.
+# XBE reads the user's own disc image at runtime. With a release tag it also
+# packages the build (tools/xbox/package_release.py) and publishes a GitHub
+# release under that tag.
 name: build
 
-# Manual runs only: builds happen locally (tools/xbox/docker/build.sh).
+# Manual runs only.
 on:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Release tag to publish (e.g. v1); empty = build and test only"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
 
 concurrency:
   group: build-${{ github.ref }}
@@ -26,7 +36,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -yq build-essential cmake ninja-build git bison flex \
             libzstd-dev zlib1g-dev libxml2-dev python3-pip
-          pip install --user --break-system-packages nv2a-vsh
+          pip install --user --break-system-packages nv2a-vsh pillow
 
       # LLVM and nxdk take most of the time; they only change with setup.sh
       - name: Toolchain cache
@@ -42,6 +52,10 @@ jobs:
 
       - name: Build default.xbe
         run: xbox/build.sh
+
+      # $$XTIMAGE section, title ID 4D580001 and default.tbn (as tools/xbox/docker/build.sh does)
+      - name: Dashboard icon
+        run: python3 tools/xbox/xbe_title_image.py build-xbox/xbe/default.xbe xbox/assets/logo.png build-xbox/xbe/default.tbn
 
       - name: Tests
         run: |
@@ -62,3 +76,13 @@ jobs:
             build-xbox/melee_x.map
           if-no-files-found: error
           retention-days: 14
+
+      - name: Release
+        if: inputs.release != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release }}
+        run: |
+          python3 tools/xbox/package_release.py "$TAG"
+          gh release create "$TAG" "dist/Melee-X-$TAG.zip" --target "$GITHUB_SHA" \
+            --title "Melee-X $TAG" --notes-file .github/release-notes.md

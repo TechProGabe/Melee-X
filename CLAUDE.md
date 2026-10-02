@@ -24,7 +24,7 @@ Read first: `docs/handoff.md` (current state, Windows setup, working notes),
 tools/xbox/docker/build.sh                        # -> build-xbox/xbe/default.xbe + build-xbox/melee_x.map
 XBOX_CFLAGS="-DXHW_PROF=1" tools/xbox/docker/build.sh   # extra platform flags (switch table: docs/testing.md)
 tools/xbox/msys/build.sh                          # Windows without Docker (MSYS2; docs/toolchain.md), same knobs
-python3 tools/xbox/package_release.py <name>      # plain build only -> dist/Melee-X-<name>.zip
+# releases: GitHub Actions "build" workflow with a release tag (docs/toolchain.md "Release"), not local
 python3 tools/xbox/test_tex_convert.py            # host tests (tests/xbox/*.c)
 python3 tools/xbox/test_vp_encoder.py
 python3 tools/xbox/test_fog.py                    # GX fog math (nv2a_fog.c) vs GX's fog factor
