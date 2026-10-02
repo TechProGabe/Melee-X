@@ -7,7 +7,9 @@ This isn't an emulator. The [doldecomp](https://github.com/doldecomp/melee) proj
 **Status:** fully playable. Matches usually run somewhere between 30 and 60 fps depending on the stage and how much is going on, menus sit at 60, and the game itself always ticks at full speed. It's still in development, so a crash can happen, but it's unlikely.
 
 - 4 players on the 4 controller ports, with rumble
-- 480i or 480p, 4:3 or 16:9 (from your dashboard's video settings); 720p is experimental and off unless you turn it on in `settings.ini`
+- 480i or 480p, 4:3 or 16:9, picked from your dashboard's video settings. Tested on composite and on component cables to an HDTV
+- 720p is experimental and stays off unless you turn it on in `settings.ini` (matches run slowly there and some graphics are wrong)
+- Hold L + R + Back + Black to quit back to the dashboard
 - Saves use the GameCube `.gci` format, so your Dolphin or memory card save works here and the other way around
 
 You need your own copy of the game. Nothing from Nintendo ships with this.
@@ -91,11 +93,11 @@ Going the other way works too: copy the `.gci` off the Xbox and import it into D
 
 ## Settings
 
-Settings are in `E:\UDATA\4d580001\settings.ini`. Melee-X writes it the first time it boots, and you can edit it over FTP.
+Settings are in `E:\UDATA\4d580001\settings.ini`. Melee-X writes it the first time it boots, and you can edit it over FTP. A file written by v1 is updated on the first boot of v2: 720p is switched off there, since v1 turned it on by default.
 
 | section | setting | what it does |
 |---|---|---|
-| `[video]` | `720p` | experimental: 1 uses 720p when your dashboard has it turned on (needs component cables). Off by default |
+| `[video]` | `720p` | experimental: 1 uses 720p when your dashboard has it turned on (needs component cables). Off by default; a dashboard set to 720p still gets 480p. Matches run slowly at 720p for now |
 | | `progressive` | 0 forces 480i even when your dashboard allows 480p |
 | | `widescreen` | 1 draws 16:9 at 480i/480p when the dashboard is set to widescreen |
 | | `fps` | 1 shows a frame counter in the top left corner (off by default) |
