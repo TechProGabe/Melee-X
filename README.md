@@ -4,7 +4,7 @@ Super Smash Bros. Melee running natively on an original Xbox.
 
 This isn't an emulator. The [doldecomp](https://github.com/doldecomp/melee) project turned Melee back into C source, and Melee-X compiles that code for the Xbox's 733 MHz Pentium III. Every frame is drawn by the Xbox's own NV2A GPU through a GameCube graphics layer written for it, and the game data streams from your disc image the same way it would from a GameCube disc.
 
-**Status:** fully playable. Matches usually run somewhere between 30 and 60 fps depending on the stage and how much is going on, menus sit at 60, and the game itself always ticks at full speed.
+**Status:** fully playable. Matches usually run somewhere between 30 and 60 fps depending on the stage and how much is going on, menus sit at 60, and the game itself always ticks at full speed. It's still in development, so a crash can happen, but it's unlikely.
 
 - 4 players on the 4 controller ports, with rumble
 - 480i, 480p or 720p (720p is drawn in 16:9 with extra screen on the sides)
