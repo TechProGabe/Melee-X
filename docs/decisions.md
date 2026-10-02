@@ -382,6 +382,18 @@ marked `PORT:`:
     `HSD_AObjInterpretAnim`, `HSD_RObjAnimAll`, `HSD_DObjAnimAll` or
     `HSD_TObjAnimAll` for an object they would return from at once (no
     AObj, or one that has stopped; no list).
+- `src/pc/audio.c` (`mix_voice`): the source samples a voice consumes in a
+  5 ms frame are decoded a block at a time (`decode_samples`, read back
+  through `src_next`) instead of one `next_sample()` call per sample: the
+  format switch, the state and ARAM checks and the ADPCM coefficient lookup
+  ran per sample, and the ADPCM products are s32 (only the sum, which can
+  pass 2^31, is s64). Exactly the samples the mix loop would have read are
+  decoded (AX_FRAME at ratio 1.0, the 16.16 sum otherwise, one at a time
+  where `frac` could wrap), so the voice ends in the same state. The
+  resampler's `frac` converts to float as s32 (it is below 0x10000 there):
+  u32 to float is an x87 round trip through memory on the Pentium III.
+  Same bits as before (`tools/xbox/test_audio_mix.py`, against
+  `tests/xbox/audio_mix_ref.c`).
 - `src/melee/mp/mpisland.c` (`mpIsland_8005A728`, `mpIsland_8005B004`): the
   1.5 KB `visited` arrays, which the code `memzero`s itself, are exempt from
   `-ftrivial-auto-var-init=zero` (it zeroed them a second time per call).

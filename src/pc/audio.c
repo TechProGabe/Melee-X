@@ -155,90 +155,187 @@ static inline s16 clamp16(s64 v) {
 
 /* ---- sample fetch ------------------------------------------------------ */
 
-/* Reads the next source sample; returns false once the voice has ended. */
-static bool next_sample(Voice* v, s16* out) {
+/* PORT: the source samples a mix_voice call consumes are decoded up front, a
+ * block at a time, instead of through one next_sample() call per sample:
+ * the format switch, the ARAM and state checks and the ADPCM coefficient
+ * lookup ran for every sample, and on the Pentium III that per-sample
+ * overhead was most of the mixer thread's integer work (64 voices, 32000
+ * samples a second each). The output is the same bits as before
+ * (tests/xbox/test_audio_mix.c runs this against the old code):
+ *   - decode_samples() is next_sample() run n times, stopping where it would
+ *     have returned false, with the same side effects on the voice at that
+ *     point (a header read before a failed bounds check included). Its
+ *     inputs (the addresses, pb state, ADPCM blocks) are only written under
+ *     audio_lock, which the mixer holds, so decoding ahead of the mix loop
+ *     reads what the loop would have read.
+ *   - ADPCM's products are s32: |nibble * scale * 2048| <= 2^29 and
+ *     |coef * yn| <= 2^30 (yn is always a clamped s16), so only the sum,
+ *     which can pass 2^31, needs s64.
+ *   - src_next() never decodes a sample the mix loop would not have asked
+ *     for: the count is exact (AX_FRAME at ratio 1.0, the 16.16 sum
+ *     otherwise), or one sample at a time where frac could wrap u32. */
+
+/* Decodes up to n source samples into dst; returns how many. Fewer than n
+ * means the voice ended (or its address left ARAM) after that many, exactly
+ * where next_sample() would have returned false. */
+static int decode_samples(Voice* v, s16* dst, int n) {
     AXPB* pb = &v->vpb.pb;
-    u16 format = pb->addr.format;
+    u32 cur = v->cur_addr;
+    const u32 end = v->end_addr;
+    int i = 0;
 
     if (!pb->state || !s_aram) {
-        return false;
+        return 0;
     }
-
     /* Every read below indexes the 16MB ARAM buffer directly. A voice whose
      * address pair is wrong -- a torn AXSetVoiceAddr from the game thread, a
      * bank whose ARAM allocation was freed, a .ssm header read with the wrong
      * relocation -- would otherwise read up to 2GB past the buffer. Ending
      * the voice is what the mixer already does for a finished one, so the
      * voice is reaped instead of faulting. */
-    switch (format) {
+    switch (pb->addr.format) {
     case AX_FORMAT_ADPCM: {
-        /* 16 nibbles per frame: 2 header nibbles, 14 sample nibbles. */
-        if ((v->cur_addr & 15) == 0) {
-            if ((v->cur_addr >> 1) + 2 > PC_ARAM_SIZE) {
-                return false;
+        u16 ps = v->pred_scale;
+        s32 yn1 = v->yn1, yn2 = v->yn2;
+        s32 scale = 1 << (ps & 0xF);
+        s32 c0 = (s16)pb->adpcm.a[(ps >> 4) & 7][0];
+        s32 c1 = (s16)pb->adpcm.a[(ps >> 4) & 7][1];
+        for (; i < n; i++) {
+            /* 16 nibbles per frame: 2 header nibbles, 14 sample nibbles. */
+            if ((cur & 15) == 0) {
+                if ((cur >> 1) + 2 > PC_ARAM_SIZE) {
+                    break;
+                }
+                ps = s_aram[cur >> 1];
+                cur += 2;
+                scale = 1 << (ps & 0xF);
+                c0 = (s16)pb->adpcm.a[(ps >> 4) & 7][0];
+                c1 = (s16)pb->adpcm.a[(ps >> 4) & 7][1];
             }
-            v->pred_scale = s_aram[v->cur_addr >> 1];
-            v->cur_addr += 2;
+            if ((cur >> 1) >= PC_ARAM_SIZE) {
+                break;
+            }
+            u8 byte = s_aram[cur >> 1];
+            s32 nibble = (cur & 1) ? (byte & 0xF) : (byte >> 4);
+            nibble = nibble >= 8 ? nibble - 16 : nibble;
+            /* s64 sum: a bank read with the wrong relocation yields
+             * coefficients and a scale whose terms overshoot s32 together,
+             * and the clamp has to see the true value. */
+            s64 acc = (s64)(nibble * scale * 2048) + 1024 + (s64)(c0 * yn1) + (s64)(c1 * yn2);
+            s32 sample = clamp16(acc >> 11);
+            yn2 = yn1;
+            yn1 = sample;
+            dst[i] = (s16)sample;
+            /* AX end addresses are inclusive. HPS jumps into the next ring
+             * block here, then updates endAddress at the following synth
+             * callback. That loop target can be ABOVE the old end: equality
+             * after decoding (not a range check before it) lets the new
+             * block advance in the meantime. */
+            if (cur == end) {
+                if (!pb->addr.loopFlag) {
+                    pb->state = 0;
+                    i++;
+                    break;
+                }
+                cur = v->loop_addr;
+                ps = pb->adpcmLoop.loop_pred_scale;
+                yn1 = (s16)pb->adpcmLoop.loop_yn1;
+                yn2 = (s16)pb->adpcmLoop.loop_yn2;
+                scale = 1 << (ps & 0xF);
+                c0 = (s16)pb->adpcm.a[(ps >> 4) & 7][0];
+                c1 = (s16)pb->adpcm.a[(ps >> 4) & 7][1];
+            } else {
+                cur++;
+            }
         }
-        if ((v->cur_addr >> 1) >= PC_ARAM_SIZE) {
-            return false;
-        }
-        u8 byte = s_aram[v->cur_addr >> 1];
-        s32 nibble = (v->cur_addr & 1) ? (byte & 0xF) : (byte >> 4);
-        nibble = nibble >= 8 ? nibble - 16 : nibble;
-        s32 scale = 1 << (v->pred_scale & 0xF);
-        u32 coef = (v->pred_scale >> 4) & 7;
-        s32 c0 = (s16)pb->adpcm.a[coef][0];
-        s32 c1 = (s16)pb->adpcm.a[coef][1];
-        /* s64 accumulator: a bank read with the wrong relocation yields
-         * coefficients and a scale whose four terms overshoot s32, and
-         * signed overflow is undefined behaviour that -O2 may fold the
-         * clamp away against. */
-        s64 acc = (s64)nibble * scale * 2048 + 1024 + (s64)c0 * v->yn1 + (s64)c1 * v->yn2;
-        s32 sample = clamp16(acc >> 11);
-        v->yn2 = v->yn1;
-        v->yn1 = sample;
-        *out = (s16)sample;
+        v->pred_scale = ps;
+        v->yn1 = yn1;
+        v->yn2 = yn2;
         break;
     }
-    case AX_FORMAT_PCM16: {
-        const u8* p;
-        if (v->cur_addr >= PC_ARAM_SIZE / 2) {
-            return false;
+    case AX_FORMAT_PCM16:
+    case AX_FORMAT_PCM8: {
+        const bool pcm16 = pb->addr.format == AX_FORMAT_PCM16;
+        for (; i < n; i++) {
+            if (pcm16) {
+                if (cur >= PC_ARAM_SIZE / 2) {
+                    break;
+                }
+                const u8* p = &s_aram[cur * 2];
+                dst[i] = (s16)((p[0] << 8) | p[1]);
+            } else {
+                if (cur >= PC_ARAM_SIZE) {
+                    break;
+                }
+                dst[i] = (s16)((s8)s_aram[cur] * 256);
+            }
+            if (cur == end) {
+                if (!pb->addr.loopFlag) {
+                    pb->state = 0;
+                    i++;
+                    break;
+                }
+                cur = v->loop_addr;
+            } else {
+                cur++;
+            }
         }
-        p = &s_aram[v->cur_addr * 2];
-        *out = (s16)((p[0] << 8) | p[1]);
         break;
     }
-    case AX_FORMAT_PCM8:
-        if (v->cur_addr >= PC_ARAM_SIZE) {
-            return false;
-        }
-        *out = (s16)((s8)s_aram[v->cur_addr] * 256);
-        break;
     default:
-        return false;
+        return 0;
     }
+    v->cur_addr = cur;
+    return i;
+}
 
-    /* AX end addresses are inclusive. HPS jumps into the next ring block
-     * here, then updates endAddress at the following synth callback. That
-     * loop target can be ABOVE the old end: equality after decoding (not a
-     * range check before it) lets the new block advance in the meantime. */
-    if (v->cur_addr == v->end_addr) {
-        if (pb->addr.loopFlag) {
-            v->cur_addr = v->loop_addr;
-            if (format == AX_FORMAT_ADPCM) {
-                v->pred_scale = pb->adpcmLoop.loop_pred_scale;
-                v->yn1 = (s16)pb->adpcmLoop.loop_yn1;
-                v->yn2 = (s16)pb->adpcmLoop.loop_yn2;
-            }
-        } else {
-            pb->state = 0;
+/* The samples one mix_voice call reads, decoded a block at a time. `left`
+ * is how many more the call will ask for at most. */
+typedef struct SampleSrc {
+    s16 buf[AX_FRAME];
+    int pos, n;
+    u32 left;
+    int chunk; /* AX_FRAME, or 1 where `left` is not known */
+    bool ended;
+} SampleSrc;
+
+/* need = the exact number of next_sample() calls the mix loop makes if the
+ * voice does not end, or 0 for "unknown" (decode one at a time). */
+static inline void src_init(SampleSrc* s, u32 need) {
+    s->pos = s->n = 0;
+    s->ended = false;
+    s->left = need != 0 ? need : 0xFFFFFFFFu;
+    s->chunk = need != 0 ? AX_FRAME : 1;
+}
+
+/* Reads the next source sample; returns false once the voice has ended. */
+static inline bool src_next(Voice* v, SampleSrc* s, s16* out) {
+    if (s->pos == s->n) {
+        int want = s->left < (u32)s->chunk ? (int)s->left : s->chunk;
+        if (s->ended || want == 0) {
+            return false;
         }
-    } else {
-        v->cur_addr++;
+        s->n = decode_samples(v, s->buf, want);
+        s->pos = 0;
+        s->left -= (u32)s->n;
+        s->ended = s->n < want;
+        if (s->n == 0) {
+            return false;
+        }
     }
+    *out = s->buf[s->pos++];
     return true;
+}
+
+/* next_sample() calls in a frame of the resampling loop
+ * (`frac += ratio; while (frac >= 0x10000) ...`), or 0 where frac could wrap
+ * u32 and the 16.16 sum would not match the loop (ratio is capped at 4.0, so
+ * not in practice). */
+static inline u32 src_need(u32 frac, u32 ratio) {
+    if ((u64)frac + ratio > 0xFFFFFFFFu || (u64)0xFFFF + ratio > 0xFFFFFFFFu) {
+        return 0;
+    }
+    return (u32)(((u64)frac + (u64)ratio * AX_FRAME) >> 16);
 }
 
 /* ---- aux busses -------------------------------------------------------- */
@@ -365,13 +462,19 @@ static void mix_voice(Voice* v, float* out) {
         return;
     }
 
+    /* PORT: the source samples, decoded ahead (decode_samples). At ratio 1.0
+     * every path below reads one per output sample and leaves frac alone;
+     * otherwise frac steps by ratio. */
+    SampleSrc src;
+    src_init(&src, ratio == 0x10000 ? AX_FRAME : src_need(v->frac, ratio));
+
     /* Fast path for silent voices: advance sample decoding, stream ring buffers,
      * and end-of-voice checks without any floating-point arithmetic or buffer writes. */
     if (is_silent) {
         if (ratio == 0x10000) {
             for (int i = 0; i < AX_FRAME; i++) {
                 s16 s;
-                if (!next_sample(v, &s)) {
+                if (!src_next(v, &src, &s)) {
                     pb->state = 0;
                     pb->ve.currentVolume = (u16)(vol < 0 ? 0 : vol > 32767 ? 32767 : vol);
                     set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
@@ -391,7 +494,7 @@ static void mix_voice(Voice* v, float* out) {
                 v->frac += ratio;
                 while (v->frac >= 0x10000) {
                     s16 s;
-                    if (!next_sample(v, &s)) {
+                    if (!src_next(v, &src, &s)) {
                         pb->state = 0;
                         pb->ve.currentVolume = (u16)(vol < 0 ? 0 : vol > 32767 ? 32767 : vol);
                         set_addr(
@@ -424,7 +527,7 @@ static void mix_voice(Voice* v, float* out) {
             float scale_r = ((float)vol * (1.0f / 32767.0f)) * vr * (1.0f / 32768.0f);
             for (int i = 0; i < AX_FRAME; i++) {
                 s16 s;
-                if (!next_sample(v, &s)) {
+                if (!src_next(v, &src, &s)) {
                     pb->state = 0;
                     pb->ve.currentVolume = (u16)vol;
                     set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
@@ -443,7 +546,7 @@ static void mix_voice(Voice* v, float* out) {
 
         for (int i = 0; i < AX_FRAME; i++) {
             s16 s;
-            if (!next_sample(v, &s)) {
+            if (!src_next(v, &src, &s)) {
                 pb->state = 0;
                 pb->ve.currentVolume = (u16)(vol < 0 ? 0 : vol > 32767 ? 32767 : vol);
                 set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
@@ -481,7 +584,7 @@ static void mix_voice(Voice* v, float* out) {
         float t = (float)v->frac * (1.0f / 65536.0f);
         for (int i = 0; i < AX_FRAME; i++) {
             s16 s;
-            if (!next_sample(v, &s)) {
+            if (!src_next(v, &src, &s)) {
                 pb->state = 0;
                 pb->ve.currentVolume = (u16)(vol < 0 ? 0 : vol > 32767 ? 32767 : vol);
                 set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
@@ -519,7 +622,7 @@ static void mix_voice(Voice* v, float* out) {
         v->frac += ratio;
         while (v->frac >= 0x10000) {
             s16 s;
-            if (!next_sample(v, &s)) {
+            if (!src_next(v, &src, &s)) {
                 pb->state = 0;
                 pb->ve.currentVolume = (u16)(vol < 0 ? 0 : vol > 32767 ? 32767 : vol);
                 /* The mirror the game reads back has to follow on this path
@@ -545,7 +648,9 @@ static void mix_voice(Voice* v, float* out) {
             v->cur = s;
             v->frac -= 0x10000;
         }
-        float t = (float)v->frac * (1.0f / 65536.0f);
+        /* PORT: frac < 0x10000 here, so it converts as s32 (one cvtsi2ss); u32 to
+         * float is an x87 round trip through memory on the Pentium III */
+        float t = (float)(s32)v->frac * (1.0f / 65536.0f);
         float s = ((float)v->prev + t * (float)(v->cur - v->prev)) * (1.0f / 32768.0f);
         float g = (float)vol * (1.0f / 32767.0f);
         float sv = s * g;

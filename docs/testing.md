@@ -13,6 +13,7 @@ tools/xbox/test_rc.py            # TEV -> combiners: no-swizzle programs unchang
 tools/xbox/test_card_endian.py   # memory-card files: field tables vs the game's structs, big-endian <-> native
 tools/xbox/test_pool.py          # nv2a.c's pool allocator: random allocations and frees, block-list invariants
 tools/xbox/test_anim_mtx.py      # HSD keyframe interpreter, HSD_MtxSRT, envelope blend vs the code before the rewrites [--full]
+tools/xbox/test_audio_mix.py     # src/pc/audio.c's voice mixer (block decoder) vs the per-sample code before it, random voices
 ```
 
 CI (`.github/workflows/build.yml`, started by hand; it also builds the
@@ -53,6 +54,17 @@ random inputs with denormals, negative zero, infinities and NaNs. Floats
 must have the same bits; a NaN only has to stay a NaN (which NaN operand's
 payload x86 keeps depends on the operand order the compiler picks). A new
 rewrite in this code needs its reference added there first.
+
+`test_audio_mix.py` does the same for the software AX mixer: it builds
+`src/pc/audio.c` (with the Xbox's SDL3 shim and stubs) next to
+`tests/xbox/audio_mix_ref.c`, the per-sample `next_sample()` and
+`mix_voice()` from before the block decoder, and mixes 200000 random voices
+for up to six frames each through both: ADPCM, PCM16, PCM8 and unknown
+formats, addresses across the end of ARAM, end and loop addresses on header
+nibbles and above the end (HPS), extreme coefficients and histories, ratios
+0, 1.0, up to 4.0 and unclamped ones that wrap `frac`, volume ramps through
+0 and 32767, and every dry/aux send combination. The dry mix, both aux
+busses and the whole `Voice` must have the same bits.
 
 ## Running it
 
