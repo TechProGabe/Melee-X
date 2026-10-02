@@ -13,6 +13,9 @@
 #             without Docker: /c/xdev/nxdk/tools/extract-xiso/build/extract-xiso.exe)
 #   MX_XEMU   the xemu binary (default: macOS's /Applications/Xemu.app; on
 #             Windows e.g. /c/xemu/xemu.exe)
+#   MX_SHOTS  stop once this many [FBDUMP] screenshots are complete (default:
+#             the number of SHOT lines in $MX_STAGE_EXTRA/autopad.txt; 0 = off,
+#             run until the stop regex or the timeout)
 # xemu needs your own MCPX ROM, BIOS and HDD image, set to 64 MB.
 set -euo pipefail
 # Git Bash: keep MSYS from rewriting /run, /usr/... into Windows paths for docker
@@ -41,10 +44,18 @@ xrun="$run"; [ "$win" = 1 ] && xrun="$(cd "$run" && pwd -W)"
 "$xemu" -dvd_path "$xrun/game.xiso" \
   -device lpc47m157 -serial "file:$xrun/serial.log" ${MX_XEMU_ARGS:-} > "$run/xemu.out" 2>&1 &
 pid=$!
+shots="${MX_SHOTS:-}"
+if [ -z "$shots" ]; then
+  shots=0
+  ap="${MX_STAGE_EXTRA:-}/autopad.txt"
+  [ -n "${MX_STAGE_EXTRA:-}" ] && [ -f "$ap" ] && shots=$(grep -cE '^[0-9]+[[:space:]]+SHOT' "$ap" || true)
+fi
 for ((i=0; i<secs; i++)); do
   sleep 1
   kill -0 $pid 2>/dev/null || break
   grep -qE "$stop" "$log" 2>/dev/null && break
+  # the last screenshot is out: the rest of the scenario (results screen) is idle time
+  [ "$shots" -gt 0 ] && [ "$(tr -d '\r' < "$log" | grep -cx '\[FBDUMP\] END')" -ge "$shots" ] && break
 done
 [ "${MX_GUI:-0}" = 1 ] || { kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true; }
 echo "--- serial ($i s) ---"; tr -d '\r' < "$log"

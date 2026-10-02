@@ -101,6 +101,10 @@ Screenshots come out of the serial log as `[FBDUMP]` lines. Decode them
 with `tools/xbox/fbdump_to_png.py serial.log shot`. A run that should end on a screenshot needs
 `'FBDUMP\] END.?$'` as its stop regex (`.?$`: a base64 line can start with END); `SHOT at frame` is logged before the
 dump is written.
+`xemu_run.sh` also stops by itself once the scenario's screenshots are all
+out (one per `SHOT` line in `$MX_STAGE_EXTRA/autopad.txt`, or `MX_SHOTS=N`),
+so a run doesn't idle on the results screen until the timeout; `MX_SHOTS=0`
+keeps it running (e.g. for `[PERF]` lines after the last shot).
 
 If the log stops dead, heartbeat included, the guest has bugchecked. In the
 monitor, `info registers` then shows `HLT=1` with IF clear, and the
