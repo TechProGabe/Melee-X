@@ -52,9 +52,12 @@ static inline void audio_unlock(void) {
     pthread_mutex_unlock(&s_audio_mutex);
 }
 
-#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
-#include <emmintrin.h>
-#define PC_AUDIO_SIMD_SSE2 1
+/* PORT: SSE1 is all the mixer uses (the Xbox's Pentium III has no SSE2).
+ * PC_AUDIO_SCALAR builds the plain C instead (tests/xbox/test_audio_mix.c). */
+#if defined(PC_AUDIO_SCALAR)
+#elif defined(__SSE__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 1)
+#include <xmmintrin.h>
+#define PC_AUDIO_SIMD_SSE 1
 #elif defined(__ARM_NEON) || defined(__aarch64__)
 #include <arm_neon.h>
 #define PC_AUDIO_SIMD_NEON 1
@@ -169,11 +172,11 @@ static inline s16 clamp16(s64 v) {
  *     audio_lock, which the mixer holds, so decoding ahead of the mix loop
  *     reads what the loop would have read.
  *   - ADPCM's products are s32: |nibble * scale * 2048| <= 2^29 and
- *     |coef * yn| <= 2^30 (yn is always a clamped s16), so only the sum,
- *     which can pass 2^31, needs s64.
- *   - src_next() never decodes a sample the mix loop would not have asked
- *     for: the count is exact (AX_FRAME at ratio 1.0, the 16.16 sum
- *     otherwise), or one sample at a time where frac could wrap u32. */
+ *     |coef * yn| <= 2^30 (yn is always a clamped s16); the sum, which can
+ *     pass 2^31, is split so that it stays in s32 too (decode_samples).
+ *   - Exactly the samples the mix loop would have asked for are decoded:
+ *     the count is exact (AX_FRAME at ratio 1.0, the 16.16 sum otherwise),
+ *     or one sample at a time (src_next) where frac could wrap u32. */
 
 /* Decodes up to n source samples into dst; returns how many. Fewer than n
  * means the voice ended (or its address left ARAM) after that many, exactly
@@ -200,7 +203,7 @@ static int decode_samples(Voice* v, s16* dst, int n) {
         s32 scale = 1 << (ps & 0xF);
         s32 c0 = (s16)pb->adpcm.a[(ps >> 4) & 7][0];
         s32 c1 = (s16)pb->adpcm.a[(ps >> 4) & 7][1];
-        for (; i < n; i++) {
+        while (i < n) {
             /* 16 nibbles per frame: 2 header nibbles, 14 sample nibbles. */
             if ((cur & 15) == 0) {
                 if ((cur >> 1) + 2 > PC_ARAM_SIZE) {
@@ -215,38 +218,64 @@ static int decode_samples(Voice* v, s16* dst, int n) {
             if ((cur >> 1) >= PC_ARAM_SIZE) {
                 break;
             }
-            u8 byte = s_aram[cur >> 1];
-            s32 nibble = (cur & 1) ? (byte & 0xF) : (byte >> 4);
-            nibble = nibble >= 8 ? nibble - 16 : nibble;
-            /* s64 sum: a bank read with the wrong relocation yields
-             * coefficients and a scale whose terms overshoot s32 together,
-             * and the clamp has to see the true value. */
-            s64 acc = (s64)(nibble * scale * 2048) + 1024 + (s64)(c0 * yn1) + (s64)(c1 * yn2);
-            s32 sample = clamp16(acc >> 11);
-            yn2 = yn1;
-            yn1 = sample;
-            dst[i] = (s16)sample;
+            /* PORT: the rest of this frame is decoded in one run, up to the
+             * end address or n: a frame is 8 aligned bytes and ARAM a
+             * multiple of 8, so no nibble in it can leave ARAM, and the run
+             * meets no header and no end. The per-sample checks, and the
+             * register spills they cost on the Pentium III, are gone. */
+            u32 run = 16 - (cur & 15);
+            bool at_end = false;
+            if (end - cur < run) {
+                run = end - cur + 1;
+                at_end = true;
+            }
+            if (run > (u32)(n - i)) {
+                run = (u32)(n - i);
+                at_end = false;
+            }
+            const u8* bytes = s_aram;
+            for (u32 j = 0; j < run; j++) {
+                u32 a = cur + j;
+                u32 byte = bytes[a >> 1];
+                s32 nibble = (s32)(((a & 1) ? byte : byte >> 4) & 0xF);
+                nibble = (nibble ^ 8) - 8;
+                /* PORT: the sum in s32. It was
+                 *   clamp16(((s64)(nibble * scale * 2048) + 1024 + (s64)p0 + (s64)p1) >> 11)
+                 * (p0 = c0 * yn1, p1 = c1 * yn2), whose sum can pass 2^31.
+                 * The first term is a multiple of 2048, so it leaves the
+                 * shift as nibble * scale; and floor((p0 + p1 + 1024) / 2048)
+                 * is ((p0 >> 1) + (p1 >> 1) + (p0 & p1 & 1) + 512) >> 10,
+                 * which stays under 2^31 (|p| <= 2^30: coefficients and
+                 * history are s16). Same value, no 64-bit adds. */
+                s32 p0 = c0 * yn1, p1 = c1 * yn2;
+                s32 sample = nibble * scale + (((p0 >> 1) + (p1 >> 1) + (p0 & p1 & 1) + 512) >> 10);
+                sample = sample > 32767 ? 32767 : sample < -32768 ? -32768 : sample;
+                yn2 = yn1;
+                yn1 = sample;
+                dst[i + (int)j] = (s16)sample;
+            }
+            i += (int)run;
+            if (!at_end) {
+                cur += run;
+                continue;
+            }
             /* AX end addresses are inclusive. HPS jumps into the next ring
              * block here, then updates endAddress at the following synth
              * callback. That loop target can be ABOVE the old end: equality
              * after decoding (not a range check before it) lets the new
              * block advance in the meantime. */
-            if (cur == end) {
-                if (!pb->addr.loopFlag) {
-                    pb->state = 0;
-                    i++;
-                    break;
-                }
-                cur = v->loop_addr;
-                ps = pb->adpcmLoop.loop_pred_scale;
-                yn1 = (s16)pb->adpcmLoop.loop_yn1;
-                yn2 = (s16)pb->adpcmLoop.loop_yn2;
-                scale = 1 << (ps & 0xF);
-                c0 = (s16)pb->adpcm.a[(ps >> 4) & 7][0];
-                c1 = (s16)pb->adpcm.a[(ps >> 4) & 7][1];
-            } else {
-                cur++;
+            cur = end;
+            if (!pb->addr.loopFlag) {
+                pb->state = 0;
+                break;
             }
+            cur = v->loop_addr;
+            ps = pb->adpcmLoop.loop_pred_scale;
+            yn1 = (s16)pb->adpcmLoop.loop_yn1;
+            yn2 = (s16)pb->adpcmLoop.loop_yn2;
+            scale = 1 << (ps & 0xF);
+            c0 = (s16)pb->adpcm.a[(ps >> 4) & 7][0];
+            c1 = (s16)pb->adpcm.a[(ps >> 4) & 7][1];
         }
         v->pred_scale = ps;
         v->yn1 = yn1;
@@ -397,234 +426,268 @@ static bool is_music_stream(Voice* v) {
     return false;
 }
 
-static void mix_voice(Voice* v, float* out) {
-    AXPB* pb = &v->vpb.pb;
-    if (!pb->state) {
-        return;
-    }
+/* ---- voice mixing ------------------------------------------------------ */
 
-    u32 ratio = addr32(pb->src.ratioHi, pb->src.ratioLo);
-    s32 vol = pb->ve.currentVolume;
-    s32 delta = pb->ve.currentDelta;
+/* PORT: mix_voice's per-sample loops, rewritten for the Pentium III with the
+ * same bits (tests/xbox/test_audio_mix.c runs them against the code before,
+ * tests/xbox/audio_mix_ref.c):
+ *   - A frame's samples are decoded in one decode_samples() call and its
+ *     source positions worked out before any mixing (src_steps): how many
+ *     outputs it mixes before the voice ends and, for each, the two samples
+ *     and the phase it interpolates. The loops called src_next() for every
+ *     source sample and kept prev, cur and frac in the Voice as they went.
+ *   - The float math then runs four outputs a step in SSE1 (mulps, addps,
+ *     subps, minps, maxps), each lane doing what the scalar loop did for its
+ *     output, in the same order; the dry mix's L/R pairs are the lanes
+ *     unpacked, and the aux sends convert lane by lane with the C cast. The
+ *     scalar code was SSE single precision already (-mfpmath=sse), so each
+ *     lane rounds as it did; integer to float conversions are exact either
+ *     way.
+ *   - Integers reach the lanes without a cvtsi2ss each: an s16 added to the
+ *     bits of 2^23 + 2^15 (a 16-bit phase to those of 2^23) is that float
+ *     plus the integer, and subtracting the constant gives back the
+ *     integer's float exactly (+0.0 for 0, as the conversion gives).
+ *   - The volume ramp (`vol += delta`, clamped to [0, 32767] at each step)
+ *     is clamp(vol0 + i * delta), since vol0 starts in range and delta has
+ *     one sign; an integer under 2^23, so the lanes step it in float exactly.
+ * A frame that would decode more than SRC_MAX samples (a phase that could
+ * wrap u32, a ratio above AX's 4.0) still runs the sample-at-a-time loop. */
 
-    float voice_gain = is_music_stream(v) ? pc_get_music_volume() : pc_get_sfx_volume();
-    if (voice_gain < 0.0f) {
-        voice_gain = 0.0f;
-    }
+#define SRC_MAX (4 * AX_FRAME + 8) /* AX's 4.0, plus whole steps left in frac */
+#define BIAS_S16 0x4B008000u       /* the bits of 2^23 + 2^15 */
+#define BIAS_FRAC 0x4B000000u      /* the bits of 2^23 */
 
-    float vl = (pb->mix.vL / 32767.0f) * voice_gain;
-    float vr = (pb->mix.vR / 32767.0f) * voice_gain;
-    float al = (pb->mix.vAuxAL / 32767.0f) * voice_gain;
-    float ar = (pb->mix.vAuxAR / 32767.0f) * voice_gain;
-    float bl = (pb->mix.vAuxBL / 32767.0f) * voice_gain;
-    float br = (pb->mix.vAuxBR / 32767.0f) * voice_gain;
-    bool send_a = s_aux_on && (s_auxA.cb != NULL) && (al != 0.0f || ar != 0.0f);
-    bool send_b = s_aux_on && (s_auxB.cb != NULL) && (bl != 0.0f || br != 0.0f);
+typedef union LaneBits {
+    u32 u[AX_FRAME];
+    float f[AX_FRAME];
+} __attribute__((aligned(16))) LaneBits;
 
-    if (vol < 0) {
-        vol = 0;
-    } else if (vol > 32767) {
-        vol = 32767;
-    }
+/* One frame's source positions, an entry per output, as biased float bits:
+ * the samples an output interpolates between and its 16-bit phase. */
+typedef struct SrcLanes {
+    LaneBits prev, cur, frac;
+} SrcLanes;
 
-    bool is_silent = ((vol == 0 && delta == 0) || (vl == 0.0f && vr == 0.0f)) && !send_a && !send_b;
+typedef struct MixGains {
+    float vl, vr, al, ar, bl, br;
+    bool send_a, send_b;
+} MixGains;
 
-    /* If ratio is 0, no source samples can ever be consumed (v->frac += 0).
-     * If the voice is silent, nothing is mixed and no samples advance. Early exit! */
-    if (ratio == 0) {
-        if (is_silent) {
-            return;
-        }
-        float t = (float)v->frac * (1.0f / 65536.0f);
-        float s = ((float)v->prev + t * (float)(v->cur - v->prev)) * (1.0f / 32768.0f);
-        for (int i = 0; i < AX_FRAME; i++) {
-            float g = (float)vol * (1.0f / 32767.0f);
-            float sv = s * g;
-            out[i * 2] += sv * vl;
-            out[i * 2 + 1] += sv * vr;
-            if (send_a) {
-                s_auxA.ch[0][i] += (long)(sv * al * 32767.0f);
-                s_auxA.ch[1][i] += (long)(sv * ar * 32767.0f);
-            }
-            if (send_b) {
-                s_auxB.ch[0][i] += (long)(sv * bl * 32767.0f);
-                s_auxB.ch[1][i] += (long)(sv * br * 32767.0f);
-            }
-            vol += delta;
-            if (vol < 0) {
-                vol = 0;
-            } else if (vol > 32767) {
-                vol = 32767;
-            }
-        }
-        pb->ve.currentVolume = (u16)vol;
-        set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
-        return;
-    }
+/* The ramp's volume after n steps. */
+static inline s32 ramp_end(s32 vol, s32 delta, int n) {
+    s32 v = vol + delta * n;
+    return v < 0 ? 0 : v > 32767 ? 32767 : v;
+}
 
-    /* PORT: the source samples, decoded ahead (decode_samples). At ratio 1.0
-     * every path below reads one per output sample and leaves frac alone;
-     * otherwise frac steps by ratio. */
-    SampleSrc src;
-    src_init(&src, ratio == 0x10000 ? AX_FRAME : src_need(v->frac, ratio));
+/* Steps the 16.16 source position through a frame. ext[0] and ext[1] are the
+ * voice's prev and cur, ext[2 .. n + 1] the n samples decoded for the frame.
+ * Returns how many outputs are mixed before the voice ends (AX_FRAME: it did
+ * not), with *k the samples consumed by then and *frac the phase, as the
+ * sample-at-a-time loop leaves them; fills `lanes` for those outputs (and
+ * the rest of their group of four, with zeros) unless it is NULL. */
+static int src_steps(const s16* ext, u32 n, u32 ratio, u32* frac, u32* k, SrcLanes* lanes) {
+    u32 f = *frac, used = 0;
+    int m = AX_FRAME, i;
 
-    /* Fast path for silent voices: advance sample decoding, stream ring buffers,
-     * and end-of-voice checks without any floating-point arithmetic or buffer writes. */
-    if (is_silent) {
-        if (ratio == 0x10000) {
-            for (int i = 0; i < AX_FRAME; i++) {
-                s16 s;
-                if (!src_next(v, &src, &s)) {
-                    pb->state = 0;
-                    pb->ve.currentVolume = (u16)(vol < 0 ? 0 : vol > 32767 ? 32767 : vol);
-                    set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
-                    return;
-                }
-                v->prev = v->cur;
-                v->cur = s;
-                vol += delta;
-                if (vol < 0) {
-                    vol = 0;
-                } else if (vol > 32767) {
-                    vol = 32767;
-                }
-            }
-        } else {
-            for (int i = 0; i < AX_FRAME; i++) {
-                v->frac += ratio;
-                while (v->frac >= 0x10000) {
-                    s16 s;
-                    if (!src_next(v, &src, &s)) {
-                        pb->state = 0;
-                        pb->ve.currentVolume = (u16)(vol < 0 ? 0 : vol > 32767 ? 32767 : vol);
-                        set_addr(
-                            &pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
-                        return;
-                    }
-                    v->prev = v->cur;
-                    v->cur = s;
-                    v->frac -= 0x10000;
-                }
-                vol += delta;
-                if (vol < 0) {
-                    vol = 0;
-                } else if (vol > 32767) {
-                    vol = 32767;
-                }
-            }
-        }
-        pb->ve.currentVolume = (u16)vol;
-        set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
-        return;
-    }
-
-    /* Fast path for 1:1 playback (ratio == 0x10000, 32kHz native GameCube rate).
-     * Consumes exactly 1 sample per frame step.
-     * When v->frac == 0, no fractional interpolation is performed: s = v->prev. */
-    if (ratio == 0x10000 && v->frac == 0) {
-        if (delta == 0 && !send_a && !send_b) {
-            float scale_l = ((float)vol * (1.0f / 32767.0f)) * vl * (1.0f / 32768.0f);
-            float scale_r = ((float)vol * (1.0f / 32767.0f)) * vr * (1.0f / 32768.0f);
-            for (int i = 0; i < AX_FRAME; i++) {
-                s16 s;
-                if (!src_next(v, &src, &s)) {
-                    pb->state = 0;
-                    pb->ve.currentVolume = (u16)vol;
-                    set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
-                    return;
-                }
-                v->prev = v->cur;
-                v->cur = s;
-                float smp = (float)v->prev;
-                out[i * 2] += smp * scale_l;
-                out[i * 2 + 1] += smp * scale_r;
-            }
-            pb->ve.currentVolume = (u16)vol;
-            set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
-            return;
-        }
-
-        for (int i = 0; i < AX_FRAME; i++) {
-            s16 s;
-            if (!src_next(v, &src, &s)) {
-                pb->state = 0;
-                pb->ve.currentVolume = (u16)(vol < 0 ? 0 : vol > 32767 ? 32767 : vol);
-                set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
-                return;
-            }
-            v->prev = v->cur;
-            v->cur = s;
-            float smp = (float)v->prev * (1.0f / 32768.0f);
-            float g = (float)vol * (1.0f / 32767.0f);
-            float sv = smp * g;
-            out[i * 2] += sv * vl;
-            out[i * 2 + 1] += sv * vr;
-            if (send_a) {
-                s_auxA.ch[0][i] += (long)(sv * al * 32767.0f);
-                s_auxA.ch[1][i] += (long)(sv * ar * 32767.0f);
-            }
-            if (send_b) {
-                s_auxB.ch[0][i] += (long)(sv * bl * 32767.0f);
-                s_auxB.ch[1][i] += (long)(sv * br * 32767.0f);
-            }
-            vol += delta;
-            if (vol < 0) {
-                vol = 0;
-            } else if (vol > 32767) {
-                vol = 32767;
-            }
-        }
-        pb->ve.currentVolume = (u16)vol;
-        set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
-        return;
-    }
-
-    /* Fast path for ratio == 0x10000 with non-zero phase: phase remains constant throughout. */
     if (ratio == 0x10000) {
-        float t = (float)v->frac * (1.0f / 65536.0f);
-        for (int i = 0; i < AX_FRAME; i++) {
-            s16 s;
-            if (!src_next(v, &src, &s)) {
-                pb->state = 0;
-                pb->ve.currentVolume = (u16)(vol < 0 ? 0 : vol > 32767 ? 32767 : vol);
-                set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
-                return;
-            }
-            v->prev = v->cur;
-            v->cur = s;
-            float smp = ((float)v->prev + t * (float)(v->cur - v->prev)) * (1.0f / 32768.0f);
-            float g = (float)vol * (1.0f / 32767.0f);
-            float sv = smp * g;
-            out[i * 2] += sv * vl;
-            out[i * 2 + 1] += sv * vr;
-            if (send_a) {
-                s_auxA.ch[0][i] += (long)(sv * al * 32767.0f);
-                s_auxA.ch[1][i] += (long)(sv * ar * 32767.0f);
-            }
-            if (send_b) {
-                s_auxB.ch[0][i] += (long)(sv * bl * 32767.0f);
-                s_auxB.ch[1][i] += (long)(sv * br * 32767.0f);
-            }
-            vol += delta;
-            if (vol < 0) {
-                vol = 0;
-            } else if (vol > 32767) {
-                vol = 32767;
+        /* one sample per output, frac untouched */
+        if (n < AX_FRAME) {
+            m = (int)n;
+        }
+        used = (u32)m;
+        if (lanes != NULL) {
+            for (i = 0; i < m; i++) {
+                lanes->prev.u[i] = BIAS_S16 + (u32)ext[i + 1];
+                lanes->cur.u[i] = BIAS_S16 + (u32)ext[i + 2];
             }
         }
-        pb->ve.currentVolume = (u16)vol;
-        set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
-        return;
+    } else {
+        for (i = 0; i < AX_FRAME; i++) {
+            f += ratio;
+            if (used + (f >> 16) > n) {
+                /* the voice ends inside this output's step: the samples
+                 * there were are consumed, the rest of the step stays */
+                f -= (n - used) << 16;
+                used = n;
+                m = i;
+                break;
+            }
+            used += f >> 16;
+            f &= 0xFFFF;
+            if (lanes != NULL) {
+                lanes->prev.u[i] = BIAS_S16 + (u32)ext[used];
+                lanes->cur.u[i] = BIAS_S16 + (u32)ext[used + 1];
+                lanes->frac.u[i] = BIAS_FRAC + f;
+            }
+        }
     }
+    if (lanes != NULL) {
+        for (i = m; i & 3; i++) {
+            lanes->prev.u[i] = lanes->cur.u[i] = BIAS_S16;
+            lanes->frac.u[i] = BIAS_FRAC;
+        }
+    }
+    *frac = f;
+    *k = used;
+    return m;
+}
 
-    /* General sample-rate conversion path (ratio != 0x10000) */
+enum {
+    SRC_PREV,        /* (float)prev */
+    SRC_PREV_SCALED, /* (float)prev * (1 / 32768) */
+    SRC_LERP,        /* ((float)prev + t * (float)(cur - prev)) * (1 / 32768) */
+    SRC_LERP_STEP,   /* the same with each output's t = (float)frac * (1 / 65536) */
+};
+
+/* The source sample each of the first m outputs mixes (rounded up to four),
+ * from the lanes, into lanes->prev.f. (float)(cur - prev) is the difference
+ * of the two floats: both are integers under 2^16, so it is exact. */
+static void src_interp(SrcLanes* l, int m, int mode, float t) {
+    float* smp = l->prev.f;
+    int i;
+#if defined(PC_AUDIO_SIMD_SSE)
+    const __m128 b16 = _mm_set1_ps(8421376.0f), bfrac = _mm_set1_ps(8388608.0f);
+    const __m128 k15 = _mm_set1_ps(1.0f / 32768.0f), k16 = _mm_set1_ps(1.0f / 65536.0f);
+    const __m128 tv = _mm_set1_ps(t);
+    for (i = 0; i < m; i += 4) {
+        __m128 p = _mm_sub_ps(_mm_load_ps(smp + i), b16);
+        __m128 c, tt;
+        switch (mode) {
+        case SRC_PREV:
+            break;
+        case SRC_PREV_SCALED:
+            p = _mm_mul_ps(p, k15);
+            break;
+        case SRC_LERP:
+            c = _mm_sub_ps(_mm_load_ps(l->cur.f + i), b16);
+            p = _mm_mul_ps(_mm_add_ps(p, _mm_mul_ps(tv, _mm_sub_ps(c, p))), k15);
+            break;
+        default:
+            c = _mm_sub_ps(_mm_load_ps(l->cur.f + i), b16);
+            tt = _mm_mul_ps(_mm_sub_ps(_mm_load_ps(l->frac.f + i), bfrac), k16);
+            p = _mm_mul_ps(_mm_add_ps(p, _mm_mul_ps(tt, _mm_sub_ps(c, p))), k15);
+            break;
+        }
+        _mm_store_ps(smp + i, p);
+    }
+#else
+    for (i = 0; i < m; i++) {
+        float p = smp[i] - 8421376.0f;
+        float c = l->cur.f[i] - 8421376.0f;
+        switch (mode) {
+        case SRC_PREV:
+            break;
+        case SRC_PREV_SCALED:
+            p = p * (1.0f / 32768.0f);
+            break;
+        case SRC_LERP:
+            p = (p + t * (c - p)) * (1.0f / 32768.0f);
+            break;
+        default:
+            p = (p + ((l->frac.f[i] - 8388608.0f) * (1.0f / 65536.0f)) * (c - p)) * (1.0f / 32768.0f);
+            break;
+        }
+        smp[i] = p;
+    }
+#endif
+}
+
+#if defined(PC_AUDIO_SIMD_SSE)
+/* dst[j] += (long)x[j], lane by lane: the scalar loop's cast (cvttss2si) */
+static inline void aux_add4(long* dst, __m128 x) {  // NOLINT: the busses are long
+    dst[0] += (long)_mm_cvtss_f32(x);               // NOLINT
+    dst[1] += (long)_mm_cvtss_f32(_mm_shuffle_ps(x, x, _MM_SHUFFLE(1, 1, 1, 1)));  // NOLINT
+    dst[2] += (long)_mm_cvtss_f32(_mm_movehl_ps(x, x));                            // NOLINT
+    dst[3] += (long)_mm_cvtss_f32(_mm_shuffle_ps(x, x, _MM_SHUFFLE(3, 3, 3, 3)));  // NOLINT
+}
+#endif
+
+/* The dry mix and the aux sends of the first m outputs: what every mix loop
+ * did per output, from s = smp[i] (out and smp are 16-byte aligned). */
+static void mix_out(float* out, const float* smp, int m, s32 vol, s32 delta, const MixGains* g) {
+    int i = 0;
+#if defined(PC_AUDIO_SIMD_SSE)
+    if (m >= 4) {
+        const __m128 lr = _mm_setr_ps(g->vl, g->vr, g->vl, g->vr);
+        const __m128 al = _mm_set1_ps(g->al), ar = _mm_set1_ps(g->ar);
+        const __m128 bl = _mm_set1_ps(g->bl), br = _mm_set1_ps(g->br);
+        const __m128 kvol = _mm_set1_ps(1.0f / 32767.0f), k32767 = _mm_set1_ps(32767.0f);
+        const __m128 zero = _mm_setzero_ps(), step = _mm_set1_ps((float)(delta * 4));
+        __m128 ramp = _mm_setr_ps((float)vol, (float)(vol + delta), (float)(vol + delta * 2),
+                                  (float)(vol + delta * 3));
+        for (; i + 4 <= m; i += 4) {
+            __m128 gv = _mm_mul_ps(_mm_max_ps(_mm_min_ps(ramp, k32767), zero), kvol);
+            __m128 sv = _mm_mul_ps(_mm_load_ps(smp + i), gv);
+            float* o = out + i * 2;
+            _mm_store_ps(o, _mm_add_ps(_mm_load_ps(o), _mm_mul_ps(_mm_unpacklo_ps(sv, sv), lr)));
+            _mm_store_ps(o + 4, _mm_add_ps(_mm_load_ps(o + 4), _mm_mul_ps(_mm_unpackhi_ps(sv, sv), lr)));
+            if (g->send_a) {
+                aux_add4(&s_auxA.ch[0][i], _mm_mul_ps(_mm_mul_ps(sv, al), k32767));
+                aux_add4(&s_auxA.ch[1][i], _mm_mul_ps(_mm_mul_ps(sv, ar), k32767));
+            }
+            if (g->send_b) {
+                aux_add4(&s_auxB.ch[0][i], _mm_mul_ps(_mm_mul_ps(sv, bl), k32767));
+                aux_add4(&s_auxB.ch[1][i], _mm_mul_ps(_mm_mul_ps(sv, br), k32767));
+            }
+            ramp = _mm_add_ps(ramp, step);
+        }
+        vol = ramp_end(vol, delta, i);
+    }
+#endif
+    for (; i < m; i++) {
+        float gs = (float)vol * (1.0f / 32767.0f);
+        float sv = smp[i] * gs;
+        out[i * 2] += sv * g->vl;
+        out[i * 2 + 1] += sv * g->vr;
+        if (g->send_a) {
+            s_auxA.ch[0][i] += (long)(sv * g->al * 32767.0f);
+            s_auxA.ch[1][i] += (long)(sv * g->ar * 32767.0f);
+        }
+        if (g->send_b) {
+            s_auxB.ch[0][i] += (long)(sv * g->bl * 32767.0f);
+            s_auxB.ch[1][i] += (long)(sv * g->br * 32767.0f);
+        }
+        vol += delta;
+        if (vol < 0) {
+            vol = 0;
+        } else if (vol > 32767) {
+            vol = 32767;
+        }
+    }
+}
+
+/* The 1:1, steady-volume, dry-only loop's mix: out += smp[i] * scale. */
+static void mix_out_dry(float* out, const float* smp, int m, float scale_l, float scale_r) {
+    int i = 0;
+#if defined(PC_AUDIO_SIMD_SSE)
+    const __m128 lr = _mm_setr_ps(scale_l, scale_r, scale_l, scale_r);
+    for (; i + 4 <= m; i += 4) {
+        __m128 s = _mm_load_ps(smp + i);
+        float* o = out + i * 2;
+        _mm_store_ps(o, _mm_add_ps(_mm_load_ps(o), _mm_mul_ps(_mm_unpacklo_ps(s, s), lr)));
+        _mm_store_ps(o + 4, _mm_add_ps(_mm_load_ps(o + 4), _mm_mul_ps(_mm_unpackhi_ps(s, s), lr)));
+    }
+#endif
+    for (; i < m; i++) {
+        out[i * 2] += smp[i] * scale_l;
+        out[i * 2 + 1] += smp[i] * scale_r;
+    }
+}
+
+/* The sample-at-a-time resampling loop, for a frame src_steps can't plan
+ * (see above). */
+static void mix_voice_stepped(Voice* v, float* out, u32 ratio, s32 vol, s32 delta, const MixGains* g,
+                              bool is_silent) {
+    AXPB* pb = &v->vpb.pb;
+    SampleSrc src;
+    src_init(&src, src_need(v->frac, ratio));
     for (int i = 0; i < AX_FRAME; i++) {
         v->frac += ratio;
         while (v->frac >= 0x10000) {
             s16 s;
             if (!src_next(v, &src, &s)) {
                 pb->state = 0;
-                pb->ve.currentVolume = (u16)(vol < 0 ? 0 : vol > 32767 ? 32767 : vol);
+                pb->ve.currentVolume = (u16)vol;
                 /* The mirror the game reads back has to follow on this path
                  * too: stopRange() matches a voice against the bank being
                  * unloaded by pb.addr.currentAddress, and the HPS block swap
@@ -648,21 +711,23 @@ static void mix_voice(Voice* v, float* out) {
             v->cur = s;
             v->frac -= 0x10000;
         }
-        /* PORT: frac < 0x10000 here, so it converts as s32 (one cvtsi2ss); u32 to
-         * float is an x87 round trip through memory on the Pentium III */
-        float t = (float)(s32)v->frac * (1.0f / 65536.0f);
-        float s = ((float)v->prev + t * (float)(v->cur - v->prev)) * (1.0f / 32768.0f);
-        float g = (float)vol * (1.0f / 32767.0f);
-        float sv = s * g;
-        out[i * 2] += sv * vl;
-        out[i * 2 + 1] += sv * vr;
-        if (send_a) {
-            s_auxA.ch[0][i] += (long)(sv * al * 32767.0f);
-            s_auxA.ch[1][i] += (long)(sv * ar * 32767.0f);
-        }
-        if (send_b) {
-            s_auxB.ch[0][i] += (long)(sv * bl * 32767.0f);
-            s_auxB.ch[1][i] += (long)(sv * br * 32767.0f);
+        if (!is_silent) {
+            /* PORT: frac < 0x10000 here, so it converts as s32 (one cvtsi2ss); u32 to
+             * float is an x87 round trip through memory on the Pentium III */
+            float t = (float)(s32)v->frac * (1.0f / 65536.0f);
+            float s = ((float)v->prev + t * (float)(v->cur - v->prev)) * (1.0f / 32768.0f);
+            float gs = (float)vol * (1.0f / 32767.0f);
+            float sv = s * gs;
+            out[i * 2] += sv * g->vl;
+            out[i * 2 + 1] += sv * g->vr;
+            if (g->send_a) {
+                s_auxA.ch[0][i] += (long)(sv * g->al * 32767.0f);
+                s_auxA.ch[1][i] += (long)(sv * g->ar * 32767.0f);
+            }
+            if (g->send_b) {
+                s_auxB.ch[0][i] += (long)(sv * g->bl * 32767.0f);
+                s_auxB.ch[1][i] += (long)(sv * g->br * 32767.0f);
+            }
         }
         vol += delta;
         if (vol < 0) {
@@ -672,6 +737,111 @@ static void mix_voice(Voice* v, float* out) {
         }
     }
     pb->ve.currentVolume = (u16)vol;
+    set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
+}
+
+/* out is 16-byte aligned (mix_out). */
+static void mix_voice(Voice* v, float* out) {
+    AXPB* pb = &v->vpb.pb;
+    if (!pb->state) {
+        return;
+    }
+
+    u32 ratio = addr32(pb->src.ratioHi, pb->src.ratioLo);
+    s32 vol = pb->ve.currentVolume;
+    s32 delta = pb->ve.currentDelta;
+
+    float voice_gain = is_music_stream(v) ? pc_get_music_volume() : pc_get_sfx_volume();
+    if (voice_gain < 0.0f) {
+        voice_gain = 0.0f;
+    }
+
+    MixGains g;
+    g.vl = (pb->mix.vL / 32767.0f) * voice_gain;
+    g.vr = (pb->mix.vR / 32767.0f) * voice_gain;
+    g.al = (pb->mix.vAuxAL / 32767.0f) * voice_gain;
+    g.ar = (pb->mix.vAuxAR / 32767.0f) * voice_gain;
+    g.bl = (pb->mix.vAuxBL / 32767.0f) * voice_gain;
+    g.br = (pb->mix.vAuxBR / 32767.0f) * voice_gain;
+    g.send_a = s_aux_on && (s_auxA.cb != NULL) && (g.al != 0.0f || g.ar != 0.0f);
+    g.send_b = s_aux_on && (s_auxB.cb != NULL) && (g.bl != 0.0f || g.br != 0.0f);
+
+    if (vol < 0) {
+        vol = 0;
+    } else if (vol > 32767) {
+        vol = 32767;
+    }
+
+    bool is_silent = ((vol == 0 && delta == 0) || (g.vl == 0.0f && g.vr == 0.0f)) && !g.send_a && !g.send_b;
+    SrcLanes lanes;
+
+    /* If ratio is 0, no source samples can ever be consumed (v->frac += 0).
+     * If the voice is silent, nothing is mixed and no samples advance. Early exit! */
+    if (ratio == 0) {
+        if (is_silent) {
+            return;
+        }
+        float t = (float)v->frac * (1.0f / 65536.0f);
+        float s = ((float)v->prev + t * (float)(v->cur - v->prev)) * (1.0f / 32768.0f);
+        for (int i = 0; i < AX_FRAME; i++) {
+            lanes.prev.f[i] = s;
+        }
+        mix_out(out, lanes.prev.f, AX_FRAME, vol, delta, &g);
+        pb->ve.currentVolume = (u16)ramp_end(vol, delta, AX_FRAME);
+        set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
+        return;
+    }
+
+    /* PORT: the frame's source samples, decoded ahead (decode_samples), and
+     * its source positions (src_steps). At ratio 1.0 every path reads one
+     * sample per output and leaves frac alone; otherwise frac steps by
+     * ratio. */
+    u32 need = ratio == 0x10000 ? AX_FRAME : src_need(v->frac, ratio);
+    if (need == 0 || need > SRC_MAX) {
+        mix_voice_stepped(v, out, ratio, vol, delta, &g, is_silent);
+        return;
+    }
+    s16 ext[2 + SRC_MAX];
+    ext[0] = v->prev;
+    ext[1] = v->cur;
+    u32 n = (u32)decode_samples(v, ext + 2, (int)need);
+    u32 frac = v->frac, k;
+    int m = src_steps(ext, n, ratio, &frac, &k, is_silent ? NULL : &lanes);
+
+    /* Silent voices only advance: decoding, stream ring buffers and the
+     * end-of-voice checks, without any floating-point arithmetic or buffer
+     * writes. */
+    if (!is_silent && m > 0) {
+        if (ratio == 0x10000 && v->frac == 0 && delta == 0 && !g.send_a && !g.send_b) {
+            /* 1:1 playback (32kHz, the GameCube's native rate) with no phase:
+             * no interpolation, s = prev, and a steady volume */
+            float scale_l = ((float)vol * (1.0f / 32767.0f)) * g.vl * (1.0f / 32768.0f);
+            float scale_r = ((float)vol * (1.0f / 32767.0f)) * g.vr * (1.0f / 32768.0f);
+            src_interp(&lanes, m, SRC_PREV, 0.0f);
+            mix_out_dry(out, lanes.prev.f, m, scale_l, scale_r);
+        } else if (ratio == 0x10000) {
+            /* 1:1 playback: the phase stays where it is */
+            if (v->frac == 0) {
+                src_interp(&lanes, m, SRC_PREV_SCALED, 0.0f);
+            } else {
+                src_interp(&lanes, m, SRC_LERP, (float)v->frac * (1.0f / 65536.0f));
+            }
+            mix_out(out, lanes.prev.f, m, vol, delta, &g);
+        } else {
+            src_interp(&lanes, m, SRC_LERP_STEP, 0.0f);
+            mix_out(out, lanes.prev.f, m, vol, delta, &g);
+        }
+    }
+
+    v->prev = ext[k];
+    v->cur = ext[k + 1];
+    v->frac = frac;
+    if (m < AX_FRAME) {
+        /* frac keeps what is left of the step the voice ended in: see
+         * mix_voice_stepped */
+        pb->state = 0;
+    }
+    pb->ve.currentVolume = (u16)ramp_end(vol, delta, m);
     set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
 }
 
@@ -725,6 +895,53 @@ static void run_aux(AuxBus* bus, float* out) {
         energy += l * l + r * r;
     }
     bus->quiet = input != 0 || energy >= AUX_QUIET_ENERGY ? 0 : bus->quiet + 1;
+}
+
+/* AX sums into a 16-bit accumulator and saturates; do the same so a busy
+ * scene distorts the way the hardware does instead of wrapping. */
+static void clamp_frame(float* out) {
+#if defined(PC_AUDIO_SIMD_SSE)
+    /* PORT: SSE1, and the constant first: minps and maxps return their second
+     * operand when either is a NaN, so a NaN passes through as it does in
+     * the scalar compares (the SSE2 path had it last, turning a NaN into
+     * 1.0). Same bits as the scalar loop. */
+    const __m128 vmaster = _mm_set1_ps(s_master);
+    const __m128 vone = _mm_set1_ps(1.0f);
+    const __m128 vneg_one = _mm_set1_ps(-1.0f);
+    for (int i = 0; i < AX_FRAME * 2; i += 8) {
+        __m128 v0 = _mm_loadu_ps(&out[i]);
+        __m128 v1 = _mm_loadu_ps(&out[i + 4]);
+        v0 = _mm_mul_ps(v0, vmaster);
+        v1 = _mm_mul_ps(v1, vmaster);
+        v0 = _mm_min_ps(vone, v0);
+        v1 = _mm_min_ps(vone, v1);
+        v0 = _mm_max_ps(vneg_one, v0);
+        v1 = _mm_max_ps(vneg_one, v1);
+        _mm_storeu_ps(&out[i], v0);
+        _mm_storeu_ps(&out[i + 4], v1);
+    }
+#elif defined(PC_AUDIO_SIMD_NEON)
+    const float32x4_t vmaster = vdupq_n_f32(s_master);
+    const float32x4_t vone = vdupq_n_f32(1.0f);
+    const float32x4_t vneg_one = vdupq_n_f32(-1.0f);
+    for (int i = 0; i < AX_FRAME * 2; i += 8) {
+        float32x4_t v0 = vld1q_f32(&out[i]);
+        float32x4_t v1 = vld1q_f32(&out[i + 4]);
+        v0 = vmulq_f32(v0, vmaster);
+        v1 = vmulq_f32(v1, vmaster);
+        v0 = vminq_f32(v0, vone);
+        v1 = vminq_f32(v1, vone);
+        v0 = vmaxq_f32(v0, vneg_one);
+        v1 = vmaxq_f32(v1, vneg_one);
+        vst1q_f32(&out[i], v0);
+        vst1q_f32(&out[i + 4], v1);
+    }
+#else
+    for (int i = 0; i < AX_FRAME * 2; i++) {
+        float s = out[i] * s_master;
+        out[i] = s > 1.0f ? 1.0f : (s < -1.0f ? -1.0f : s);
+    }
+#endif
 }
 
 static void render_frame(float* out) {
@@ -825,53 +1042,15 @@ static void render_frame(float* out) {
             s_auxA.runs = s_auxB.runs = 0;
         }
     }
-    /* AX sums into a 16-bit accumulator and saturates; do the same so a busy
-     * scene distorts the way the hardware does instead of wrapping. */
-#if defined(PC_AUDIO_SIMD_SSE2)
-    const __m128 vmaster = _mm_set1_ps(s_master);
-    const __m128 vone = _mm_set1_ps(1.0f);
-    const __m128 vneg_one = _mm_set1_ps(-1.0f);
-    for (int i = 0; i < AX_FRAME * 2; i += 8) {
-        __m128 v0 = _mm_loadu_ps(&out[i]);
-        __m128 v1 = _mm_loadu_ps(&out[i + 4]);
-        v0 = _mm_mul_ps(v0, vmaster);
-        v1 = _mm_mul_ps(v1, vmaster);
-        v0 = _mm_min_ps(v0, vone);
-        v1 = _mm_min_ps(v1, vone);
-        v0 = _mm_max_ps(v0, vneg_one);
-        v1 = _mm_max_ps(v1, vneg_one);
-        _mm_storeu_ps(&out[i], v0);
-        _mm_storeu_ps(&out[i + 4], v1);
-    }
-#elif defined(PC_AUDIO_SIMD_NEON)
-    const float32x4_t vmaster = vdupq_n_f32(s_master);
-    const float32x4_t vone = vdupq_n_f32(1.0f);
-    const float32x4_t vneg_one = vdupq_n_f32(-1.0f);
-    for (int i = 0; i < AX_FRAME * 2; i += 8) {
-        float32x4_t v0 = vld1q_f32(&out[i]);
-        float32x4_t v1 = vld1q_f32(&out[i + 4]);
-        v0 = vmulq_f32(v0, vmaster);
-        v1 = vmulq_f32(v1, vmaster);
-        v0 = vminq_f32(v0, vone);
-        v1 = vminq_f32(v1, vone);
-        v0 = vmaxq_f32(v0, vneg_one);
-        v1 = vmaxq_f32(v1, vneg_one);
-        vst1q_f32(&out[i], v0);
-        vst1q_f32(&out[i + 4], v1);
-    }
-#else
-    for (int i = 0; i < AX_FRAME * 2; i++) {
-        float s = out[i] * s_master;
-        out[i] = s > 1.0f ? 1.0f : (s < -1.0f ? -1.0f : s);
-    }
-#endif
+    clamp_frame(out);
 }
 
 /* MELEE_AUDIO_DUMP=<file>: also write the mix as raw f32 stereo 32kHz. */
 static FILE* s_dump;
 
 static void SDLCALL audio_pull(void* userdata, SDL_AudioStream* stream, int additional, int total) {
-    static float frame[AX_FRAME * 2];
+    /* PORT: aligned for mix_voice's SSE loads and stores */
+    static float frame[AX_FRAME * 2] __attribute__((aligned(16)));
     (void)userdata;
     (void)total;
     while (additional > 0) {
@@ -890,7 +1069,7 @@ void pc_audio_pump(void) {
     if (pumping || !s_stream)
         return;
     pumping = 1;
-    float frame[AX_FRAME * 2];
+    float frame[AX_FRAME * 2] __attribute__((aligned(16)));
     // Keep the browser consumer fed without re-entering game callbacks from JS.
     while (SDL_GetAudioStreamQueued(s_stream) < AX_RATE * 2 * sizeof(float) / 20) {
         render_frame(frame);
@@ -1422,30 +1601,54 @@ static void axfx_reverb_run(struct AXFX_REVHI_WORK* rv, struct AXFX_BUFFERUPDATE
             pos[k] = line[k]->outPoint;
             len[k] = line[k]->length;
         }
-        for (i = 0; i < AX_FRAME; i++) {
-            float acc = 0.0f;
-            float y;
+        for (i = 0; i < AX_FRAME;) {
+            /* PORT: the samples up to the next wrap of any line (or the end
+             * of the frame) run as one stretch, each line a pointer and the
+             * stretch's index, without the six `++pos >= len` checks per
+             * sample that, with the positions spilled, were about half of
+             * this loop's instructions on the Pentium III. The float
+             * operations are the same, in the same order. A position at or
+             * past its line's end gives a stretch of one sample, which then
+             * wraps, as before. */
+            int32_t seg = AX_FRAME - i;
+            float* p[6];
+            for (k = 0; k < 6; k++) {
+                if (len[k] - pos[k] < seg) {
+                    seg = len[k] - pos[k];
+                }
+                p[k] = buf[k] + pos[k];
+            }
+            if (seg < 1) {
+                seg = 1;
+            }
+            const float* x = &in[ch][i];
+            long* dst = &chan[ch][i];  // NOLINT: the bus is long
+            for (int32_t j = 0; j < seg; j++) {
+                float acc = 0.0f;
+                float y;
 
-            for (k = 0; k < 3; k++) {
-                float out = buf[k][pos[k]];
-                lp = out * (1.0f - damp) + lp * damp;
-                buf[k][pos[k]] = in[ch][i] + lp * rv->combCoef[ch * 3 + k];
-                if (++pos[k] >= len[k]) {
+                for (k = 0; k < 3; k++) {
+                    float out = p[k][j];
+                    lp = out * (1.0f - damp) + lp * damp;
+                    p[k][j] = x[j] + lp * rv->combCoef[ch * 3 + k];
+                    acc += out;
+                }
+                y = acc * (1.0f / 3.0f);
+                for (k = 3; k < 6; k++) {
+                    float out = p[k][j];
+                    float v = y + ap * out;
+                    p[k][j] = v;
+                    y = out - ap * v;
+                }
+                dst[j] = (long)(y * wet);
+            }
+            i += seg;
+            for (k = 0; k < 6; k++) {
+                pos[k] += seg;
+                if (pos[k] >= len[k]) {
                     pos[k] = 0;
                 }
-                acc += out;
             }
-            y = acc * (1.0f / 3.0f);
-            for (k = 3; k < 6; k++) {
-                float out = buf[k][pos[k]];
-                float v = y + ap * out;
-                buf[k][pos[k]] = v;
-                if (++pos[k] >= len[k]) {
-                    pos[k] = 0;
-                }
-                y = out - ap * v;
-            }
-            chan[ch][i] = (long)(y * wet);
         }
         for (k = 0; k < 6; k++) {
             line[k]->inPoint = line[k]->outPoint = pos[k];
