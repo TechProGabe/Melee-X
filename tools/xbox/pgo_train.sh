@@ -16,7 +16,7 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 scen=("$@")
 [ ${#scen[@]} -gt 0 ] || scen=(gl fodperf fd2 ps corn)
-py=python3; command -v python3 >/dev/null 2>&1 || py=py
+py=python3; python3 -c '' >/dev/null 2>&1 || py=py   # Windows: python3 may be the Store's stub
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) build=tools/xbox/msys/build.sh; running() { tasklist | grep -qi '^xemu.exe'; } ;;
   *) build=tools/xbox/docker/build.sh; running() { pgrep -x xemu >/dev/null || pgrep -f Xemu.app >/dev/null; } ;; esac
 if running; then echo "an xemu is running: wait for it (docs/fps-plan.md Rules)"; exit 1; fi
