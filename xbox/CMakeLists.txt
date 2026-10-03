@@ -54,7 +54,7 @@ list(APPEND SDK_SOURCES
 set(SDK_FLAGS
     --target=i686-pc-windows-gnu -mno-ms-bitfields -march=pentium3 -msse -mfpmath=sse
     -ffreestanding -nostdlibinc -fsigned-char -fno-strict-aliasing -fwrapv -ffp-contract=off
-    -mno-stack-arg-probe -fno-asynchronous-unwind-tables
+    -mno-stack-arg-probe -fno-asynchronous-unwind-tables -fno-auto-import
     -U_WIN32 -U__MINGW32__ -U__MINGW64__ -UWIN32 -U__WIN32 -U__WIN32__
     -DTARGET_PC=1 -DMELEE_PC=1 -DTARGET_XBOX=1 -DNXDK -D__STDC__=1
     -Wno-everything -Werror=implicit-function-declaration -Werror=implicit-int
