@@ -401,12 +401,22 @@ may go ahead.
 | item | state | instructions (draw / tick) | console |
 |---|---|---|---|
 | baseline, dev d1786ec, Fountain 4-CPU | first reading 2026-10-03 (Mac) | ~8.3k / ~0.9-1.1M | 21-22 fps (v43-v45) |
-| baseline, PC, step 0 tools (69bddad) | `gl` / `fodperf` / `fd2` | 7174 / 1.57M; 7740 / 1.03M (±5%); 7781 / 586k | |
+| baseline, PC, step 0 tools (69bddad) | `gl` / `fodperf` / `fd2` | 7174 / 1.57M; 7740 / 1.03M (Â±5%); 7781 / 586k | |
 | step 0 tools | done: `[PERFX]`, `[CAL]`, `icount_report.py` (0.1); `[PROFH]`, `prof.bin`, `--full` (0.2); `[CENSUS]`, `[DLCC]`, `census_report.py` (0.3, 0.4); `[SIMH]` (0.5); the pad-alarm wait charged to vsync (it was idle time in sim) | | |
 | round 1 probe build | v49 (196db39): user quit after 130 s, counters good; v50 (345d197, + prefetcht0 umask test) deployed for the full run | | v49: IPC sim 0.34, render 0.35, dlist 0.26, draw 0.53 |
 | A1 `-fno-auto-import` | done 0005392: 363 `.refptr` -> 1, `.text` -2.5 KB, gl shots same | -0.3% / 0 (gl); -0.4% / 0 (Fountain) | |
 | C4 ARQ completion in line | done 68a9a42, `[SIMH]` equal, gl shots same | 0 / -9.2% (gl); 0 / -15.2% (Fountain) | |
-| A2 function order | done: `-ffunction-sections`, `.text$*` renamed to `.text` before the link, `-opt:noicf`, `xbox/order.txt` (xemu instruction profiles of gl, fodperf, fd2, ps, corn); `/opt:ref` drops 133 KB of unreferenced code; `[SIMH]` equal, shots same | 0 / 0 (layout only) | round 2 |
+| A2 function order | done 083f575: `-ffunction-sections`, `.text$*` renamed to `.text` before the link, `-opt:noicf`, `xbox/order.txt` (xemu instruction profiles of gl, fodperf, fd2, ps, corn); `/opt:ref` drops 133 KB of unreferenced code; `[SIMH]` equal, shots same | 0 / 0 (layout only) | round 2 |
+| A3 ThinLTO | done ae9181c, opt-in `XBOX_LTO=1` (distributed backends, import limit 10: +46 KB) | -2.0% / -1.6% (gl); -1.8% / -2.3% (Fountain) | round 2 |
+| A4 PGO | done ae9181c + d3aca6b, opt-in `XBOX_PGO=xbox/melee.profdata` (`docs/pgo.md`); profile committed with the user's approval | PGO alone: -2.0% / -12.5% (gl), -2.1% / -7.4% (Fountain); with ThinLTO: -9.8% / -19.4% (gl), -9.9% / -16.6% (Fountain), render -17%, `.text` unchanged | round 2 |
+| C1 work removed | shadow maps of inactive shadows: none in 4-CPU matches (census pass 3), nothing to skip; the reflection's effects (28 draws) and off-screen items not looked at yet | | |
+| C2 vertex pool | done 5be8438: key over enabled attributes' formats; Fountain 821 duplicate lists (1.7 MB) -> 0, pool free 4 KB -> 1.8 MB, rebuilds after warm-up ~0 | dlist -11%, render +1% | round 2 (the console rebuilt 700-3300 lists per 600 frames) |
+
+All gates: xemu `-icount`, `[SIMH]` identical up to the match's end, gl
+(and Fountain where it matters) screenshots the same. One open oddity:
+one `fodperf` run of the ThinLTO-30 build parted from tick 4200, its rerun
+and a real-time verbose run at 5 ticks per render did not; a `[SIMH]`
+mismatch gets a rerun before it is called a change.
 
 Census (xemu, Fountain 4-CPU, 728 draws a frame): main pass 71% (fighters
 314, stage 144, effects 30, HUD 21 a frame), fighter shadow maps 92 draws
