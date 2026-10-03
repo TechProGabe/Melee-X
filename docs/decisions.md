@@ -547,6 +547,47 @@ marked `PORT:`:
     per line, without the six wrap checks per sample (~110 instructions a
     sample and channel on i686, now ~67); same float operations in the
     same order, checked against the per-sample network.
+- `src/melee/mp/mplib.c`: the stage-collision line loops skip, under
+  `TARGET_XBOX`, a line (or a vertex) whose full test could only fail its
+  bounding test (`mpLineBox`, `mpEdgeBoxOut`). They tested every enabled
+  line of every near joint: `mpLib_8004ED5C`'s two link lookups, square
+  root and four divisions, `mpRemap2d`'s double division, a call to
+  `mpLineIntersection*`; ~10% of the simulation on the console (v50).
+  Exact, because each skip needs a line strictly outside the query's box
+  where `mpLineIntersection` (strict compares) and `mpLineIntersectionH`/`V`
+  (strict on one axis, 0.0001 on the other) return false at their first
+  test and write nothing; nothing else between the skip and the test has a
+  side effect (`mpCheckFloor`'s callback runs before it). The query box is
+  NaN (no skip) unless its coordinates are inside +-2^16, so roundings are
+  under 2^-6 there; `fl(z) < f` implies `z < f`, and rounding is monotone:
+  - `mpCheckLeftWall`/`RightWall`, the `Remap` variants on a joint without
+    B8-B10 (the query is a-b itself): the vertices as tested, margin 1.
+  - `mpCheckFloor`: the box is of the raw vertices, margin 4, the query's y
+    less `y_offset`, and only for lines at least 1 long (the same
+    `len2` as `mpLib_8004ED5C`'s, finite). With d = sqrtf(len2) >= 1,
+    |dx|/d <= 1 + 2^-22, so the start moves by at most 1.00001; the end
+    moves by (x1 - X0)/d where |x1 - X0| <= |x0 - x1| + 2|e0| (X0 rounds to
+    within |e0| of x0 + e0, since x0 is a float): at most 3.00001. Past
+    rounding (or a vertex beyond 2^20, far from any query in range), the
+    lengthened line is still over 0.7 clear.
+  - The `Remap` variants on a moving joint: a is first remapped by
+    `mpRemap2d`, which moves it by at most |b0 - a0| + |b1 - a1| (t is
+    clamped to [0, 1]; NaN only with a NaN input) or |b0 - a0| + |b1 - a0|
+    (its other branch): `mpRemapReach` adds the three, plus 1, and the box
+    is widened by that (skipped above 2^17, and infinite or NaN reaches
+    never skip). Clear by over 1.9.
+  - `mpLib_800511A4_RightWall`/`800515A0_LeftWall`: per vertex, segment
+    (last position remapped from edge a-b to c-d) to (position) against
+    edge c-d. The position is compared with c-d's box exactly as
+    `mpLineIntersection` does, the last position with that box widened by
+    the remap's reach; a remapped NaN or infinity fails `SQ(vdx) + SQ(vdy)
+    > 0.001F` or the bounding test anyway. Clear by over 0.6.
+  Checked by `tools/xbox/test_mplib.py` against the functions before
+  (`tests/xbox/mplib_ref.c`): returns, outputs, joint flags and callback
+  calls bit for bit, x86-64 and 32-bit x87. On a Fountain of Dreams-like
+  stage with fighter-shaped queries it skips 83% of `mpCheckFloor`'s line
+  tests, 81% of `mpCheckFloorRemap`'s, 99% of the walls' and 93% of the
+  vertex sweeps'.
 - `src/melee/mp/mpisland.c` (`mpIsland_8005A728`, `mpIsland_8005B004`): the
   1.5 KB `visited` arrays, which the code `memzero`s itself, are exempt from
   `-ftrivial-auto-var-init=zero` (it zeroed them a second time per call).
