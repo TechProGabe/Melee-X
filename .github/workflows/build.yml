@@ -68,6 +68,7 @@ jobs:
           python3 tools/xbox/test_rc.py
           python3 tools/xbox/test_anim_mtx.py
           python3 tools/xbox/test_audio_mix.py
+          python3 tools/xbox/test_mplib.py
           python3 tools/xbox/test_card_endian.py
 
       - uses: actions/upload-artifact@v4
