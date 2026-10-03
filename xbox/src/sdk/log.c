@@ -309,4 +309,5 @@ void xsdk_scene_log(const char* what, int mode, int state, int scene) {
              what, xhw_mem_free_kb(), xhw_lazy_committed_kb(), xsdk_aram_disc_kb(), xgx_tex_pool_free_kb(),
              xgx_tex_pool_kb(), xgx_vbuf_pool_free_kb(), xgx_vbuf_pool_kb());
     if (XHW_TEST_BUILD && !strcmp(what, "leave")) xhw_lazy_log_map();
+    if (!strcmp(what, "leave")) xhw_pgo_dump("scene leave");
 }

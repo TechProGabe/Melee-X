@@ -84,6 +84,19 @@ COMPILE_FLAGS = [
 ]
 
 
+# XBOX_LTO=1 (xbox/CMakeLists.txt): bitcode for ThinLTO (tools/xbox/thinlto_link.py)
+if os.environ.get('XBOX_LTO'):
+    COMPILE_FLAGS.append('-flto=thin')
+# XBOX_PGO=gen: instrumented (xbox/src/hw/xhw_pgo.c); XBOX_PGO=<.profdata>: optimized
+# with it. Static functions are named by file name only, not the lowered
+# file's path, which differs between the two builds' object folders.
+PGO = os.environ.get('XBOX_PGO', '')
+PGO_FLAGS = {'': [], 'gen': ['-fprofile-generate', '-mllvm', '-disable-vp']}.get(PGO, [f'-fprofile-use={PGO}'])
+if PGO:
+    PGO_FLAGS += ['-mllvm', '-static-func-full-module-prefix=false']
+COMPILE_FLAGS += PGO_FLAGS
+
+
 def game_sources():
     # sorted case-sensitively, as on Linux (link order = code layout)
     posix = lambda p: p.as_posix()
@@ -103,7 +116,7 @@ def up_to_date(obj, dep, source):
     stamp = obj.stat().st_mtime
     # ': ' ends the target (a Windows target has a drive colon of its own)
     deps = dep.read_text().replace('\\\n', ' ').split(': ', 1)[-1].split()
-    for d in [str(source), __file__, str(DISC_LOWER), *deps]:
+    for d in [str(source), __file__, str(DISC_LOWER), *deps, *([PGO] if PGO not in ('', 'gen') else [])]:
         path = pathlib.Path(d) if os.path.isabs(d) else ROOT / d
         try:
             if path.stat().st_mtime > stamp:

@@ -71,7 +71,10 @@ void xhw_set_ftz(int on);
  * entry and is written out once at the match's end ([PROFH], prof.bin);
  * no-ops in other builds. Game thread; the sampler does the work. */
 void xhw_prof_scene_enter(void);
-void xhw_prof_match_end(void);                 /* from xhw_led_match_end: TIME!/GAME! */
+void xhw_prof_match_end(void);
+/* -DXHW_PGO=1 (xhw_pgo.c, an XBOX_PGO=gen build): the -fprofile-generate
+ * counters so far as [PGOC] lines (tools/xbox/pgo_raw.py); no-op otherwise */
+void xhw_pgo_dump(const char* why);                 /* from xhw_led_match_end: TIME!/GAME! */
 
 /* ---- threads and locks ---- */
 typedef struct xhw_mutex xhw_mutex;
