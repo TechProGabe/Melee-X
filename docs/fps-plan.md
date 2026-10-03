@@ -480,6 +480,7 @@ may go ahead.
 | B3 prefetch plans | built, `env MX_PREFETCH=1` (off by default), animation walk only | | round 2 |
 | C3 GPU waits | v50: the CPU never waits on an EFB copy (their waits are in the pushbuffer); the `gpu` bucket is `frame_open`'s one wait a frame for the last frame (`XGX_OVERLAP`) plus the flip, so on Fountain at 720p the GPU finishes about when the CPU does, and CPU savings may turn into that wait. Round 2 builds log it: `[NV2A] per 600 frames: GPU still busy at N frame starts, X us a frame waiting there (done Y us after the present), flip Z us`. Then: a one-frame-deep pipeline (fence per frame, ring and pushbuffer halves) if the GPU idles between kicks, or less GPU work if it doesn't | | round 2 |
 | round 2 | staged with `tools/xbox/round2.py`: ten test builds in `F:\Applications\Melee-X-r2a..j` chained by `env MX_NEXT_XBE`, the baseline last in `Melee-X` | | |
+| lockstep shots | done 29afd58: `env MX_LOCKSTEP=1`, the game clock a frame counter, so shots compare across builds of any speed (`docs/testing.md` "Comparing builds by screenshot"); gl: 1.0 ticks per render, B4 on and off the same moment and pixels | | |
 
 All gates: xemu `-icount`, `[SIMH]` identical up to the match's end, gl
 (and Fountain where it matters) screenshots the same. One open oddity:
