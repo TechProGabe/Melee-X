@@ -701,7 +701,28 @@ marked `PORT:`:
   set up reuses its position and normal matrices instead of blending,
   concatenating and inverting again (~1250 envelope matrices a frame in a
   4-CPU match, ~630 distinct). The same bits and the same GX loads; the memo
-  is cleared before each DObj's PObjs, where no joint can move.
+  is cleared before each DObj's PObjs, where no joint can move. After v50:
+  a new envelope's position and normal matrices are computed straight into
+  the memo entry that keeps them (copying them in was a 144-byte `memcpy`
+  and two `MTXCopy` calls that read back 16-byte stores still in flight,
+  ~2% of the v50 console profile); prefetch hints for the next list entry's
+  envelope and for a new envelope's joints (flags, matrix and envelope
+  matrix pointer lines); the setup functions' matrix locals and the memo
+  key are `__attribute__((uninitialized))` (`POBJ_NOINIT`): each is written
+  before it is read, and `-ftrivial-auto-var-init` zeroed ~240 bytes with
+  unaligned 16-byte stores per envelope matrix. The outer `mtx` that
+  `_HSD_mkEnvelopeModelNodeMtx` may leave unwritten (a singular
+  `MTXInverse`) keeps its zeroing. Checked against the upstream functions
+  by `tools/xbox/test_pobj_mtx.py` (`tests/xbox/pobj_mtx_ref.c`).
+- `src/sysdolphin/baselib/mtx.c` (`HSD_MtxInverseTranspose`), after v50:
+  the nine cofactors as three SSE rows, each lane the scalar code's
+  `(a * b - c * d)`, negated where it negates (a sign flip, as before),
+  times `1 / det`; the determinant is the same scalar expression of the
+  same elements. Each row is read once as a 16-byte load: the scalar code
+  read elements back at 4-byte offsets from a matrix `C_MTXConcat` had just
+  stored 16 bytes at a time, which the P3 can't forward. Same bits
+  (`test_pobj_mtx.py`, 4M random matrices with singular and special ones,
+  in place and not); a NaN only has to stay a NaN.
 - `src/melee/gr/grbigblue.c` (`grBb_YakumonoParam`), v36: the stage's
   parameters from the disc are `DISC_STRUCT` (and `x134_translate` a
   `DiscVec3`). Every other stage's parameter struct already was; this one
