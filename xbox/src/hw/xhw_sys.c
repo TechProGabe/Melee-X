@@ -223,6 +223,24 @@ static int log_try(const char* line, int com1) {
 int xhw_log_try(const char* line) { return log_try(line, 1); }
 int xhw_log_try_file(const char* text) { return log_try(text, 0); }
 
+/* A console round's chain (xhw_launch_xbe): boot.log closed and renamed to
+ * name, so the next boot's rotation (which keeps one previous log) leaves
+ * it. The game serves no FTP, so the round's logs are pulled at the end. */
+void xhw_log_keep(const char* name) {
+    char from[MAX_PATH], to[MAX_PATH];
+    log_lock_init();
+    EnterCriticalSection(&s_log_cs);
+    if (s_bootlog != INVALID_HANDLE_VALUE) {
+        log_flush_locked();
+        CloseHandle(s_bootlog);
+        s_bootlog = INVALID_HANDLE_VALUE;
+        snprintf(from, sizeof from, "%sboot.log", xhw_save_dir());
+        snprintf(to, sizeof to, "%s%s", xhw_save_dir(), name);
+        xhw_replace_file(from, to);
+    }
+    LeaveCriticalSection(&s_log_cs);
+}
+
 /* One line, newline appended if missing, under one lock so lines from other
  * threads never land inside it. */
 static void log_write(const char* s, size_t n, int newline) {

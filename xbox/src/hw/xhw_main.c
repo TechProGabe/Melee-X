@@ -181,5 +181,15 @@ void xhw_launch_xbe(const char* dos_path) {
         snprintf(path, sizeof path, "%s", dos_path);
     snprintf(line, sizeof line, "[BOOT] next: %s", path);
     xhw_log_try(line);   /* on disk before the launch */
+    {   /* kept as boot_<this build's folder>.log: the next boots rotate boot.log away */
+        const ANSI_STRING* img = &XeImageFileName[0];
+        int n = (int)img->Length, end, start;
+        for (end = n - 1; end > 0 && img->Buffer[end] != '\\'; end--) {}
+        for (start = end - 1; start > 0 && img->Buffer[start - 1] != '\\'; start--) {}
+        if (end > start && start > 0) {
+            snprintf(line, sizeof line, "boot_%.*s.log", end - start, img->Buffer + start);
+            xhw_log_keep(line);
+        }
+    }
     launch(path);
 }

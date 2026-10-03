@@ -13,7 +13,9 @@ and its autopad.txt; test builds take the disc image from
 F:\\Applications\\Melee-X\\. A script ends with env MX_NEXT_XBE=<the next
 folder>: 12 s after its match the next build boots. The last run is the
 baseline (dev, no chaining) in Melee-X itself. Every boot keeps only the
-previous boot's log (boot_prev.log), so `watch` pulls while the chain runs.
+previous boot's log (boot_prev.log) and the game serves no FTP, so a build
+that launches the next one first renames its log to boot_<folder>.log;
+`watch` pulls them whenever the console is at the dashboard.
 Staged files go to $MX_HW/stage-r2, logs to $MX_HW/logs-r2."""
 import ftplib
 import io
@@ -119,7 +121,9 @@ def watch():
     while True:
         try:
             f = connect()
-            for name in ('boot_prev.log', 'boot.log'):
+            f.cwd(UDATA)   # each chained build's log is boot_<folder>.log, the last one boot.log
+            names = [n.rsplit('/', 1)[-1] for n in f.nlst()]
+            for name in [n for n in names if n.startswith('boot') and n.endswith('.log')]:
                 buf = io.BytesIO()
                 try:
                     f.retrbinary(f'RETR {UDATA}/{name}', buf.write)
