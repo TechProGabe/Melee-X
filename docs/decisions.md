@@ -438,6 +438,15 @@ visited and the addresses their animation reads (joint, AObj, the first
 three FObjs and their keyframe bytes); the next walk prefetches three nodes
 ahead and drops the plan at the first node that differs.
 
+**Screenshots compare across builds by lockstep (`env MX_LOCKSTEP=1`).**
+Gating a speed-up by screenshot needs the shots of both builds at the same
+tick, and under xemu the faster build gets through more frames per tick.
+The SDK clock is the one input that depends on speed (the pad alarm, and so
+the game's ticks, run on it), so lockstep makes it a frame counter: 1/60 s
+per frame boundary, plus 1 ms steps while the frame loop waits for a pad
+sample (otherwise that wait, which comes before the frame boundary, would
+never end). Test builds only, through the autopad script.
+
 ## Edits to imported code
 
 Imported files are kept as they are upstream except for these edits, each

@@ -164,6 +164,20 @@ out (one per `SHOT` line in `$MX_STAGE_EXTRA/autopad.txt`, or `MX_SHOTS=N`),
 so a run doesn't idle on the results screen until the timeout; `MX_SHOTS=0`
 keeps it running (e.g. for `[PERF]` lines after the last shot).
 
+### Comparing builds by screenshot
+
+A `SHOT` line names a frame, and a frame shows whichever tick the game had
+reached by then: a faster build has run fewer ticks per frame, so the same
+frame number is a different moment and the shots differ though both builds
+draw the same thing. With `env MX_LOCKSTEP=1` in the script the game's
+clock (`OSGetTime`) moves 1/60 s at each frame boundary and, while the
+frame loop waits for a pad sample, 1 ms at a time instead of sleeping; it
+stands still otherwise, and the frame-rate counter is hidden. Every frame is
+then exactly one tick (`[PERF]`
+"1.0 ticks per render"), frame N shows tick N in any build, and two
+builds' shots must match byte for byte (`cmp` on the PNGs). Use it to gate
+a change that shouldn't alter the picture; for timing, run without it.
+
 If the log stops dead, heartbeat included, the guest has bugchecked. In the
 monitor, `info registers` then shows `HLT=1` with IF clear, and the
 bugcheck code is on the stack (`0x7F, 8` is a double fault). A double fault
@@ -517,6 +531,7 @@ report.
 | `-DXGX_DEFER=1` | the deferred back end (`docs/renderer.md` "Deferred back end"): draws are queued as records of what changed and replayed in batches; `[NV2A] per 600 frames: N draws queued, M flushes` lines. Test builds also read `env MX_DEFER=1`. `-DXGX_DEFER_KB=<n>`: the queue's size (default 32) |
 | `-DXSDK_MEM1_LARGE=<mask>` | MEM1's 4 MB ranges (bit per range, 0x10000000 up) on 4 MB pages (`docs/decisions.md` "Stall candidates"); `[OS] MEM1 on 4 MB pages` at boot. Test builds also read `env MX_MEM1_LARGE=<mask>` (6: the two ranges a 4-CPU match fills) |
 | `env MX_NEXT_XBE=<path>` | (autopad script, test builds) 12 s after the match ends, launch that XBE (`F:\Applications\<folder>\default.xbe`, or a `\Device\` path), which reads its own folder's script: a console round chains its builds and runs unattended. Each boot keeps the one before's log as `boot_prev.log`; pull as the chain goes (`docs/fps-plan.md` round 2) |
+| `env MX_LOCKSTEP=1` | (autopad script, test builds) the game's clock moves 1/60 s per frame and stands still in between, so every rendered frame is one simulation tick: screenshots by frame number show the same moment in builds of any speed ("Comparing builds by screenshot"). Pacing is off; `[PERF]` keeps the real clock |
 | `env MX_PREFETCH=1` | (autopad script, test builds) prefetch plans for the animation walk (`jobj.c`, `docs/decisions.md` "Stall candidates") |
 | `-DXGX_OVERLAP=0` | `xgx_present` waits for the GPU before the flip, as up to v32, instead of the next frame's first GPU use (v33) |
 | `-DXGX_DEBUG_VPTRACE[=<n>]` | log the vertex-program selects of two consecutive frames every n (default 600) as `[VPT]` lines: each program (key hash, instructions, key bytes), then the selects in order with `L` where one was loaded; replay with `tools/xbox/vp_policy.py boot.log` |
