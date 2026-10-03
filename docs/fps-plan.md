@@ -142,6 +142,55 @@ Picked by the conditions under "B. Stalls":
 - E yes: audio is 4.7% on its own, and window 6 takes another ~5% off the
   game's buckets.
 
+### Console round 2 (2026-10-03)
+
+Eleven test builds chained on the console (`tools/xbox/round2.py`), one
+match each: Fountain 4-CPU 120 s, Final Destination 1v1 60 s, seed 1.
+Match periods only; ms a frame; `[SIMH]` the same in every build.
+
+| run | build | stage | switches | fps | sim | render | dlist | draw | gpu | GPU busy at frame start | wait there | flip |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| r2a | fps-exec | Fountain | - | 31.38 | 7.64 | 14.43 | 1.59 | 6.65 | 1.42 | 319 of 600 | 1.18 | 0.12 |
+| r2b | + ThinLTO | Fountain | - | 32.47 | 7.13 | 14.01 | 1.53 | 6.48 | 1.55 | 362 | 1.31 | 0.12 |
+| r2c | + LTO + PGO | Fountain | - | **35.01** | 5.79 | 11.44 | 1.30 | 5.61 | 4.28 | 562 | 4.04 | 0.19 |
+| r2d | LTO + PGO | Fountain | B4 defer | 32.96 | 6.14 | 11.63 | 4.35 | 4.92 | 3.17 | 539 | 2.93 | 0.09 |
+| r2e | LTO + PGO | Fountain | B2 4 MB pages | 35.60 | 5.62 | 11.18 | 1.27 | 5.49 | 4.43 | 561 | 4.12 | 0.22 |
+| r2f | LTO + PGO | Fountain | B3 prefetch | 35.45 | 5.93 | 11.30 | 1.29 | 5.49 | 4.12 | 562 | 3.85 | 0.19 |
+| r2g | LTO + PGO | Fountain | all three | 32.83 | 6.38 | 11.53 | 4.28 | 4.91 | 3.24 | 536 | 2.94 | 0.12 |
+| r2h | fps-exec | FD | - | 59.07 | 2.07 | 5.59 | 0.63 | 2.35 | 6.03 | 384 | 2.39 | 3.61 |
+| r2i | LTO + PGO | FD | - | 59.67 | 1.91 | 4.43 | 0.54 | 2.04 | 2.73 | 171 | 1.15 | 1.74 |
+| r2j | LTO + PGO | FD | all three | 58.96 | 1.74 | 4.55 | 1.65 | 1.77 | 6.52 | 366 | 2.69 | 3.77 |
+| base | dev 5620b99 | Fountain | - | 32.48 | 7.07 | 14.08 | 1.86 | 6.04 | 1.64 | | | |
+
+Noise: r2a's first try (the same code but for the chain) ran 30.90, so
+about 1.5% between runs.
+
+- PGO is the round's gain: 35.0 fps, +7.8% on dev's baseline and +11.6% on
+  the same code without it; ThinLTO alone +3.5%. Simulation -24% and
+  render -21% a frame against r2a.
+- B4 (deferred back end) loses 6%: its replay shows up in `dlist` (+3 ms)
+  and saves only 0.7 ms of `draw`. Rejected.
+- B3 (prefetch plans) is within the noise, and the simulation it targets
+  got slower (+2.4%). Rejected.
+- B2 (4 MB pages) +1.7%: simulation -3%, render -2%, as the TLB theory
+  predicts, but within twice the noise. Measure again before it becomes a
+  default.
+- The GPU now sets the pace on Fountain at 720p: with PGO the CPU finds it
+  still busy at 94% of frame starts and waits 4 ms a frame there; it
+  finishes ~10 ms after the present. Busy from the first draw's kick
+  (render, 18 ms of CPU) to 10 ms past the present is about the whole
+  frame, so a deeper pipeline (C3 P1) has no idle GPU to fill: further
+  frame-rate gains on Fountain need less GPU work, and CPU savings there
+  turn into this wait.
+- Final Destination runs at 60 at every build (one tick per render).
+- Open: fps-exec without LTO/PGO (r2a) is 3.4% below dev's baseline,
+  more than the noise; the simulation is 8% slower though C4 removed 15%
+  of its instructions in xemu. Candidates: A2's function order or
+  `-ffunction-sections` on the console's caches, `[SIMH]`/`[PERFX]`.
+- Fixed on the way: the chain kept only the last two logs (the game
+  serves no FTP; each build now keeps `boot_<folder>.log`), and a match's
+  end could launch the next build at once (an unsigned compare).
+
 ### Other facts
 
 - The profile is flat: the report's top 192 buckets (12 KB of code) hold
@@ -469,16 +518,16 @@ may go ahead.
 | round 1 probe build | done: v49 (196db39, 130 s), v50 (345d197, the full 303 s match); read under "Console round 1"; picked B2, B3 (sim), B4, C3, E | | v50: 32.3 fps; IPC sim 0.36, render 0.38, dlist 0.31, draw 0.55 |
 | A1 `-fno-auto-import` | done 0005392: 363 `.refptr` -> 1, `.text` -2.5 KB, gl shots same | -0.3% / 0 (gl); -0.4% / 0 (Fountain) | |
 | C4 ARQ completion in line | done 68a9a42, `[SIMH]` equal, gl shots same | 0 / -9.2% (gl); 0 / -15.2% (Fountain) | |
-| A2 function order | done 083f575: `-ffunction-sections`, `.text$*` renamed to `.text` before the link, `-opt:noicf`, `xbox/order.txt` (xemu instruction profiles of gl, fodperf, fd2, ps, corn); `/opt:ref` drops 133 KB of unreferenced code; `[SIMH]` equal, shots same | 0 / 0 (layout only) | round 2 |
-| A3 ThinLTO | done ae9181c, opt-in `XBOX_LTO=1` (distributed backends, import limit 10: +46 KB) | -2.0% / -1.6% (gl); -1.8% / -2.3% (Fountain) | round 2 |
-| A4 PGO | done ae9181c + d3aca6b, opt-in `XBOX_PGO=xbox/melee.profdata` (`docs/pgo.md`); profile committed with the user's approval | PGO alone: -2.0% / -12.5% (gl), -2.1% / -7.4% (Fountain); with ThinLTO: -9.8% / -19.4% (gl), -9.9% / -16.6% (Fountain), render -17%, `.text` unchanged | round 2 |
+| A2 function order | done 083f575: `-ffunction-sections`, `.text$*` renamed to `.text` before the link, `-opt:noicf`, `xbox/order.txt` (xemu instruction profiles of gl, fodperf, fd2, ps, corn); `/opt:ref` drops 133 KB of unreferenced code; `[SIMH]` equal, shots same | 0 / 0 (layout only) | round 2 | done (2026-10-03), read under "Console round 2": PGO +7.8% on dev (35.0 fps Fountain 720p), B4 and B3 rejected, B2 to measure again, the GPU now the limit on Fountain | | |
+| A3 ThinLTO | done ae9181c, opt-in `XBOX_LTO=1` (distributed backends, import limit 10: +46 KB) | -2.0% / -1.6% (gl); -1.8% / -2.3% (Fountain) | round 2: +3.5% fps (Fountain) |
+| A4 PGO | done ae9181c + d3aca6b, opt-in `XBOX_PGO=xbox/melee.profdata` (`docs/pgo.md`); profile committed with the user's approval | PGO alone: -2.0% / -12.5% (gl), -2.1% / -7.4% (Fountain); with ThinLTO: -9.8% / -19.4% (gl), -9.9% / -16.6% (Fountain), render -17%, `.text` unchanged | round 2: with LTO 35.0 fps, +7.8% on dev, +11.6% on the same code without it |
 | C1 work removed | shadow maps of inactive shadows: none in 4-CPU matches (census pass 3), nothing to skip; the reflection's effects (28 draws) and off-screen items not looked at yet | | |
 | C5 envelope blends | not done: the fused blend (`HSD_MtxConcatScaledAdd`, ~30 instructions a joint) costs about what validating a cached blend against the joints' matrices would, and nothing reliable bumps an epoch (game code writes `jobj->mtx` too); the per-pass costs are the view concat and `HSD_MtxInverseTranspose`, which depend on the pass | | |
 | C2 vertex pool | done 5be8438: key over enabled attributes' formats; Fountain 821 duplicate lists (1.7 MB) -> 0, pool free 4 KB -> 1.8 MB, rebuilds after warm-up ~0 | dlist -11%, render +1% | round 2 (the console rebuilt 700-3300 lists per 600 frames) |
-| B4 deferred back end | built, `env MX_DEFER=1` (off by default); xemu: `[SIMH]` equal, picture correct, 13 flushes a frame and ~450 B a record; `-DXGX_DEFER_CHECK=1` compares each replayed state with the recorded one. Its cost is the copies into and out of the records, which xemu counts word by word (`rep movsl`); the gain is in the code cache, which xemu doesn't have | +5% render, +1000 dlist, -1% draw per draw: +15.6% / +2% (Fountain) | round 2 |
-| B2 MEM1 on 4 MB pages | built, `env MX_MEM1_LARGE=6` (off by default) | 0 / 0 (TLB only) | round 2 |
-| B3 prefetch plans | built, `env MX_PREFETCH=1` (off by default), animation walk only | | round 2 |
-| C3 GPU waits | v50: the CPU never waits on an EFB copy (their waits are in the pushbuffer); the `gpu` bucket is `frame_open`'s one wait a frame for the last frame (`XGX_OVERLAP`) plus the flip, so on Fountain at 720p the GPU finishes about when the CPU does, and CPU savings may turn into that wait. Round 2 builds log it: `[NV2A] per 600 frames: GPU still busy at N frame starts, X us a frame waiting there (done Y us after the present), flip Z us`. Then: a one-frame-deep pipeline (fence per frame, ring and pushbuffer halves) if the GPU idles between kicks, or less GPU work if it doesn't | | round 2 |
+| B4 deferred back end | rejected by round 2: -6% fps on Fountain (32.96 against 35.01), `dlist` +3 ms; stays off (`env MX_DEFER=1`), to be removed | +15.6% / +2% (Fountain) | r2d |
+| B2 MEM1 on 4 MB pages | round 2: +1.7% (35.60 against 35.01; sim -3%, render -2%), within twice the noise; measure again before a default | 0 / 0 (TLB only) | r2e |
+| B3 prefetch plans | rejected by round 2: +1.3% fps, within the noise, and the simulation it targets +2.4%; stays off, to be removed | | r2f |
+| C3 GPU waits | v50: the CPU never waits on an EFB copy (their waits are in the pushbuffer); the `gpu` bucket is `frame_open`'s one wait a frame for the last frame (`XGX_OVERLAP`) plus the flip, so on Fountain at 720p the GPU finishes about when the CPU does, and CPU savings may turn into that wait. Round 2 builds log it: `[NV2A] per 600 frames: GPU still busy at N frame starts, X us a frame waiting there (done Y us after the present), flip Z us`. Then: a one-frame-deep pipeline (fence per frame, ring and pushbuffer halves) if the GPU idles between kicks, or less GPU work if it doesn't | | round 2: with PGO the GPU is still busy at 94% of frame starts, 4 ms a frame waiting; busy about the whole frame, so no pipeline gain, less GPU work instead |
 | round 2 | staged with `tools/xbox/round2.py`: ten test builds in `F:\Applications\Melee-X-r2a..j` chained by `env MX_NEXT_XBE`, the baseline last in `Melee-X` | | |
 | lockstep shots | done 29afd58: `env MX_LOCKSTEP=1`, the game clock a frame counter, so shots compare across builds of any speed (`docs/testing.md` "Comparing builds by screenshot"); gl: 1.0 ticks per render, B4 on and off the same moment and pixels | | |
 
