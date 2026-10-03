@@ -480,6 +480,7 @@ may go ahead.
 | B3 prefetch plans | built, `env MX_PREFETCH=1` (off by default), animation walk only | | round 2 |
 | C3 GPU waits | v50: the CPU never waits on an EFB copy (their waits are in the pushbuffer); the `gpu` bucket is `frame_open`'s one wait a frame for the last frame (`XGX_OVERLAP`) plus the flip, so on Fountain at 720p the GPU finishes about when the CPU does, and CPU savings may turn into that wait. Round 2 builds log it: `[NV2A] per 600 frames: GPU still busy at N frame starts, X us a frame waiting there (done Y us after the present), flip Z us`. Then: a one-frame-deep pipeline (fence per frame, ring and pushbuffer halves) if the GPU idles between kicks, or less GPU work if it doesn't | | round 2 |
 | round 2 | staged with `tools/xbox/round2.py`: ten test builds in `F:\Applications\Melee-X-r2a..j` chained by `env MX_NEXT_XBE`, the baseline last in `Melee-X` | | |
+| E audio mixer | done (branch `fps-e`): ADPCM decoded in runs per frame with an s32 sum, a frame's source positions planned before the mix, the float math four outputs a step in SSE1, the output clamp in SSE1, the reverb in stretches between line wraps; `test_audio_mix.py` same bits (SSE1 and plain C, i686 too) | mixer only (static i686 counts): a resampled ADPCM voice ~146 -> ~62 a sample, 1:1 music ~108 -> ~52, silent ~112 -> ~38, reverb ~110 -> ~67 a sample and channel | round 2 (`[PERF]` audio, window 6) |
 
 All gates: xemu `-icount`, `[SIMH]` identical up to the match's end, gl
 (and Fountain where it matters) screenshots the same. One open oddity:
