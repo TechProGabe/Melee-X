@@ -37,6 +37,10 @@ option(XBOX_LTO "ThinLTO over the game and sdk code" OFF)
 # XBOX_PGO (xbox/build.sh): "gen" instruments the game and sdk code
 # (counters out through xhw_pgo.c), a .profdata path optimizes with it
 set(XBOX_PGO "" CACHE STRING "PGO: empty, gen, or a .profdata path")
+if(XBOX_PGO AND NOT XBOX_PGO STREQUAL "gen")
+    # relative to the checkout (docs/pgo.md): the sdk objects compile in the build folder
+    get_filename_component(XBOX_PGO "${XBOX_PGO}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}/..")
+endif()
 set(GAME_OUT ${CMAKE_BINARY_DIR}/game)
 set(GAME_ENV XBOX_LTO= XBOX_PGO=${XBOX_PGO})
 if(XBOX_LTO)
