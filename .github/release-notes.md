@@ -14,9 +14,9 @@ A couple of smaller GPU stalls on those copies are fixed too, including two mid-
 
 ## 720p is on by default
 
-In v2, 720p was opt-in and matches crawled at about 7 fps. That's a lot better now: matches run around 15 to 30 fps at 720p, and the item boxes and Fountain of Dreams' grass no longer flicker with the wrong textures. If your dashboard allows 720p, Melee-X uses it.
+In v2, 720p was opt-in and matches crawled at about 7 fps. That's a lot better now. A two player match on a simple stage plays at 60 fps at 720p, and only busy four player matches drop to around 20 to 30. The item boxes and Fountain of Dreams' grass no longer flicker with the wrong textures. If your dashboard allows 720p, Melee-X uses it.
 
-If you'd rather have a smoother game, 480p still runs matches at 30 to 60 fps. Pick it in the new settings menu. And if your TV can't show 720p at all, hold **Back** while Melee-X starts: you get 480i, and that choice is saved.
+If you want those big four player matches smoother, 480p runs them at 30 to 60 fps. Pick it in the new settings menu. And if your TV can't show 720p at all, hold **Back** while Melee-X starts: you get 480i, and that choice is saved.
 
 **Upgrading from v2?** Your `settings.ini` still says `720p = 0` from back when it was opt-in, so you'll stay at 480 until you turn 720p on in the menu (or delete `settings.ini` to get the new defaults).
 
