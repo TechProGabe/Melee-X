@@ -25,7 +25,6 @@ PERFX = re.compile(r'\[PERFX\] (\d+) frames (\d+) draws (\d+) verts (\d+) ticks 
 PMC = re.compile(r'\[PMC\] (\d+) (\S+) (\S+) \| k (.*)')
 AB = re.compile(r'\[AB\] (\d+) (.*)')
 NOISE = ('[FBDUMP]', '[AUTOPAD] SHOT', '[PROF', '[DUMP')
-CYCLE_EVENTS = {'IFU_MEM_STALL', 'DCU_MISS_OUTSTANDING', 'RESOURCE_STALLS', 'CYCLES_DIV_BUSY'}
 
 
 def parse(path):
@@ -79,6 +78,7 @@ def mean(xs):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('log')
+    ap.add_argument('--mhz', type=float, default=733.33, help="the TSC's rate ([PERF] cpu MHz)")
     args = ap.parse_args()
     rows, names = parse(args.log)
     print(f'{args.log}: {len(rows)} [PERF] periods in the match')
@@ -115,44 +115,44 @@ def main():
                      f'tick {100 * (pt / b_tick - 1) if b_tick else 0:+.1f}%')
         print(line)
 
-    # counters: baseline windows only (and every row if the windows did not rotate)
-    src = base if base else rows
-    pairs = collections.defaultdict(list)
-    for r in src:
-        if 'pmc' in r:
-            pairs[r['pmc'][0]].append(r)
-    if not pairs:
-        print('\nno [PMC] lines (xemu, or not a -DXHW_PMC=1 build)')
-        return
-    # events per frame per bucket, averaged over the periods that counted them
-    ev = {}
-    for p, rs in sorted(pairs.items()):
-        _, n0, n1, _ = rs[0]['pmc']
-        frames = sum(r['frames'] for r in rs)
-        for name, i in ((n0, 0), (n1, 1)):
-            ev[name] = {b: 1000 * sum(r['pmc'][3].get(b, (0, 0))[i] for r in rs) / frames for b in BUCKETS}
-    cyc = ev.get('CPU_CLK_UNHALTED', {})
-    ins = ev.get('INST_RETIRED', {})
-    print(f"\nper frame, baseline windows ({len(src)} periods); % = share of the bucket's cycles")
-    print(f"{'event':26}" + ''.join(f'{b:>12}' for b in BUCKETS))
-    for name, per in ev.items():
-        line = f'{name[:25]:26}'
-        for b in BUCKETS:
-            v = per[b]
-            if name in CYCLE_EVENTS and cyc.get(b):
-                line += f'{v / 1e3:8.0f}k{100 * v / cyc[b]:3.0f}%'
-            else:
-                line += f'{v / 1e3:11.0f}k'
-        print(line)
-    if cyc and ins:
-        print(f"{'IPC':26}" + ''.join(f'{ins[b] / cyc[b]:12.2f}' if cyc[b] else f'{"-":>12}' for b in BUCKETS))
-        if 'ITLB_MISS' in ev:
-            print(f"{'ITLB miss / 1k instr':26}"
-                  + ''.join(f"{1000 * ev['ITLB_MISS'][b] / ins[b]:12.2f}" if ins[b] else f'{"-":>12}' for b in BUCKETS))
-        if 'BR_MISS_PRED_RETIRED' in ev and 'BR_INST_RETIRED' in ev:
-            print(f"{'mispredict %':26}" + ''.join(
-                f"{100 * ev['BR_MISS_PRED_RETIRED'][b] / ev['BR_INST_RETIRED'][b]:12.1f}"
-                if ev['BR_INST_RETIRED'][b] else f'{"-":>12}' for b in BUCKETS))
+    # counters: each [PMC] row against its own period's bucket cycles ([PERFX] us x the TSC rate)
+    def shares(rs):
+        ev = collections.defaultdict(lambda: collections.Counter())
+        cyc = collections.defaultdict(lambda: collections.Counter())
+        frames = collections.Counter()
+        for r in rs:
+            if 'pmc' not in r or 'us' not in r:
+                continue
+            _, n0, n1, per = r['pmc']
+            for name, k in ((n0, 0), (n1, 1)):
+                frames[name] += r['frames']
+                for b in BUCKETS:
+                    ev[name][b] += 1000 * per.get(b, (0, 0))[k]
+                    cyc[name][b] += r['us'].get(b, 0) * args.mhz
+        return ev, cyc, frames
+
+    groups = [('baseline windows 0, 7', base), ('all windows but 4 (no back end)',
+                                                [r for r in rows if r['window'] != 4])]
+    for title, rs in groups:
+        ev, cyc, frames = shares(rs)
+        if not ev:
+            print(f'\n{title}: no [PMC] lines (xemu, or not a -DXHW_PMC=1 build)')
+            continue
+        print(f"\n{title}: % = events per 100 cycles of the bucket (cycle events: share of its cycles); "
+              f"/f = per frame")
+        print(f"{'event':26}{'n':>3}" + ''.join(f'{b:>13}' for b in BUCKETS[:5]))
+        for name in ev:
+            n = sum(1 for r in rs if 'pmc' in r and name in r['pmc'][1:3])
+            line = f'{name[:25]:26}{n:3}'
+            for b in BUCKETS[:5]:
+                e, c = ev[name][b], cyc[name][b]
+                pct = f'{100 * e / c:5.1f}%' if c else '    -'
+                line += f'{pct} {e / max(1, frames[name]) / 1e3:5.0f}k'
+            print(line)
+        if 'INST_RETIRED' in ev:
+            print(f"{'IPC (instr/cycle)':26}{'':3}" + ''.join(
+                f"{ev['INST_RETIRED'][b] / cyc['INST_RETIRED'][b]:13.2f}" if cyc['INST_RETIRED'][b] else f'{"-":>13}'
+                for b in BUCKETS[:5]))
 
 
 if __name__ == '__main__':

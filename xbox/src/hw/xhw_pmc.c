@@ -75,7 +75,7 @@ static uint32_t s_periods;
 static uint64_t s_mark[2];
 static uint64_t s_acc[XHW_PERF_N][2];
 
-static const struct {
+static struct {
     uint8_t ev0, um0, ev1, um1;
     const char *name0, *name1;
 } k_pairs[] = {
@@ -88,7 +88,7 @@ static const struct {
     { 0xA2, 0, 0x11, 0, "RESOURCE_STALLS", "FP_ASSIST" },          /* FP_ASSIST: counter 1 only */
     { 0x14, 0, 0x13, 0, "CYCLES_DIV_BUSY", "DIV" },                /* counter 0 only, counter 1 only */
     { 0x03, 0, 0x05, 0, "LD_BLOCKS", "MISALIGN_MEM_REF" },
-    { 0x07, 0, 0x4B, 0, "EMON_KNI_PREF_DISPATCHED", "EMON_KNI_PREF_MISS" },   /* umask 0: prefetchnta */
+    { 0x07, 0, 0x4B, 0, "EMON_KNI_PREF_DISPATCHED", "EMON_KNI_PREF_MISS" },   /* umask: pref_umask() */
 };
 #define NPAIRS (int)(sizeof k_pairs / sizeof k_pairs[0])
 
@@ -105,6 +105,28 @@ static void program(int pair) {
     wrmsr(0x186, k_pairs[pair].ev0 | (uint32_t)k_pairs[pair].um0 << 8 | SEL_USR | SEL_OS | SEL_EN);
     s_mark[0] = rdpmc(0);
     s_mark[1] = rdpmc(1);
+}
+
+/* The P6 event table gives 0x07/0x4B unit masks for prefetchnta, t1, t2 and
+ * weakly-ordered stores, none for prefetcht0, which HSD_PREFETCH emits
+ * (__builtin_prefetch). Count 1000 prefetcht0 under each mask and give
+ * pair 10 the one that sees them. */
+static void pref_umask(void) {
+    static uint8_t buf[1000 * 32];
+    uint32_t um, best = 0, n[4];
+    int i;
+    for (um = 0; um < 4; um++) {
+        wrmsr(0x186, 0);
+        wrmsr(0xC1, 0);
+        wrmsr(0x186, 0x07 | um << 8 | SEL_USR | SEL_OS | SEL_EN);
+        for (i = 0; i < 1000; i++) __asm__ volatile("prefetcht0 %0" : : "m"(buf[i * 32]));
+        n[um] = (uint32_t)rdpmc(0);
+        wrmsr(0x186, 0);
+        if (n[um] > n[best]) best = um;
+    }
+    k_pairs[9].um0 = k_pairs[9].um1 = (uint8_t)best;
+    xhw_logf("[PMC] 1000 prefetcht0 under 0x07 umask 0-3: %lu %lu %lu %lu -> umask %lu for pair 10", (unsigned long)n[0],
+             (unsigned long)n[1], (unsigned long)n[2], (unsigned long)n[3], (unsigned long)best);
 }
 
 /* xhw_perf.c, at every bucket switch: what ran since the last one goes to `bucket` */
@@ -256,6 +278,7 @@ void xhw_cpu_probe(void) {
 #if XHW_PMC
     if (!xhw_running_in_xemu() && (feat & (1u << 5))) {
         s_on = 1;
+        pref_umask();
         program(0);
         xhw_logf("[PMC] counters on: one pair per [PERF] period, %d pairs", NPAIRS);
     } else {
