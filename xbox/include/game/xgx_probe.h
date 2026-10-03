@@ -19,6 +19,7 @@ enum {
     XGX_PASS_MAIN = 0,
     XGX_PASS_SHADOW = 1,    /* a fighter's shadow map (lbshadow.c) */
     XGX_PASS_REFLECT = 2,   /* Fountain of Dreams' reflection (grizumi.c) */
+    XGX_PASS_SHADOW_IDLE = 3,   /* a shadow map whose shadow is not applied (inactive) */
 };
 
 #define XGX_CENSUS_OWNER(tag, owner) (((tag) & ~0xFFu) | ((owner) & 0xFFu))

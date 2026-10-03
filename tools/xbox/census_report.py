@@ -15,7 +15,7 @@ import argparse
 import collections
 import re
 
-PASSES = {0: 'main', 1: 'shadow', 2: 'reflect', 3: 'pass3+'}
+PASSES = {0: 'main', 1: 'shadow', 2: 'reflect', 3: 'shadow-idle'}   # idle: a map whose shadow isn't applied
 # p_link classes seen in a match (GObj_Create's second argument)
 OWNERS = {1: 'scene', 2: 'scene2', 3: 'light/cam', 4: 'stage misc', 5: 'stage', 6: 'map', 7: 'item spawn',
           8: 'fighter', 9: 'item', 11: 'effect', 12: 'effect', 13: 'gm', 14: 'hud', 15: 'hud', 255: 'none'}
