@@ -195,6 +195,12 @@ Fix order after RC2 (2026-10-02), details in the entries below:
   is spawned in the second phase, nothing frees it and the Bill frees
   itself without it. Reproduce in xemu with Peach's Castle and Bullet
   Bills; log the phase changes, `xCA`, and the anim end check.
+- Results screen, several players tied for 1st (xemu, 2026-10-02, 4-CPU
+  time battles ending 0-0, e.g. `scenarios/ps`): the portrait boxes in the
+  bottom cards stay empty for everyone. Already so on v45 (the fps
+  baseline runs), not a regression; with distinct places (`scenarios/res`)
+  the portraits draw. v45's winner-portrait fix was the single-winner path
+  of `fn_80179990`; check the tie branch and its EFB copies.
 - Classic team card corrupted (tester, 2026-10-02, build not stated yet;
   Classic as Luigi, Team Kirby on Fountain of Dreams): on the card before
   the fight some of the Kirbys drew corrupted. The card is the Z-texture
@@ -303,7 +309,9 @@ Fix order after RC2 (2026-10-02), details in the entries below:
 ## Next
 
 1. Release: a plain build of the current `main`, `package_release.py`, a
-   GitHub release (only when the user asks).
+   GitHub release (only when the user asks). v3's notes
+   (`.github/release-notes.md`) thank maple72 prominently for the RC
+   testing on real hardware (user's request).
 2. Frame rate: the CPU is the limit everywhere (render pass ~60%, sim
    ~40%). See the plan below.
 3. Rendering gaps: fog against Dolphin; the cloak's refraction (indirect
