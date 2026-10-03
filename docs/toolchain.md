@@ -107,6 +107,11 @@ Floating point: `-msse -mfpmath=sse` (floats round to single like Gekko;
 doubles stay x87), `-ffp-contract=off -fno-fast-math`, `-fno-strict-aliasing
 -fwrapv` (load-bearing for the decomp, as in every sibling port).
 
+`-fno-auto-import` (game and sdk objects): the mingw triple otherwise reads
+every extern variable through a `.refptr` stub (an extra load), for
+DLL imports this image never has; 362 stubs, one left (a weak reference in
+`src/pc/audio.c`).
+
 System headers are nxdk's pdclib. `xbox/include/game/` fills what pdclib
 lacks (`<sys/types.h>`, `M_PI`, `va_list` in aurora's `os.h`).
 

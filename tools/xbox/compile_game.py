@@ -75,6 +75,9 @@ COMPILE_FLAGS = [
     '-fno-builtin-sinf', '-fno-builtin-cosf', '-fno-builtin-tanf', '-fno-builtin-atanf',
     '-ftrivial-auto-var-init=zero', '-fno-strict-aliasing', '-fwrapv',
     '-fno-asynchronous-unwind-tables', '-fno-exceptions',
+    # Everything links statically: data goes straight to its symbol, not
+    # through a mingw .refptr stub (an extra load per access).
+    '-fno-auto-import',
 ]
 
 
