@@ -110,7 +110,8 @@ static void main_body(void* arg) {
     CreateDirectoryA(XHW_UDATA_ROOT, NULL);
     xhw_log_open_file();
     read_image_range();
-    xhw_logf("[BOOT] image %08x-%08x", xhw_image_base, xhw_image_end);
+    xhw_logf("[BOOT] image %08x-%08x %.*s", xhw_image_base, xhw_image_end, (int)XeImageFileName[0].Length,
+             XeImageFileName[0].Buffer);
     xhw_watchdog_start();
     xhw_prof_set_game_thread();
     xhw_prof_start();
@@ -140,6 +141,7 @@ void xhw_quit_to_dashboard(void) {
     xhw_led_shutdown();
     xhw_audio_shutdown();
     xhw_pad_shutdown();
+    xhw_lazy_large_release();
     XLaunchXBE(NULL);
     for (;;) Sleep(1000);
 }
@@ -150,15 +152,34 @@ void xhw_quit_to_dashboard(void) {
  * D:\default.xbe would become \??\D:;default.xbe in the launch data. It
  * quick-reboots and doesn't come back; it returns only when the path has
  * no folder in it, and then the console reboots. */
+static void __attribute__((noreturn)) launch(char* path) {
+    xhw_led_shutdown();
+    xhw_audio_shutdown();
+    xhw_pad_shutdown();
+    xhw_lazy_large_release();
+    XLaunchXBE(path);
+    HalReturnToFirmware(HalRebootRoutine);
+    for (;;) Sleep(1000);
+}
+
 void xhw_reboot_self(void) {
     char path[300];
     const ANSI_STRING* img = &XeImageFileName[0];
     snprintf(path, sizeof path, "%.*s", (int)img->Length, img->Buffer);
     xhw_logf("[BOOT] restart: %s", path);
-    xhw_led_shutdown();
-    xhw_audio_shutdown();
-    xhw_pad_shutdown();
-    XLaunchXBE(path);
-    HalReturnToFirmware(HalRebootRoutine);
-    for (;;) Sleep(1000);
+    launch(path);
+}
+
+/* F:\ and E:\ as the kernel names them (xhw_reboot_self: XLaunchXBE wants
+ * \Device\ paths) */
+void xhw_launch_xbe(const char* dos_path) {
+    char path[300], line[340];
+    const char* part = (dos_path[0] | 0x20) == 'f' ? "Partition6" : (dos_path[0] | 0x20) == 'e' ? "Partition1" : NULL;
+    if (part && dos_path[1] == ':')
+        snprintf(path, sizeof path, "\\Device\\Harddisk0\\%s%s", part, dos_path + 2);
+    else
+        snprintf(path, sizeof path, "%s", dos_path);
+    snprintf(line, sizeof line, "[BOOT] next: %s", path);
+    xhw_log_try(line);   /* on disk before the launch */
+    launch(path);
 }

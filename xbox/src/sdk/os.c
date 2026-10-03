@@ -13,6 +13,7 @@
 #include <dolphin/os/OSReset.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "pc/disc.h"
@@ -31,6 +32,9 @@
 #endif
 #ifndef XSDK_MEM1_SIZE
 #define XSDK_MEM1_SIZE (24u * 1024 * 1024)
+#endif
+#ifndef XSDK_MEM1_LARGE
+#define XSDK_MEM1_LARGE 0   /* 4 MB ranges of MEM1 on 4 MB pages, a bit per range (OSInit) */
 #endif
 #define ARENA_START_OFFSET 0x4000u   /* low-memory globals (boot info, clocks) */
 
@@ -64,6 +68,15 @@ void OSInit(void) {
     xhw_tls_set(s_game_tls, (void*)1);   /* melee_main calls OSInit first */
     s_mem1 = (u8*)xhw_reserve_lazy(XSDK_MEM1_VA, XSDK_MEM1_SIZE);   /* committed on demand */
     if (!s_mem1) xhw_fatal("Out of memory", "Could not reserve the game's main memory.");
+    {   /* 4 MB pages (docs/fps-plan.md B2): a bit per 4 MB range of MEM1;
+         * test builds take it from "env MX_MEM1_LARGE=n" (6: the two ranges
+         * a 4-CPU match fills, 0x10400000-0x10BFFFFF) */
+        const char* e = getenv("MX_MEM1_LARGE");
+        unsigned mask = e ? (unsigned)strtoul(e, NULL, 0) : XSDK_MEM1_LARGE, k, done = 0;
+        for (k = 0; k < XSDK_MEM1_SIZE >> 22; k++)
+            if ((mask >> k & 1) && xhw_lazy_large(XSDK_MEM1_VA + (k << 22))) done |= 1u << k;
+        if (mask) xhw_logf("[OS] MEM1 on 4 MB pages: ranges %x of %x", done, mask);
+    }
     memset(s_mem1, 0, ARENA_START_OFFSET);
     OSBaseAddress = (uintptr_t)s_mem1;
     /* OSBootInfo: the disc ID is filled in by DVD (xsdk_fill_disc_id) */

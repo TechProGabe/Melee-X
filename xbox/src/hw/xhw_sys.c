@@ -392,6 +392,7 @@ typedef struct {
 } Lazy;
 static Lazy s_lazy[LAZY_MAX];
 static volatile LONG s_lazy_n, s_lazy_chunks;
+static int in_large(const void* p, uint32_t n);   /* in a 4 MB page (xhw_lazy_large) */
 
 void* xhw_reserve_lazy(uintptr_t va, uint32_t bytes) {
     PVOID base = (PVOID)va;
@@ -474,7 +475,7 @@ void xhw_lazy_decommit(void* chunk) {
     LONG bit;
     PVOID base;
     SIZE_T size = LAZY_CHUNK;
-    if (!l) return;
+    if (!l || in_large(chunk, LAZY_CHUNK)) return;
     c = (uint32_t)(((uintptr_t)chunk - l->base) / LAZY_CHUNK);
     bit = (LONG)(1u << (c % 32));
     if (!(__atomic_fetch_and(&l->bits[c / 32], ~bit, __ATOMIC_SEQ_CST) & bit)) return;
@@ -484,6 +485,79 @@ void xhw_lazy_decommit(void* chunk) {
 }
 
 uint32_t xhw_lazy_committed_kb(void) { return (uint32_t)s_lazy_chunks * (LAZY_CHUNK / 1024); }
+
+/* ---- 4 MB pages (docs/fps-plan.md B2) ----
+ * The P3's data TLB holds 64 4 KB pages (256 KB) and 8 4 MB ones; the game
+ * walks ~20 MB of heap. A range given one 4 MB page: physically contiguous
+ * memory from the kernel, 4 MB aligned, put in the range's page directory
+ * entry through the kernel's self-map (0xC0300000). The kernel's memory
+ * manager doesn't know: its bookkeeping (the reservation's VAD) still says
+ * reserved, nothing in the range is ever committed or decommitted through
+ * it (the chunk bits say committed from the start), file reads into it go
+ * through a bounce buffer (no I/O path walks its page tables), and the
+ * entries are taken out again before the console leaves the game
+ * (xhw_lazy_large_release). The kernel maps everything else with 4 KB
+ * pages ([CPU] pde), so it never looks for 4 MB ones. */
+#define LARGE_BYTES (4u << 20)
+#define LARGE_MAX 6
+static uintptr_t s_large[LARGE_MAX];
+static int s_nlarge;
+
+static volatile uint32_t* pde_of(uintptr_t va) { return (volatile uint32_t*)0xC0300000u + (va >> 22); }
+
+static void flush_tlb(void) { __asm__ volatile("mov %%cr3, %%eax\n\tmov %%eax, %%cr3" : : : "eax", "memory"); }
+
+int xhw_lazy_large(uintptr_t va) {
+    Lazy* l = lazy_find(va);
+    uint32_t c, first;
+    void* blk;
+    if (!l || (va & (LARGE_BYTES - 1)) || va + LARGE_BYTES > l->base + l->size || s_nlarge >= LARGE_MAX ||
+        (*pde_of(va) & 1))
+        return 0;
+    first = (uint32_t)((va - l->base) / LAZY_CHUNK);
+    for (c = first; c < first + LARGE_BYTES / LAZY_CHUNK; c++)
+        if ((l->bits[c / 32] >> (c % 32)) & 1) return 0;   /* committed already: has a page table */
+    blk = MmAllocateContiguousMemoryEx(LARGE_BYTES, 0, 0x03FFFFFFu, LARGE_BYTES, PAGE_READWRITE);
+    if (!blk) return 0;
+    memset(blk, 0, LARGE_BYTES);   /* as a fresh commit */
+    /* present, writable, accessed, dirty, 4 MB; write-back (PCD, PWT, PAT 0) */
+    *pde_of(va) = (uint32_t)MmGetPhysicalAddress(blk) | 0xE3u;
+    flush_tlb();
+    for (c = first; c < first + LARGE_BYTES / LAZY_CHUNK; c++) {
+        __atomic_fetch_or(&l->bits[c / 32], (LONG)(1u << (c % 32)), __ATOMIC_SEQ_CST);
+        InterlockedIncrement(&s_lazy_chunks);
+    }
+    s_large[s_nlarge++] = va;
+    return 1;
+}
+
+static int in_large(const void* p, uint32_t n) {
+    uintptr_t a = (uintptr_t)p;
+    int i;
+    for (i = 0; i < s_nlarge; i++)
+        if (a < s_large[i] + LARGE_BYTES && a + n > s_large[i]) return 1;
+    return 0;
+}
+
+/* The chunks read as uncommitted again: a thread that still touches the
+ * range afterwards (the mixer keeps running) faults and commits ordinary
+ * pages, which the kernel can tear down, instead of faulting forever. */
+void xhw_lazy_large_release(void) {
+    int i;
+    uint32_t c, first;
+    for (i = 0; i < s_nlarge; i++) {
+        Lazy* l = lazy_find(s_large[i]);
+        *pde_of(s_large[i]) = 0;
+        if (!l) continue;
+        first = (uint32_t)((s_large[i] - l->base) / LAZY_CHUNK);
+        for (c = first; c < first + LARGE_BYTES / LAZY_CHUNK; c++) {
+            __atomic_fetch_and(&l->bits[c / 32], ~(LONG)(1u << (c % 32)), __ATOMIC_SEQ_CST);
+            InterlockedDecrement(&s_lazy_chunks);
+        }
+    }
+    if (s_nlarge) flush_tlb();
+    s_nlarge = 0;
+}
 
 /* [MEM] lazy: each region's committed 64 KB chunks per 4 MB range (of 64),
  * the probe build's view of which ranges could go on 4 MB pages
@@ -632,16 +706,22 @@ void* xhw_file_open(const char* path) {
     return h == INVALID_HANDLE_VALUE ? NULL : (void*)h;
 }
 
-/* In 1 MB pieces, so other I/O on the disk (the log) gets turns. */
+/* In 1 MB pieces, so other I/O on the disk (the log) gets turns. Into a
+ * 4 MB page (xhw_lazy_large) through a bounce buffer, 64 KB at a time. */
 int xhw_file_read(void* file, uint32_t off, void* dst, uint32_t len) {
+    static uint8_t* bounce;
     uint8_t* d = (uint8_t*)dst;
     LONG hi = 0;
+    int via = in_large(dst, len);
+    if (via && !bounce && !(bounce = (uint8_t*)malloc(LAZY_CHUNK))) return 0;
     if (SetFilePointer((HANDLE)file, (LONG)off, &hi, FILE_BEGIN) == INVALID_SET_FILE_POINTER &&
         GetLastError() != NO_ERROR)
         return 0;
     while (len) {
         DWORD want = len > (1u << 20) ? (1u << 20) : len, got = 0;
-        if (!ReadFile((HANDLE)file, d, want, &got, NULL) || got == 0) return 0;
+        if (via && want > LAZY_CHUNK) want = LAZY_CHUNK;
+        if (!ReadFile((HANDLE)file, via ? bounce : d, want, &got, NULL) || got == 0) return 0;
+        if (via) memcpy(d, bounce, got);
         d += got;
         len -= got;
     }
