@@ -2,7 +2,7 @@
 # Build default.xbe inside the melee-x:sdk image (macOS, Linux, Windows Git Bash).
 #   docker build -t melee-x:sdk tools/xbox/docker      # once
 #   tools/xbox/docker/build.sh                          # -> build-xbox/xbe/default.xbe
-# XBOX_CFLAGS / XBOX_CMAKE_ARGS / XBOX_NINJA_ARGS / XBOX_FORCE / XBOX_KEEP_TEMPS pass through.
+# XBOX_CFLAGS / XBOX_CMAKE_ARGS / XBOX_NINJA_ARGS / XBOX_FORCE / XBOX_KEEP_TEMPS / XBOX_LTO / XBOX_PGO pass through.
 # disc_lower is rebuilt from tools/lower/disc_lower.cpp when that changes.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -11,7 +11,7 @@ vroot="$root"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) export MSYS_NO_PATHCONV=1; vroot="$(cd "$root" && pwd -W)";; esac
 tty=; [ -t 1 ] && tty=-t
 docker run --rm $tty -v "$vroot":/src -w /src \
-  -e XBOX_CFLAGS -e XBOX_CMAKE_ARGS -e XBOX_NINJA_ARGS -e XBOX_FORCE -e XBOX_KEEP_TEMPS \
+  -e XBOX_CFLAGS -e XBOX_CMAKE_ARGS -e XBOX_NINJA_ARGS -e XBOX_FORCE -e XBOX_KEEP_TEMPS -e XBOX_LTO -e XBOX_PGO \
   melee-x:sdk bash -c '
   set -e
   export NXDK_DIR=/usr/src/nxdk DISC_LOWER=/src/build-xbox/tools/disc_lower

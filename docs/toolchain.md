@@ -135,6 +135,48 @@ python3 tools/xbox/make_order.py --map <that build's melee_x.map> gl.log fodperf
 A name the order lists and the link doesn't have is skipped quietly
 (`-ignore:4037`), so a stale order only costs layout.
 
+### ThinLTO (`XBOX_LTO=1`)
+
+`XBOX_LTO=1 tools/xbox/msys/build.sh` compiles the game and sdk code to
+bitcode (`-flto=thin`; objects in `build-xbox/game-lto`) and links through
+`tools/xbox/thinlto_link.py` (CMake's `RULE_LAUNCH_LINK`): lld-link with
+`-thinlto-index-only` decides what each module imports, clang's ThinLTO
+backend compiles each module with the game's codegen flags, its sections
+are renamed as above, and the native objects are linked as usual, so the
+order file still applies. lld-link's own ThinLTO would emit the mingw
+section names again. The platform code (nxdk's triple) and nxdk's
+libraries stay native. Imports are limited to functions of 10 instructions
+or less (`XBOX_LTO_INDEX` overrides): LLVM's default 100 grew `.text` by
+1.3 MB; 30 by 632 KB for -7% render and -4% simulation instructions; 10 by
+46 KB for -3.5..-3.9% and -1.6..-2.3%. `[SIMH]` stays equal with both;
+code size is what the console's code cache pays for, so round 2 decides. The game thread's x87 control
+word is `027f` (53-bit precision) on xemu and the console, so inlining
+does not move a double's rounding.
+
+### PGO (`XBOX_PGO`)
+
+`XBOX_PGO=gen` builds an instrumented image (`-fprofile-generate`, value
+profiling off; objects in `game-pgogen`). It has no compiler-rt:
+`xbox/src/hw/xhw_pgo.c` defines `__llvm_profile_runtime` and writes the
+counter section (`.lprfc`) to the log as `[PGOC]` lines at every scene's
+exit and the match's end. `tools/xbox/pgo_raw.py` builds a raw profile from
+the last dump and the linked image (`build-xbox/melee_x.exe`, whose
+`.lprfd`/`.lprfn` sections hold the rest), and `llvm-profdata merge` makes
+the `.profdata`:
+
+```sh
+XBOX_PGO=gen XBOX_CFLAGS=-DXHW_AUTOPAD=1 tools/xbox/msys/build.sh
+# xemu runs of gl, fodperf, ps, corn, fd2 (-icount: the counts don't depend on speed)
+python3 tools/xbox/pgo_raw.py --exe build-xbox/melee_x.exe --map build-xbox/melee_x.map run.log -o run.profraw
+llvm-profdata merge -o melee.profdata *.profraw
+XBOX_PGO=melee.profdata tools/xbox/msys/build.sh      # path relative to the checkout
+```
+
+Static functions are named by their file's name alone
+(`-static-func-full-module-prefix=false`), since the lowered sources'
+paths differ between the two builds' object folders. Branch counts are the
+same on the console, whose own profile only differs in where time goes.
+
 System headers are nxdk's pdclib. `xbox/include/game/` fills what pdclib
 lacks (`<sys/types.h>`, `M_PI`, `va_list` in aurora's `os.h`).
 

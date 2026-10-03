@@ -31,9 +31,25 @@ target_include_directories(mx_pbkit PRIVATE ${PBKIT_SRC})
 target_compile_options(mx_pbkit PRIVATE -w)
 
 # ---- game objects (tools/xbox/compile_game.py, incremental via depfiles) ----
+# XBOX_LTO (xbox/build.sh: XBOX_LTO=1): game and sdk code as bitcode, ThinLTO
+# at the link (tools/xbox/thinlto_link.py); its own object folder
+option(XBOX_LTO "ThinLTO over the game and sdk code" OFF)
+# XBOX_PGO (xbox/build.sh): "gen" instruments the game and sdk code
+# (counters out through xhw_pgo.c), a .profdata path optimizes with it
+set(XBOX_PGO "" CACHE STRING "PGO: empty, gen, or a .profdata path")
 set(GAME_OUT ${CMAKE_BINARY_DIR}/game)
+set(GAME_ENV XBOX_LTO= XBOX_PGO=${XBOX_PGO})
+if(XBOX_LTO)
+    set(GAME_OUT ${GAME_OUT}-lto)
+    set(GAME_ENV XBOX_LTO=1 XBOX_PGO=${XBOX_PGO})
+endif()
+if(XBOX_PGO STREQUAL "gen")
+    set(GAME_OUT ${GAME_OUT}-pgogen)
+elseif(XBOX_PGO)
+    set(GAME_OUT ${GAME_OUT}-pgo)
+endif()
 add_custom_target(game_objs
-    COMMAND ${CMAKE_COMMAND} -E env XBOX_GAME_OUT=${GAME_OUT} python3 ${ROOT}/tools/xbox/compile_game.py
+    COMMAND ${CMAKE_COMMAND} -E env XBOX_GAME_OUT=${GAME_OUT} ${GAME_ENV} python3 ${ROOT}/tools/xbox/compile_game.py
     WORKING_DIRECTORY ${ROOT}
     BYPRODUCTS ${GAME_OUT}/objects.txt ${GAME_OUT}/objects.stamp
     COMMENT "game code: lower + compile"
@@ -68,6 +84,15 @@ set(SDK_INCLUDES
     ${ROOT}/src
     ${ROOT}/src/sdk_include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/sdk)
+if(XBOX_LTO)
+    list(APPEND SDK_FLAGS -flto=thin)
+endif()
+if(XBOX_PGO STREQUAL "gen")
+    list(APPEND SDK_FLAGS -fprofile-generate "SHELL:-mllvm -disable-vp" "SHELL:-mllvm -static-func-full-module-prefix=false")
+    add_compile_definitions(XHW_PGO=1)
+elseif(XBOX_PGO)
+    list(APPEND SDK_FLAGS -fprofile-use=${XBOX_PGO} "SHELL:-mllvm -static-func-full-module-prefix=false")
+endif()
 add_library(mx_sdk OBJECT ${SDK_SOURCES})
 target_include_directories(mx_sdk BEFORE PRIVATE ${SDK_INCLUDES})
 target_compile_options(mx_sdk PRIVATE -O2 ${SDK_FLAGS}
@@ -97,6 +122,9 @@ set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/hw/xhw_string.c PROP
 # ---- link ----
 add_executable(melee_x $<TARGET_OBJECTS:mx_sdk> $<TARGET_OBJECTS:mx_hw>)
 add_dependencies(melee_x game_objs)
+if(XBOX_LTO)
+    set_property(TARGET melee_x PROPERTY RULE_LAUNCH_LINK "python3 ${ROOT}/tools/xbox/thinlto_link.py")
+endif()
 set_property(TARGET melee_x APPEND PROPERTY LINK_DEPENDS ${GAME_OUT}/objects.stamp)
 target_link_libraries(melee_x
     mx_pbkit
@@ -116,6 +144,10 @@ target_link_options(melee_x PRIVATE
 # hot functions first, the rest in link order. A name the link doesn't have
 # (renamed since, or in a library) is skipped without a warning.
 set(ORDER_FILE ${CMAKE_CURRENT_SOURCE_DIR}/order.txt)
+if(XBOX_PGO STREQUAL "gen")
+    # nothing refers to the version word; tools/xbox/pgo_raw.py reads it
+    target_link_options(melee_x PRIVATE -include:___llvm_profile_raw_version)
+endif()
 if(EXISTS ${ORDER_FILE})
     target_link_options(melee_x PRIVATE "-order:@${ORDER_FILE}" -ignore:4037)
     set_property(TARGET melee_x APPEND PROPERTY LINK_DEPENDS ${ORDER_FILE})

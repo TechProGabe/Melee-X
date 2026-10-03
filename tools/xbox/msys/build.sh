@@ -18,7 +18,7 @@ msys="${MSYS2_ROOT:-/c/msys64}"
 rootu="$(cd "$root" && pwd)"
 # Git Bash's environment doesn't reach MSYS2's bash: hand the knobs over as arguments
 knobs=()
-for v in XBOX_CFLAGS XBOX_CMAKE_ARGS XBOX_NINJA_ARGS XBOX_FORCE XBOX_KEEP_TEMPS XBOX_NO_ICON NXDK_DIR; do
+for v in XBOX_CFLAGS XBOX_CMAKE_ARGS XBOX_NINJA_ARGS XBOX_FORCE XBOX_KEEP_TEMPS XBOX_NO_ICON XBOX_LTO XBOX_PGO NXDK_DIR; do
   [ -n "${!v:-}" ] && knobs+=("$v=${!v}")
 done
 # Run inside MSYS2's bash so msys cmake/ninja and mingw64 clang/python are used

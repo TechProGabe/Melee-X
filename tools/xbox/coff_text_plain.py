@@ -19,7 +19,9 @@ import sys
 def plain_text(path):
     with open(path, 'r+b') as f:
         data = bytearray(f.read())
-        _, nsec, _, symtab, nsyms, opt, _ = struct.unpack_from('<HHIIIHH', data, 0)
+        machine, nsec, _, symtab, nsyms, opt, _ = struct.unpack_from('<HHIIIHH', data, 0)
+        if machine != 0x14C:   # not an i386 COFF object (LLVM bitcode under XBOX_LTO)
+            return 0
         strtab = symtab + nsyms * 18
         changed = 0
         for i in range(nsec):

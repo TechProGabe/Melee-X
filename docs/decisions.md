@@ -388,6 +388,15 @@ puts each frame's hot paths far apart. xemu cannot show the gain (it has
 no caches): instruction counts are unchanged and the console's `[PERF]`
 decides. ICF stays off because folded functions would compare equal.
 
+ThinLTO and PGO are build knobs (`XBOX_LTO=1`, `XBOX_PGO=gen|<profdata>`,
+`docs/toolchain.md`), off by default until a console round picks them. Both
+run their backends outside lld-link (`tools/xbox/thinlto_link.py`) or
+without compiler-rt (`xbox/src/hw/xhw_pgo.c` dumps only the counters,
+`tools/xbox/pgo_raw.py` rebuilds the raw profile from the image), so the
+layout order and the freestanding image both stay. ThinLTO imports only
+functions of up to 10 instructions: more inlining paid in code size, which
+the console's 16 KB code cache pays for.
+
 ## Edits to imported code
 
 Imported files are kept as they are upstream except for these edits, each

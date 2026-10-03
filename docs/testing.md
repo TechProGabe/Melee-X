@@ -449,6 +449,7 @@ report.
 | `-DXHW_AUDIO_APU=0` | never use the xemu APU fallback |
 | `-DXHW_AUTOPAD=1` | scripted input from `D:\autopad.txt`: `<frame> <buttons/SHOT> [for N]` per line (`xhw_autopad.c`). `env NAME=VALUE` lines feed `getenv`, which reaches melee-pc's test hooks (below) |
 | `-DXSDK_ARAM_VERIFY=1` | compares every ARAM copy left on the disc (`ar.c`) with the image; `[AR] verify:` lines |
+| `XBOX_LTO=1`, `XBOX_PGO=gen\|<file>` | build knobs (not `-D` switches; `docs/toolchain.md`): ThinLTO over the game and sdk code; PGO instrumented (`[PGOC]` counters at each scene's exit) or optimized with a `.profdata` |
 | `-DXGX_CENSUS=1` | draw and display-list census: `[CENSUS]`/`[DLCC]` every 600 frames (`nv2a.c`, `gx_vtx.c`, `tools/xbox/census_report.py`) |
 | `-DXHW_PMC=1` | the console probe build's counters (`xhw_pmc.c`, with `-DXHW_PROF=1 -DXHW_AUTOPAD=1`): one pair of Pentium III performance-counter events per `[PERF]` period, summed per bucket, as `[PMC]` lines (ten pairs in turn; off in xemu). With `env MX_ABLATE=1` in the autopad script the ablation windows rotate every two periods (`[AB]` lines: FTZ, no shadow maps, no reflection, no back end, no display-list rechecks, no audio). `tools/xbox/probe_report.py`; `scenarios/probe`, `probe2` |
 | `-DXHW_PROF=1` | sampling profiler: `[PROF]` lines every 20 s (`xhw_prof.c`, `tools/xbox/prof_report.py`), and each match's whole profile at its end in `prof.bin` (with `-DXHW_AUTOPAD=1` also as `[PROFH]` lines; `prof_report.py --full`) |

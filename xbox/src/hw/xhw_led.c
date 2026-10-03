@@ -89,6 +89,7 @@ void xhw_led_timer(int seconds_left) {
 }
 void xhw_led_match_end(int outcome) {
     xhw_prof_match_end();   /* the game's only match-end hook: the whole-match profile goes out too */
+    xhw_pgo_dump("match end");   /* -DXHW_PGO=1: the counters so far */
     post(EV_END, outcome, 0);
 }
 void xhw_led_preview(void) { post(EV_PREVIEW, 0, 0); }
