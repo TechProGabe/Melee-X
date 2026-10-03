@@ -545,112 +545,10 @@ void HSD_JObjAnim(HSD_JObj* jobj)
     }
 }
 
-#ifdef TARGET_XBOX
-/* PORT: prefetch plans (docs/fps-plan.md B3; env MX_PREFETCH=1 in test
- * builds). The console waits on data misses for about half of the
- * simulation's cycles, and this walk is its largest part; prefetching the
- * next child or sibling (below) comes one node too late. Per tree root, a
- * plan lists the nodes the last walk visited in order, with the addresses
- * their animation reads (the joint, its AObj, the first FObjs and the
- * keyframe bytes they point at); the next walk prefetches the addresses of
- * the node PLAN_AHEAD places on. A node that differs from the plan's ends
- * it for this walk and has the next walk record a new one. Side tables
- * only, and only prefetches: nothing the walk computes changes. */
-#include <stdlib.h>
-#define PLAN_ROOTS 32
-#define PLAN_NODES 128
-#define PLAN_ADDRS 512
-#define PLAN_AHEAD 3
-typedef struct {
-    HSD_JObj* root;
-    int n, na, capped;   /* capped: the tree has more than PLAN_NODES nodes */
-    HSD_JObj* node[PLAN_NODES];
-    u16 start[PLAN_NODES + 1];
-    const void* addr[PLAN_ADDRS];
-} AnimPlan;
-static AnimPlan* s_plans;
-static AnimPlan* s_plan;   /* the walk's: replayed (s_plan_rec 0) or recorded */
-static int s_plan_pos, s_plan_rec, s_plan_on = -1;
-
-static void plan_begin(HSD_JObj* root)
-{
-    AnimPlan* p;
-    if (s_plan_on < 0) {
-        const char* e = getenv("MX_PREFETCH");
-        s_plan_on = e && atoi(e) && (s_plans = (AnimPlan*) calloc(PLAN_ROOTS, sizeof(AnimPlan))) != NULL;
-    }
-    s_plan = NULL;
-    if (!s_plan_on) {
-        return;
-    }
-    p = &s_plans[((uintptr_t) root >> 5) % PLAN_ROOTS];
-    s_plan_pos = 0;
-    s_plan_rec = p->root != root;
-    if (s_plan_rec) {
-        p->root = root;
-        p->n = p->na = p->capped = 0;
-    }
-    s_plan = p;
-}
-
-static void plan_add(AnimPlan* p, const void* a)
-{
-    if (a != NULL && p->na < PLAN_ADDRS) {
-        p->addr[p->na++] = a;
-    }
-}
-
-static void plan_node(HSD_JObj* jobj)
-{
-    AnimPlan* p = s_plan;
-    int i, k;
-    if (s_plan_rec) {
-        HSD_FObj* f;
-        if (p->n == PLAN_NODES) {
-            p->capped = 1;   /* the first PLAN_NODES nodes still get replayed */
-            s_plan = NULL;
-            return;
-        }
-        p->node[p->n] = jobj;
-        p->start[p->n] = (u16) p->na;
-        plan_add(p, jobj);
-        if (jobj->aobj != NULL) {
-            plan_add(p, jobj->aobj);
-            for (f = jobj->aobj->fobj, k = 0; f != NULL && k < 3; f = f->next, k++) {
-                plan_add(p, f);
-                plan_add(p, f->ad);
-            }
-        }
-        p->start[++p->n] = (u16) p->na;
-        return;
-    }
-    if (s_plan_pos >= p->n && p->capped) {
-        s_plan = NULL;   /* past the plan's end: the rest of the walk without it */
-        return;
-    }
-    if (s_plan_pos >= p->n || p->node[s_plan_pos] != jobj) {
-        p->root = NULL;   /* the tree changed: record again next time */
-        s_plan = NULL;
-        return;
-    }
-    i = s_plan_pos++ + PLAN_AHEAD;
-    if (i < p->n) {
-        for (k = p->start[i]; k < p->start[i + 1]; k++) {
-            HSD_PREFETCH(p->addr[k]);
-        }
-    }
-}
-#endif
-
 void JObjAnimAll(HSD_JObj* jobj)
 {
     HSD_JObj* child;
     if (jobj != NULL) {
-#ifdef TARGET_XBOX
-        if (s_plan != NULL) {
-            plan_node(jobj);   /* PORT: prefetch plans (above) */
-        }
-#endif
         /* PORT: the nodes walked next (xbox_game_prelude.h HSD_PREFETCH) */
         HSD_PREFETCH(jobj->child);
         HSD_PREFETCH(jobj->next);
@@ -671,13 +569,7 @@ void HSD_JObjAnimAll(HSD_JObj* jobj)
 {
     if (jobj != NULL) {
         HSD_AObjInitEndCallBack();
-#ifdef TARGET_XBOX
-        plan_begin(jobj);   /* PORT: prefetch plans (above) */
-#endif
         JObjAnimAll(jobj);
-#ifdef TARGET_XBOX
-        s_plan = NULL;
-#endif
         HSD_AObjInvokeCallBacks();
     }
 }

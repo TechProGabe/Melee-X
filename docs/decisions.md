@@ -400,25 +400,18 @@ the console's 16 KB code cache pays for.
 ### Stall candidates (round 1, 2026-10-03)
 
 Console round 1 (`docs/fps-plan.md` "Console round 1") picked three
-changes against the console's stalls. Each is off by default and switched
-on per boot from the autopad script, so round 2 measures them in one
-deploy; none changes what is simulated or drawn.
+changes against the console's stalls, off by default and switched on per
+boot from the autopad script so round 2 measured them in one deploy
+(`docs/fps-plan.md` "Console round 2"); none changes what is simulated or
+drawn. Only B2 remains.
 
-**The back end can run deferred (B4, `XGX_DEFER`, `env MX_DEFER=1`).**
-`xgx_draw` queues a record of each draw (the state groups its dirty bits
-name, the position and texture matrices its masks name, the layout when it
-changed) and `dq_flush` replays the records through the same back end on a
-state copy of its own, so HSD's walk and the back end each run for many
-draws in a row instead of taking turns in the 16 KB code cache. Window 4 of
-round 1 (back end off) made HSD's walk 15% faster per draw. The groups are
-exactly what `gx_state.c` and `gx_tex.c` mark dirty, and `XgxState` gained
-`texmtx_mask` (texture matrices, as `posmtx_mask` already did for position
-matrices) so a record copies one matrix and not thirty. Whatever reaches the
-GPU or frees memory flushes first: clears, EFB copies and reads, the
-Z-texture mask, texture destroys (handles are reused), the present, and
-every wait for the GPU. The vertices stay where the front end put them; a
-pushbuffer restart in the middle of a replay keeps the vertex ring's
-position, because later records still point into it.
+**The back end does not run deferred (B4, tried and removed).** A queue of
+draw records (the state groups each draw's dirty bits name) replayed in
+batches, so HSD's walk and the back end would each run many draws in a
+row instead of taking turns in the 16 KB code cache (round 1's window 4,
+back end off, made the walk 15% faster per draw). On the console it lost 6%
+(round 2, r2d): the copies into and out of the records cost 3 ms a frame
+and saved 0.7 ms of drawing.
 
 **MEM1 can sit on 4 MB pages (B2, `XSDK_MEM1_LARGE`, `env MX_MEM1_LARGE=6`).**
 The P3's data TLB covers 256 KB with 4 KB pages; MEM1's two ranges a 4-CPU
@@ -431,12 +424,11 @@ them go through a bounce buffer (`xhw_file_read`), and the entries are
 removed before `XLaunchXBE`. The P6 cannot count DTLB misses, so only the
 console A/B decides.
 
-**Animation walks can prefetch by plan (B3, `env MX_PREFETCH=1`).** Data
-misses are about half of the simulation's cycles, and `JObjAnimAll` is its
-largest part. Per tree root, a side table keeps the nodes the last walk
-visited and the addresses their animation reads (joint, AObj, the first
-three FObjs and their keyframe bytes); the next walk prefetches three nodes
-ahead and drops the plan at the first node that differs.
+**Animation walks are not prefetched by plan (B3, tried and removed).** A
+side table per tree root of the nodes the last walk visited and the
+addresses their animation reads, prefetched three nodes ahead. Round 2
+(r2f): +1.3% fps, within the noise, and the simulation it aimed at 2.4%
+slower.
 
 **Screenshots compare across builds by lockstep (`env MX_LOCKSTEP=1`).**
 Gating a speed-up by screenshot needs the shots of both builds at the same
@@ -785,12 +777,6 @@ marked `PORT:`:
   thread at once instead of after two thread switches to the ARQ worker
   (`docs/fps-plan.md` C4). Same callbacks, same order; the frame-boundary
   delivery already runs them on the game thread.
-- `src/sysdolphin/baselib/jobj.c` (`HSD_JObjAnimAll`, `JObjAnimAll`), under
-  `TARGET_XBOX`: prefetch plans (`docs/fps-plan.md` B3), on only with
-  `env MX_PREFETCH=1` in a test build's autopad script. A side table per
-  tree root records the walk's nodes and the addresses their animation
-  reads, and the next walk prefetches them three nodes ahead. Prefetches
-  only; the walk and its results are unchanged.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after
