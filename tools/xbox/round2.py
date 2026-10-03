@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""Console round 2 (docs/fps-plan.md): build variants in folders of their own,
+chained so one launch runs them all.
+
+  tools/xbox/round2.py stage BUILDS     # BUILDS/<build>.xbe: head, lto, ltopgo, base
+  tools/xbox/round2.py upload           # FTP every folder (MX_FTP_HOST)
+  tools/xbox/round2.py watch            # save each run's boot.log as it ends
+  tools/xbox/round2.py report           # fps and ms a frame per bucket, per run
+  tools/xbox/round2.py clean            # take the scripts and the r2 folders off
+
+Each folder F:\\Applications\\Melee-X-r2?\\ holds a test build (-DXHW_AUTOPAD=1)
+and its autopad.txt; test builds take the disc image from
+F:\\Applications\\Melee-X\\. A script ends with env MX_NEXT_XBE=<the next
+folder>: 12 s after its match the next build boots. The last run is the
+baseline (dev, no chaining) in Melee-X itself. Every boot keeps only the
+previous boot's log (boot_prev.log), so `watch` pulls while the chain runs.
+Staged files go to $MX_HW/stage-r2, logs to $MX_HW/logs-r2."""
+import ftplib
+import io
+import os
+import re
+import shutil
+import sys
+import time
+from pathlib import Path
+
+HW = Path(os.environ.get('MX_HW', Path.home() / 'xemu' / 'hw'))
+STAGE = HW / 'stage-r2'
+LOGS = HW / 'logs-r2'
+UDATA = '/E/UDATA/4d580001'
+APPS = '/F/Applications'
+
+FOD = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_DEBUG_VS=cpu4',
+       'env MELEE_DEBUG_VS_TIME=120', 'env MELEE_SEED=1']
+FD = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=32', 'env MELEE_DEBUG_VS_CHARS=2,8',
+      'env MELEE_DEBUG_VS_TIME=60', 'env MELEE_SEED=1']
+ALL = {'MX_DEFER': '1', 'MX_MEM1_LARGE': '6', 'MX_PREFETCH': '1'}
+# folder, build, scenario, switches: in the order they run
+CHAIN = [
+    ('Melee-X-r2a', 'head', 'fod', {}),
+    ('Melee-X-r2b', 'lto', 'fod', {}),
+    ('Melee-X-r2c', 'ltopgo', 'fod', {}),
+    ('Melee-X-r2d', 'ltopgo', 'fod', {'MX_DEFER': '1'}),
+    ('Melee-X-r2e', 'ltopgo', 'fod', {'MX_MEM1_LARGE': '6'}),
+    ('Melee-X-r2f', 'ltopgo', 'fod', {'MX_PREFETCH': '1'}),
+    ('Melee-X-r2g', 'ltopgo', 'fod', ALL),
+    ('Melee-X-r2h', 'head', 'fd', {}),
+    ('Melee-X-r2i', 'ltopgo', 'fd', {}),
+    ('Melee-X-r2j', 'ltopgo', 'fd', ALL),
+    ('Melee-X', 'base', 'fod', {}),
+]
+
+
+def script(i):
+    folder, build, scen, sw = CHAIN[i]
+    lines = [f'# docs/fps-plan.md round 2, run {i + 1} of {len(CHAIN)}: {build}, {scen}, '
+             + (' '.join(f'{k}={v}' for k, v in sw.items()) or 'no switches')]
+    lines += FOD if scen == 'fod' else FD
+    lines += [f'env {k}={v}' for k, v in sw.items()]
+    if i + 1 < len(CHAIN):
+        lines.append(f'env MX_NEXT_XBE=F:\\Applications\\{CHAIN[i + 1][0]}\\default.xbe')
+    return '\n'.join(lines) + '\n'
+
+
+def connect():
+    f = ftplib.FTP(os.environ.get('MX_FTP_HOST', 'xbox'), timeout=30)
+    f.login('xbox', 'xbox')
+    return f
+
+
+def stage(builds):
+    builds = Path(builds)
+    for d in (STAGE, LOGS):   # a new round: the last round's logs would read as this one's
+        if d.exists():
+            shutil.rmtree(d)
+    for i, (folder, build, _, _) in enumerate(CHAIN):
+        d = STAGE / folder
+        d.mkdir(parents=True)
+        shutil.copy2(builds / f'{build}.xbe', d / 'default.xbe')
+        (d / 'autopad.txt').write_bytes(script(i).replace('\n', '\r\n').encode())
+    print(f'staged {len(CHAIN)} folders in {STAGE}; the first to launch: {CHAIN[0][0]}')
+
+
+def upload():
+    f = connect()
+    f.cwd(UDATA)   # the console's FTP server lists the current directory whatever path NLST is given
+    for name in f.nlst():   # the logs of earlier boots would read as this round's (pull them first)
+        name = name.rsplit('/', 1)[-1]
+        if name.startswith('boot') and name.endswith('.log'):
+            f.delete(f'{UDATA}/{name}')
+    for folder, _, _, _ in CHAIN:
+        d = f'{APPS}/{folder}'
+        try:
+            f.mkd(d)
+        except ftplib.error_perm:
+            pass
+        for name in ('default.xbe', 'autopad.txt'):
+            data = (STAGE / folder / name).read_bytes()
+            f.storbinary(f'STOR {d}/{name}', io.BytesIO(data))
+            back = io.BytesIO()
+            f.retrbinary(f'RETR {d}/{name}', back.write)
+            if back.getvalue() != data:
+                sys.exit(f'{d}/{name}: mismatch after upload')
+        print(f'{folder}: ok')
+    f.quit()
+
+
+def run_name(text):
+    """The chain folder a log belongs to, from its [BOOT] image line."""
+    m = re.search(r'\[BOOT\] image \S+ (\S+)', text)
+    if not m:
+        return 'Melee-X'   # the baseline logs no path
+    return m[1].rstrip('\\').split('\\')[-2]
+
+
+def watch():
+    LOGS.mkdir(parents=True, exist_ok=True)
+    want = {c[0] for c in CHAIN}
+    while True:
+        try:
+            f = connect()
+            for name in ('boot_prev.log', 'boot.log'):
+                buf = io.BytesIO()
+                try:
+                    f.retrbinary(f'RETR {UDATA}/{name}', buf.write)
+                except ftplib.error_perm:
+                    continue
+                text = buf.getvalue().decode('utf-8', 'replace')
+                if '[GAME] end banner done' not in text:
+                    continue
+                run = run_name(text)
+                out = LOGS / f'{run}.log'
+                if run in want and (not out.exists() or out.stat().st_size < len(buf.getvalue())):
+                    out.write_bytes(buf.getvalue())
+                    print(f'{time.strftime("%H:%M:%S")} saved {out.name} ({len(buf.getvalue())} bytes)', flush=True)
+            f.quit()
+        except (OSError, EOFError, ftplib.Error) as e:
+            print(f'{time.strftime("%H:%M:%S")} ftp: {e}', flush=True)
+        done = {p.stem for p in LOGS.glob('*.log')}
+        if want <= done:
+            print('all runs saved', flush=True)
+            return
+        time.sleep(15)
+
+
+PERF = re.compile(r'\[PERF\] (\d+) frames ([\d.]+) fps \| ms/frame (.*?) \| ([\d.]+) ticks per render \| audio (\d+)% '
+                  r'\| (\d+) draws')
+
+
+def match_periods(text):
+    """[PERF] periods of the match: after the versus scene's entry (its first
+    period holds the loading), up to the match's end."""
+    rows, on, first = [], False, False
+    for line in text.splitlines():
+        if line.startswith('[SCENE] enter:') and 'scene 2 ' in line:
+            on, first = True, True
+        elif line.startswith('[GAME] match ends'):
+            on = False
+        elif on and (m := PERF.search(line)):
+            if first:
+                first = False
+                continue
+            b = dict((k, float(v)) for k, v in re.findall(r'(\w+) ([\d.]+)', m[3]))
+            rows.append((int(m[1]), float(m[2]), b, float(m[4]), int(m[6])))
+    return rows
+
+
+def report():
+    print(f'{"run":12s} {"build":7s} {"scen":4s} {"switches":28s} {"n":>3s} {"fps":>6s} {"sim":>5s} {"rend":>5s} '
+          f'{"dlist":>5s} {"draw":>5s} {"gpu":>5s} {"draws":>6s} {"tick/r":>6s}')
+    for folder, build, scen, sw in CHAIN:
+        p = LOGS / f'{folder}.log'
+        if not p.exists():
+            print(f'{folder:12s} (no log)')
+            continue
+        rows = match_periods(p.read_text('utf-8', 'replace'))
+        if not rows:
+            print(f'{folder:12s} (no match periods)')
+            continue
+        frames = sum(r[0] for r in rows)
+        secs = sum(r[0] / r[1] for r in rows if r[1])
+        ms = {k: sum(r[0] * r[2].get(k, 0) for r in rows) / frames for k in ('sim', 'render', 'dlist', 'draw', 'gpu')}
+        draws = sum(r[0] * r[4] for r in rows) / frames
+        ticks = sum(r[0] * r[3] for r in rows) / frames
+        swn = ','.join(k[3:].lower() for k in sw) or '-'
+        print(f'{folder:12s} {build:7s} {scen:4s} {swn:28s} {len(rows):3d} {frames / secs:6.2f} {ms["sim"]:5.2f} '
+              f'{ms["render"]:5.2f} {ms["dlist"]:5.2f} {ms["draw"]:5.2f} {ms["gpu"]:5.2f} {draws:6.0f} {ticks:6.2f}')
+
+
+def clean():
+    f = connect()
+    for folder, _, _, _ in CHAIN:
+        d = f'{APPS}/{folder}'
+        for name in ('autopad.txt',) if folder == 'Melee-X' else ('default.xbe', 'autopad.txt'):
+            try:
+                f.delete(f'{d}/{name}')
+            except ftplib.error_perm:
+                pass
+        if folder != 'Melee-X':
+            try:
+                f.rmd(d)
+            except ftplib.error_perm:
+                pass
+    f.quit()
+    print('round 2 scripts and folders removed (Melee-X keeps the baseline XBE)')
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ''
+    if cmd == 'stage' and len(sys.argv) == 3:
+        stage(sys.argv[2])
+    elif cmd in ('upload', 'watch', 'report', 'clean'):
+        globals()[cmd]()
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == '__main__':
+    main()

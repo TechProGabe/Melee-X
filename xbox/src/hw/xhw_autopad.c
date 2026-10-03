@@ -18,7 +18,12 @@
  * "env NAME=VALUE" lines set what getenv() returns, which reaches melee-pc's
  * test hooks: MELEE_BOOT_SCENE=vs, MELEE_DEBUG_VS_STAGE=<StKind>,
  * MELEE_DEBUG_VS=cpu4, MELEE_SEED=<n>, MELEE_NO_ATTRACT=1 (grep src/ for
- * getenv). Without the script, getenv() returns NULL as before. */
+ * getenv). Without the script, getenv() returns NULL as before.
+ *
+ * "env MX_NEXT_XBE=F:\Applications\<folder>\default.xbe": 12 s after the
+ * match ends, launch that XBE (with its own folder's script). A console
+ * round chains its builds this way and runs unattended; each boot keeps the
+ * one before's log as boot_prev.log (docs/fps-plan.md, round 2). */
 #include <windows.h>
 #include <stdlib.h>
 #include <string.h>
@@ -145,10 +150,23 @@ void xhw_autopad_load(void) {
     xhw_logf("[AUTOPAD] %d events", s_nev);
 }
 
+static DWORD s_match_end;   /* GetTickCount at the match's end, 0 before */
+
+void xhw_autopad_match_end(void) {
+    if (!s_match_end) s_match_end = GetTickCount() | 1;
+}
+
 void xhw_autopad_apply(int port, xhw_pad* out) {
     unsigned f = xhw_frame_count();
     int i;
-    if (port != 0 || !s_nev) return;
+    if (port != 0) return;
+    /* before the events: a round 2 script has only env lines */
+    if (s_match_end && GetTickCount() - s_match_end > 12000) {
+        const char* next = getenv("MX_NEXT_XBE");
+        if (next) xhw_launch_xbe(next);
+        s_match_end = 0;
+    }
+    if (!s_nev) return;
     out->connected = 1;
     for (i = 0; i < s_nev; i++) {
         Event* e = &s_ev[i];
@@ -176,4 +194,5 @@ void xhw_autopad_apply(int port, xhw_pad* out) {
     (void)port;
     (void)out;
 }
+void xhw_autopad_match_end(void) {}
 #endif

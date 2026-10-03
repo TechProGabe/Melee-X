@@ -37,6 +37,9 @@ void xgx_shot_next(void);   /* nv2a.c: xhw_fbdump_file the next presented frame 
 struct xhw_pad;
 void xhw_autopad_load(void);
 void xhw_autopad_apply(int port, struct xhw_pad* out);
+void xhw_autopad_match_end(void);   /* env MX_NEXT_XBE: the next build of a console round, 12 s on */
+/* xhw_main.c: launch another XBE by its F:\ or E:\ path (a console round's next build) */
+void xhw_launch_xbe(const char* dos_path) __attribute__((noreturn));
 
 /* xhw_splash.c: "TechProGabe Presents..." title card */
 void xhw_splash_show(void);
