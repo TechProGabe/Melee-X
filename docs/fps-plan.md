@@ -144,7 +144,7 @@ Picked by the conditions under "B. Stalls":
 
 ### Console round 2 (2026-10-03)
 
-Eleven test builds chained on the console (`tools/xbox/round2.py`), one
+Eleven test builds chained on the console (`tools/xbox/console_round.py 2`), one
 match each: Fountain 4-CPU 120 s, Final Destination 1v1 60 s, seed 1.
 Match periods only; ms a frame; `[SIMH]` the same in every build.
 
