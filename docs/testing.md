@@ -14,6 +14,7 @@ tools/xbox/test_card_endian.py   # memory-card files: field tables vs the game's
 tools/xbox/test_pool.py          # nv2a.c's pool allocator: random allocations and frees, block-list invariants
 tools/xbox/test_anim_mtx.py      # HSD keyframe interpreter, HSD_MtxSRT, envelope blend vs the code before the rewrites [--full]
 tools/xbox/test_audio_mix.py     # src/pc/audio.c's voice mixer (block decoder, SSE1), output clamp and reverb vs the code before
+tools/xbox/test_mplib.py         # stage collision's line rejects (mplib.c) vs the line tests before them, random stages [rounds]
 ```
 
 CI (`.github/workflows/build.yml`, started by hand; it also builds the
@@ -73,6 +74,27 @@ may carry flags and `CFLAGS` adds more, so the Xbox's code generation
 (i686, scalar SSE floats, no SSE2) can be checked on Windows with MSYS2:
 `CC="clang --target=i686-w64-mingw32 --sysroot=C:/msys64/mingw32"
 CFLAGS="-march=pentium3 -msse -mfpmath=sse"`.
+
+`test_mplib.py` guards the per-line rejects in stage collision
+(`src/melee/mp/mplib.c`). The file needs the rest of the game, so the
+script cuts the functions it tests out of it by name (the line loops, the
+intersection tests, `mpLib_8004ED5C`, `mpRemap2d`, the bounding checks and
+the `mpLineBox` helpers) and builds them next to `tests/xbox/mplib_ref.c`,
+the same functions before the rejects, on shared stage globals. Each query
+runs the eight line loops (`mpCheckFloor`, `mpCheckLeftWall`,
+`mpCheckRightWall`, their `Remap` variants, `mpLib_800511A4_RightWall`,
+`mpLib_800515A0_LeftWall`) through both, with outputs that are written or
+not, and compares the return, the outputs, the joints' flags,
+`didCheckBounding` and `mpCheckFloor`'s callback calls bit for bit. The
+stages are a Fountain of Dreams-like outline with moving platforms (and
+fighter-shaped queries: floor probes, ECB sweeps, ECB edges), random
+polylines with scrambled flags, links and ranges, chains of short floor
+lines probed across their ends (where `mpLib_8004ED5C` lengthens most), and
+adversarial ones (null, near-vertical and near-horizontal lines,
+coordinates at the guard, huge ones, infinities, NaNs, queries on the
+margins +- a few ulps). It prints the share of line tests the rejects skip
+on the Fountain-like stage. `CC=i686-w64-mingw32-gcc CFLAGS="-march=pentium3
+-mfpmath=sse"` runs it with x87 doubles, as on the Xbox.
 
 ## Running it
 
