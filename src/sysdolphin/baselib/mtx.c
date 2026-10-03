@@ -155,6 +155,54 @@ void HSD_MtxInverseConcat(Mtx inv, Mtx src, Mtx dest)
     }
 }
 
+#if defined(TARGET_XBOX) && defined(__SSE__)
+/* PORT: the nine cofactors as three rows of four lanes, each lane the
+ * scalar code's (a * b - c * d), negated where it negates, times 1 / det;
+ * the determinant as before, from the same elements. The rows are read
+ * once, as 16-byte loads: the scalar code read each element back from a
+ * matrix the caller had just stored with 16-byte stores (C_MTXConcat), and
+ * the P3 can't forward those to 4-byte loads at other offsets. Same bits
+ * (tests/xbox/test_pobj_mtx.c against the code below); src may be dest. */
+void HSD_MtxInverseTranspose(Mtx src, Mtx dest)
+{
+    typedef u32 Bits __attribute__((vector_size(16)));
+    const HSD_MtxRow r0 = *(const HSD_MtxRow*) src[0];
+    const HSD_MtxRow r1 = *(const HSD_MtxRow*) src[1];
+    const HSD_MtxRow r2 = *(const HSD_MtxRow*) src[2];
+    const HSD_MtxRow zero = { 0.0f, 0.0f, 0.0f, 0.0f };
+    const Bits pmp = { 0, 0x80000000u, 0, 0 };
+    const Bits mpm = { 0x80000000u, 0, 0x80000000u, 0 };
+    HSD_MtxRow s0, s1, s2, t0, t1, t2, d0, d1, d2, dv;
+    f32 det = r0[0] * r1[1] * r2[2] + r0[1] * r1[2] * r2[0] +
+              r0[2] * r1[0] * r2[1] - r2[0] * r1[1] * r0[2] -
+              r1[0] * r0[1] * r2[2] - r0[0] * r2[1] * r1[2];
+
+    if (fabsf_bitwise(det) < EPSILON) {
+        if (src != dest) {
+            MTXCopy(src, dest);
+        }
+        return;
+    }
+    det = 1.0f / det;
+    dv = (HSD_MtxRow) { det, det, det, det };
+
+    /* s = (m[1], m[0], m[0]), t = (m[2], m[2], m[1]) of each row; the
+     * fourth lane repeats the third and is replaced by +0 at the end (a
+     * shuffle: an integer AND would leave the SSE1 registers) */
+    s0 = __builtin_shufflevector(r0, r0, 1, 0, 0, 0);
+    s1 = __builtin_shufflevector(r1, r1, 1, 0, 0, 0);
+    s2 = __builtin_shufflevector(r2, r2, 1, 0, 0, 0);
+    t0 = __builtin_shufflevector(r0, r0, 2, 2, 1, 1);
+    t1 = __builtin_shufflevector(r1, r1, 2, 2, 1, 1);
+    t2 = __builtin_shufflevector(r2, r2, 2, 2, 1, 1);
+    d0 = (HSD_MtxRow) ((Bits) (s1 * t2 - s2 * t1) ^ pmp) * dv;
+    d1 = (HSD_MtxRow) ((Bits) (s0 * t2 - s2 * t0) ^ mpm) * dv;
+    d2 = (HSD_MtxRow) ((Bits) (s0 * t1 - s1 * t0) ^ pmp) * dv;
+    *(HSD_MtxRow*) dest[0] = __builtin_shufflevector(d0, zero, 0, 1, 2, 4);
+    *(HSD_MtxRow*) dest[1] = __builtin_shufflevector(d1, zero, 0, 1, 2, 4);
+    *(HSD_MtxRow*) dest[2] = __builtin_shufflevector(d2, zero, 0, 1, 2, 4);
+}
+#else
 void HSD_MtxInverseTranspose(Mtx src, Mtx dest)
 {
     Mtx* m;
@@ -200,6 +248,7 @@ void HSD_MtxInverseTranspose(Mtx src, Mtx dest)
         dest[2][3] = 0;
     }
 }
+#endif
 
 static inline f32 calcVal(f32 x, f32 y)
 {

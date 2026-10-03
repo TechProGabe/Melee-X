@@ -528,6 +528,75 @@ marked `PORT:`:
   u32 to float is an x87 round trip through memory on the Pentium III.
   Same bits as before (`tools/xbox/test_audio_mix.py`, against
   `tests/xbox/audio_mix_ref.c`).
+- `src/pc/audio.c`, the mixer thread's per-sample loops for the Pentium III
+  (fps-plan item E; switching audio off made the game's other buckets ~5%
+  faster on the console besides the mixer's own 4.7%), same bits
+  (`test_audio_mix.py`, now also built as plain C with `PC_AUDIO_SCALAR`
+  and checked for the output clamp):
+  - `decode_samples`: ADPCM decodes the rest of a frame (up to the end
+    address or the count) in one run without the per-sample header, bounds
+    and end checks, and its sum stays in s32 (the multiple of 2048 leaves
+    the shift; the two products are halved with their carry), so no 64-bit
+    adds; about 35 instructions a sample on i686 instead of 65.
+  - `mix_voice`: a frame's samples are decoded in one call and its source
+    positions (`src_steps`) worked out first, then the float math runs four
+    outputs a step in SSE1 (`src_interp`, `mix_out`, `mix_out_dry`), each
+    lane the scalar operations in the same order; integers enter the lanes
+    through float bias bits instead of a `cvtsi2ss` each, and the volume
+    ramp steps in float (exact integers). Silent voices only decode and take
+    their final state in closed form. It replaced a `src_next()` call per
+    source sample. Frames that would decode more than `SRC_MAX` samples keep
+    the sample-at-a-time loop (`mix_voice_stepped`).
+  - `render_frame`'s clamp (`clamp_frame`) in SSE1 with the constants as
+    the first operand, so a NaN passes through as in the scalar compares
+    (the SSE2 path, not built on the Xbox, turned one into 1.0); the frame
+    buffers are 16-byte aligned.
+  - `axfx_reverb_run` (the stage reverb on aux A): the samples up to the
+    next wrap of any of a channel's six lines run as one stretch, a pointer
+    per line, without the six wrap checks per sample (~110 instructions a
+    sample and channel on i686, now ~67); same float operations in the
+    same order, checked against the per-sample network.
+- `src/melee/mp/mplib.c`: the stage-collision line loops skip, under
+  `TARGET_XBOX`, a line (or a vertex) whose full test could only fail its
+  bounding test (`mpLineBox`, `mpEdgeBoxOut`). They tested every enabled
+  line of every near joint: `mpLib_8004ED5C`'s two link lookups, square
+  root and four divisions, `mpRemap2d`'s double division, a call to
+  `mpLineIntersection*`; ~10% of the simulation on the console (v50).
+  Exact, because each skip needs a line strictly outside the query's box
+  where `mpLineIntersection` (strict compares) and `mpLineIntersectionH`/`V`
+  (strict on one axis, 0.0001 on the other) return false at their first
+  test and write nothing; nothing else between the skip and the test has a
+  side effect (`mpCheckFloor`'s callback runs before it). The query box is
+  NaN (no skip) unless its coordinates are inside +-2^16, so roundings are
+  under 2^-6 there; `fl(z) < f` implies `z < f`, and rounding is monotone:
+  - `mpCheckLeftWall`/`RightWall`, the `Remap` variants on a joint without
+    B8-B10 (the query is a-b itself): the vertices as tested, margin 1.
+  - `mpCheckFloor`: the box is of the raw vertices, margin 4, the query's y
+    less `y_offset`, and only for lines at least 1 long (the same
+    `len2` as `mpLib_8004ED5C`'s, finite). With d = sqrtf(len2) >= 1,
+    |dx|/d <= 1 + 2^-22, so the start moves by at most 1.00001; the end
+    moves by (x1 - X0)/d where |x1 - X0| <= |x0 - x1| + 2|e0| (X0 rounds to
+    within |e0| of x0 + e0, since x0 is a float): at most 3.00001. Past
+    rounding (or a vertex beyond 2^20, far from any query in range), the
+    lengthened line is still over 0.7 clear.
+  - The `Remap` variants on a moving joint: a is first remapped by
+    `mpRemap2d`, which moves it by at most |b0 - a0| + |b1 - a1| (t is
+    clamped to [0, 1]; NaN only with a NaN input) or |b0 - a0| + |b1 - a0|
+    (its other branch): `mpRemapReach` adds the three, plus 1, and the box
+    is widened by that (skipped above 2^17, and infinite or NaN reaches
+    never skip). Clear by over 1.9.
+  - `mpLib_800511A4_RightWall`/`800515A0_LeftWall`: per vertex, segment
+    (last position remapped from edge a-b to c-d) to (position) against
+    edge c-d. The position is compared with c-d's box exactly as
+    `mpLineIntersection` does, the last position with that box widened by
+    the remap's reach; a remapped NaN or infinity fails `SQ(vdx) + SQ(vdy)
+    > 0.001F` or the bounding test anyway. Clear by over 0.6.
+  Checked by `tools/xbox/test_mplib.py` against the functions before
+  (`tests/xbox/mplib_ref.c`): returns, outputs, joint flags and callback
+  calls bit for bit, x86-64 and 32-bit x87. On a Fountain of Dreams-like
+  stage with fighter-shaped queries it skips 83% of `mpCheckFloor`'s line
+  tests, 81% of `mpCheckFloorRemap`'s, 99% of the walls' and 93% of the
+  vertex sweeps'.
 - `src/melee/mp/mpisland.c` (`mpIsland_8005A728`, `mpIsland_8005B004`): the
   1.5 KB `visited` arrays, which the code `memzero`s itself, are exempt from
   `-ftrivial-auto-var-init=zero` (it zeroed them a second time per call).
@@ -641,7 +710,28 @@ marked `PORT:`:
   set up reuses its position and normal matrices instead of blending,
   concatenating and inverting again (~1250 envelope matrices a frame in a
   4-CPU match, ~630 distinct). The same bits and the same GX loads; the memo
-  is cleared before each DObj's PObjs, where no joint can move.
+  is cleared before each DObj's PObjs, where no joint can move. After v50:
+  a new envelope's position and normal matrices are computed straight into
+  the memo entry that keeps them (copying them in was a 144-byte `memcpy`
+  and two `MTXCopy` calls that read back 16-byte stores still in flight,
+  ~2% of the v50 console profile); prefetch hints for the next list entry's
+  envelope and for a new envelope's joints (flags, matrix and envelope
+  matrix pointer lines); the setup functions' matrix locals and the memo
+  key are `__attribute__((uninitialized))` (`POBJ_NOINIT`): each is written
+  before it is read, and `-ftrivial-auto-var-init` zeroed ~240 bytes with
+  unaligned 16-byte stores per envelope matrix. The outer `mtx` that
+  `_HSD_mkEnvelopeModelNodeMtx` may leave unwritten (a singular
+  `MTXInverse`) keeps its zeroing. Checked against the upstream functions
+  by `tools/xbox/test_pobj_mtx.py` (`tests/xbox/pobj_mtx_ref.c`).
+- `src/sysdolphin/baselib/mtx.c` (`HSD_MtxInverseTranspose`), after v50:
+  the nine cofactors as three SSE rows, each lane the scalar code's
+  `(a * b - c * d)`, negated where it negates (a sign flip, as before),
+  times `1 / det`; the determinant is the same scalar expression of the
+  same elements. Each row is read once as a 16-byte load: the scalar code
+  read elements back at 4-byte offsets from a matrix `C_MTXConcat` had just
+  stored 16 bytes at a time, which the P3 can't forward. Same bits
+  (`test_pobj_mtx.py`, 4M random matrices with singular and special ones,
+  in place and not); a NaN only has to stay a NaN.
 - `src/melee/gr/grbigblue.c` (`grBb_YakumonoParam`), v36: the stage's
   parameters from the disc are `DISC_STRUCT` (and `x134_translate` a
   `DiscVec3`). Every other stage's parameter struct already was; this one

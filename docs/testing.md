@@ -13,7 +13,9 @@ tools/xbox/test_rc.py            # TEV -> combiners: no-swizzle programs unchang
 tools/xbox/test_card_endian.py   # memory-card files: field tables vs the game's structs, big-endian <-> native
 tools/xbox/test_pool.py          # nv2a.c's pool allocator: random allocations and frees, block-list invariants
 tools/xbox/test_anim_mtx.py      # HSD keyframe interpreter, HSD_MtxSRT, envelope blend vs the code before the rewrites [--full]
-tools/xbox/test_audio_mix.py     # src/pc/audio.c's voice mixer (block decoder) vs the per-sample code before it, random voices
+tools/xbox/test_audio_mix.py     # src/pc/audio.c's voice mixer (block decoder, SSE1), output clamp and reverb vs the code before
+tools/xbox/test_mplib.py         # stage collision's line rejects (mplib.c) vs the line tests before them, random stages [rounds]
+tools/xbox/test_pobj_mtx.py      # PObjSetupMtx (envelope memo, prefetches), SSE HSD_MtxInverseTranspose vs upstream
 ```
 
 CI (`.github/workflows/build.yml`, started by hand; it also builds the
@@ -55,6 +57,20 @@ must have the same bits; a NaN only has to stay a NaN (which NaN operand's
 payload x86 keeps depends on the operand order the compiler picks). A new
 rewrite in this code needs its reference added there first.
 
+`test_pobj_mtx.py` does the same for the matrix setup of HSD's PObjs. It
+builds the current `pobj.c` and `mtx.c` with stubs for GX, the perf
+counters and the joint calls, next to `tests/xbox/pobj_mtx_ref.c`, the
+upstream setup functions (no envelope memo, no fused blend) and
+`HSD_MtxInverseTranspose` before its SSE rewrite. It compares the inverse
+transpose on 4M random matrices (singular and near-singular ones, in place
+and not), then draws 300000 random DObjs the way `HSD_DObjDisp` does
+(memo reset, then rigid, shared-vertex, shape-anim and envelope PObjs whose
+envelopes repeat as separate objects, with and without lighting,
+reflection and highlight texgens, a model node matrix, dirty joints) through
+both: every GX matrix load (slot and the 12 words), `GXSetCurrentMtx`,
+envelope-blend count and joint update in order, the matrix marks, the
+joints and the matrix-load count must agree.
+
 `test_audio_mix.py` does the same for the software AX mixer: it builds
 `src/pc/audio.c` (with the Xbox's SDL3 shim and stubs) next to
 `tests/xbox/audio_mix_ref.c`, the per-sample `next_sample()` and
@@ -64,7 +80,36 @@ formats, addresses across the end of ARAM, end and loop addresses on header
 nibbles and above the end (HPS), extreme coefficients and histories, ratios
 0, 1.0, up to 4.0 and unclamped ones that wrap `frac`, volume ramps through
 0 and 32767, and every dry/aux send combination. The dry mix, both aux
-busses and the whole `Voice` must have the same bits.
+busses and the whole `Voice` must have the same bits. Then `render_frame`'s
+output clamp against the scalar loop, NaNs and infinities included, and the
+aux reverb against its per-sample network (random settings, lines and
+positions; the output, the lines and the filter state). It is
+built twice, with the SSE1 loops and as plain C (`PC_AUDIO_SCALAR`); `CC`
+may carry flags and `CFLAGS` adds more, so the Xbox's code generation
+(i686, scalar SSE floats, no SSE2) can be checked on Windows with MSYS2:
+`CC="clang --target=i686-w64-mingw32 --sysroot=C:/msys64/mingw32"
+CFLAGS="-march=pentium3 -msse -mfpmath=sse"`.
+
+`test_mplib.py` guards the per-line rejects in stage collision
+(`src/melee/mp/mplib.c`). The file needs the rest of the game, so the
+script cuts the functions it tests out of it by name (the line loops, the
+intersection tests, `mpLib_8004ED5C`, `mpRemap2d`, the bounding checks and
+the `mpLineBox` helpers) and builds them next to `tests/xbox/mplib_ref.c`,
+the same functions before the rejects, on shared stage globals. Each query
+runs the eight line loops (`mpCheckFloor`, `mpCheckLeftWall`,
+`mpCheckRightWall`, their `Remap` variants, `mpLib_800511A4_RightWall`,
+`mpLib_800515A0_LeftWall`) through both, with outputs that are written or
+not, and compares the return, the outputs, the joints' flags,
+`didCheckBounding` and `mpCheckFloor`'s callback calls bit for bit. The
+stages are a Fountain of Dreams-like outline with moving platforms (and
+fighter-shaped queries: floor probes, ECB sweeps, ECB edges), random
+polylines with scrambled flags, links and ranges, chains of short floor
+lines probed across their ends (where `mpLib_8004ED5C` lengthens most), and
+adversarial ones (null, near-vertical and near-horizontal lines,
+coordinates at the guard, huge ones, infinities, NaNs, queries on the
+margins +- a few ulps). It prints the share of line tests the rejects skip
+on the Fountain-like stage. `CC=i686-w64-mingw32-gcc CFLAGS="-march=pentium3
+-mfpmath=sse"` runs it with x87 doubles, as on the Xbox.
 
 ## Running it
 
