@@ -116,13 +116,15 @@ Press **Back** on the title screen ("Press Start") and the settings menu opens. 
 | Widescreen (16:9) | 16:9 at 480i/480p when the dashboard is set to widescreen. After a restart |
 | Frame-rate counter | shows the fps in the top left corner, right away |
 | BACK screenshots | when on, pressing Back saves a screenshot (`shotNN.bmp`) next to your settings. Handy for bug reports |
-| Front LED effects | the front light flashes on KOs, in the last seconds and on GAME!. On by default; off leaves it plain green |
+| Front LED effects | the front light flashes on KOs, in the last seconds and on GAME!. Off by default. **Don't turn it on if your console has a modchip that drives the front LED** (see the warning below) |
 | Use 128 MB RAM | only for consoles upgraded to 128 MB. On a stock 64 MB Xbox it's locked off, so you can't break anything |
 | Rumble | off, or 25% to 100% |
 | Controller, dead zones, trigger click | pick a port, then set its stick dead zones and how far the triggers go in before they count as a full press |
 | Save and restart | saves and relaunches Melee-X, so video changes kick in |
 
 Anything that needs a restart gets a `*` next to it. Button remapping isn't in the menu yet, that's still done in the file below.
+
+> **Warning: front LED effects and modchips.** The LED effects write to the Xbox's SMC over SMBus. On a console with a modchip that also drives the front LED (a Kronos board was reported), the two fight over it, and that console needed a Cerbios recovery afterwards. The effects are off by default since this report; leave them off on any modded console whose chip controls the LED.
 
 ## Settings file
 
@@ -136,7 +138,7 @@ Everything the menu changes lives in `E:\UDATA\4d580001\settings.ini`, and you c
 | | `fps` | 1 shows a frame counter in the top left corner (off by default) |
 | `[system]` | `ram128` | 1 lets a console upgraded to 128 MB use all of it. Off by default: Melee-X then runs in the first 64 MB, the setup it was tested on. Ignored on a 64 MB console |
 | | `screenshots` | 1 makes Back save a screenshot (`shotNN.bmp` in the same folder) |
-| | `led` | 1 (the default) lets matches play with the front light; 0 leaves it to the Xbox |
+| | `led_effects` | 1 lets matches play with the front light; 0 (the default) leaves it to the Xbox. Older files' `led` line is ignored |
 | `[input]` | `rumble` | rumble strength in percent, 0 turns it off |
 | `[port1]` to `[port4]` | `stick_deadzone`, `cstick_deadzone` | stick dead zones in percent |
 | | `trigger_click` | how far (0-255) a trigger goes in before it counts as a full L/R press |

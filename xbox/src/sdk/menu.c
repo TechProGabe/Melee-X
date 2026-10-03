@@ -159,7 +159,7 @@ static void info_text(char* out, size_t cap) {
             snprintf(out, cap, "%s", s_has_128 ? "Upgraded consoles only (untested)" : "This console has 64 MB");
             break;
         case ROW_RUMBLE: snprintf(out, cap, "Controller motor strength"); break;
-        case ROW_LED: snprintf(out, cap, "Flashes on KOs, the last seconds, GAME!"); break;
+        case ROW_LED: snprintf(out, cap, "Not with an LED modchip (Kronos...)"); break;
         case ROW_PORT: snprintf(out, cap, "The three settings below are per port"); break;
         case ROW_STICK:
         case ROW_CSTICK:

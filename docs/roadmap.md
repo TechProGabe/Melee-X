@@ -254,6 +254,13 @@ Fix order after RC2 (2026-10-02), details in the entries below:
   the AC97 engine half running; `xhw_audio_shutdown` now stops the pump
   and resets the bus masters first (`decisions.md`). After a crash the
   console still needs a power-off for sound (the same stuck codec).
+- Front LED effects vs modchips (user report, 2026-10-02): on a console
+  with a Kronos board the effects fought the chip over the front LED, and
+  the console needed a Cerbios recovery. On dev the effects are off by
+  default (`led_effects`, old `led` lines ignored) with a README warning.
+  Before turning them on by default again: find what the chip does with
+  the SMC's LED registers (0x07/0x08) and whether SMBus traffic from the
+  worker can collide with it; maybe detect such chips and lock the option.
 - 100-Man Melee (Multi-Man Melee) freezes (tester, RC1 = v42, 128 MB
   with `ram128 = 1`, 480 at 32 bits; not reproduced on the 64 MB console).
   The GPU stall family, logs in `~/xemu/hw/logs-tester-100man/`. First

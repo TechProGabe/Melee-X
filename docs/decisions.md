@@ -276,6 +276,14 @@ conversion that made them near black). The Z16 depth tile's flags are a
 switch (`-DOCX_Z16_TILE_FLAGS`) with pbkit's value as the default until a
 console A/B, and `-DXHW_VIDEO_480_BPP=16` puts the 16-bit path in reach of xemu.
 
+**Front LED effects off by default (after v48).** A user with a Kronos
+modchip reported the effects fighting the chip over the front LED; that
+console then needed a Cerbios recovery. The default is now off, the key is
+`led_effects` (v43-v48 wrote `led = 1` as the default, and an old `led`
+line is ignored, so every console starts with the effects off), and the
+README warns against them on modded consoles whose chip drives the LED.
+Was:
+
 **Front LED effects, on by default (after v43).** KOs, a timed match's
 last seconds and GAME! drive the console's front LED through the SMC's
 custom sequence (`xhw_led.c`). On by default: it is the kind of thing

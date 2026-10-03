@@ -151,7 +151,7 @@ fps = 0             ; frame-rate counter in the top-left corner (default: 1 in t
 [system]
 ram128 = 0          ; 1: use the RAM above 64 MB on an upgraded console (untested)
 screenshots = 0     ; 1: BACK saves shotNN.bmp (default: 1 in test builds)
-led = 1             ; front LED effects ("Front LED" below)
+led_effects = 0     ; front LED effects, off by default ("Front LED" below)
 [input]
 rumble = 100        ; percent
 [port1]             ; .. [port4]
@@ -210,7 +210,7 @@ by the next save.
 | Widescreen (16:9) | On, Off; `On -> Off` at 480 when the dashboard is 4:3 | after a restart |
 | Frame-rate counter | On, Off | at once |
 | BACK screenshots | On, Off (`[system] screenshots`; on in test builds): BACK saves `shotNN.bmp` next to `settings.ini` | at once |
-| Front LED effects | On, Off (`[system] led`) | at once: On plays a short sweep, Off gives the LED back to the SMC |
+| Front LED effects | On, Off (`[system] led_effects`, off by default) | at once: On plays a short sweep, Off gives the LED back to the SMC |
 | Use 128 MB RAM | On, Off; on a 64 MB console "Off (64 MB console)", greyed, can't be changed | after a restart |
 | Rumble | Off, 25-100% | at once, with a short pulse |
 | Controller | Port 1-4: the three rows below edit that port | |
@@ -236,6 +236,10 @@ and a 19th row would take 96%, past the TV-safe area. A new row has to
 give one up (the LED row took the blank line above the hint).
 
 ## Front LED (`xhw_led.c`)
+
+Off by default since a Kronos-modded console needed a Cerbios recovery after
+the effects fought its chip over the LED (`decisions.md`); `led_effects = 1`
+or the settings menu turns them on.
 
 The SMC drives the front LED. SMBus register 0x08 of the SMC (address 0x20)
 takes a custom sequence of four steps that the SMC cycles through by itself,

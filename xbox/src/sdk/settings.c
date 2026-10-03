@@ -6,7 +6,8 @@
  *   fps = 1             ; frame-rate counter in the top-left corner
  *   [system]
  *   ram128 = 0          ; 1: use all 128 MB on an upgraded console (untested)
- *   led = 1             ; front LED effects (xbox/src/hw/xhw_led.c)
+ *   led_effects = 0     ; front LED effects (xbox/src/hw/xhw_led.c); off by
+ *                       ; default: a modchip that drives the LED fights it
  *   [input]
  *   rumble = 100        ; percent
  *   [port1] .. [port4]
@@ -87,7 +88,7 @@ static void defaults(xsdk_settings* st) {
     st->widescreen = 1;
     st->fps = XSDK_FPS_DEFAULT;
     st->shots = XHW_TEST_BUILD;
-    st->led = 1;
+    st->led = 0;   /* a Kronos-modded console needed a Cerbios recovery (docs/decisions.md) */
     st->rumble = 1.0f;
     for (p = 0; p < 4; p++) {
         xsdk_port_settings* ps = &st->port[p];
@@ -150,7 +151,9 @@ static int parse(FILE* f, xsdk_settings* st) {
         } else if (_stricmp(section, "system") == 0) {
             if (_stricmp(key, "ram128") == 0) st->ram128 = atoi(val) != 0, saw |= SAW_RAM128;
             else if (_stricmp(key, "screenshots") == 0) st->shots = atoi(val) != 0;
-            else if (_stricmp(key, "led") == 0) st->led = atoi(val) != 0, saw |= SAW_LED;
+            /* not "led": v43-v48 wrote led = 1 as the default, and that
+             * line is ignored so the effects start off for everyone */
+            else if (_stricmp(key, "led_effects") == 0) st->led = atoi(val) != 0, saw |= SAW_LED;
         } else if (_stricmp(section, "input") == 0) {
             if (_stricmp(key, "rumble") == 0) st->rumble = clampi(atoi(val), 0, 100) / 100.0f;
         } else if (_strnicmp(section, "port", 4) == 0 && section[4] >= '1' && section[4] <= '4') {
@@ -262,8 +265,9 @@ static void write_all(FILE* f, const xsdk_settings* st) {
             st->widescreen, st->fps);
     fprintf(f, "; ram128 = 1 uses the RAM above 64 MB on an upgraded console (untested; off: it runs as 64 MB).\n");
     fprintf(f, "; screenshots = 1: BACK saves a screenshot (shotNN.bmp, next to this file).\n");
-    fprintf(f, "; led = 1: the front LED flashes on KOs, in the last seconds and on GAME!.\n");
-    fprintf(f, "[system]\nram128 = %d\nscreenshots = %d\nled = %d\n\n", st->ram128, st->shots, st->led);
+    fprintf(f, "; led_effects = 1: the front LED flashes on KOs, in the last seconds and on GAME!.\n");
+    fprintf(f, "; Leave it 0 on a console with a modchip that drives the LED (Kronos and similar).\n");
+    fprintf(f, "[system]\nram128 = %d\nscreenshots = %d\nled_effects = %d\n\n", st->ram128, st->shots, st->led);
     fprintf(f, "[input]\nrumble = %d\n\n", pct(st->rumble));
     for (port = 0; port < 4; port++) {
         const xsdk_port_settings* ps = &st->port[port];
