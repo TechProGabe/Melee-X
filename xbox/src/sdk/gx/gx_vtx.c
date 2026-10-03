@@ -580,7 +580,14 @@ void GXParam1u32(const u32 x) { (void)x; }
  * of the changes, so HSD's GXClearVtxDesc and the GXSetVtxDesc calls that
  * put the same descriptor back leave it as it was. */
 static uint32_t s_desc_term[GX_VA_MAX_ATTR], s_desc_sum;
+/* s_vat_sum[f]: the VAT terms of the attributes the descriptor has on only.
+ * A list decodes the same whatever the VAT says for an attribute it doesn't
+ * have, and HSD sets those freely (other objects' formats): with them in the
+ * key, Fountain of Dreams held 1381 lists, 821 of them a second copy under
+ * another key (1.7 MB of the 4 MB vertex pool, which ran full and rebuilt
+ * lists every frame on the console); now 560 (docs/fps-plan.md C2). */
 static uint32_t s_vat_term[8][GX_VA_MAX_ATTR], s_vat_sum[8];
+static uint8_t s_vat_on[GX_VA_MAX_ATTR];   /* attribute a's terms are in s_vat_sum */
 static uint32_t s_arr_term[GX_VA_MAX_ATTR], s_arr_sum;       /* indexed arrays: base, stride, byte order */
 static uint32_t s_arrs_term[GX_VA_MAX_ATTR], s_arrs_sum;     /* the same without the base */
 
@@ -593,15 +600,20 @@ static uint32_t mix32(uint32_t h) {   /* murmur3's finalizer */
 }
 
 static void sig_desc(uint32_t a) {
-    uint32_t t = mix32(0x01000000u | a << 8 | g_gx.desc[a]);
+    uint32_t t = mix32(0x01000000u | a << 8 | g_gx.desc[a]), f;
+    uint8_t on = g_gx.desc[a] != GX_NONE;
     s_desc_sum += t - s_desc_term[a];
     s_desc_term[a] = t;
+    if (on != s_vat_on[a]) {   /* the attribute's formats join or leave the key */
+        for (f = 0; f < 8; f++) s_vat_sum[f] += on ? s_vat_term[f][a] : 0u - s_vat_term[f][a];
+        s_vat_on[a] = on;
+    }
 }
 
 static void sig_vat(uint32_t f, uint32_t a) {
     const GxAttrFmt* v = &g_gx.vat[f][a];
     uint32_t t = mix32(0x02000000u ^ f << 29 ^ a << 24 ^ (uint32_t)v->cnt << 16 ^ (uint32_t)v->type << 8 ^ v->frac);
-    s_vat_sum[f] += t - s_vat_term[f][a];
+    if (s_vat_on[a]) s_vat_sum[f] += t - s_vat_term[f][a];
     s_vat_term[f][a] = t;
 }
 
@@ -626,6 +638,7 @@ static void sig_recompute(void) {
     memset(s_arrs_term, 0, sizeof s_arrs_term);
     s_desc_sum = s_arr_sum = s_arrs_sum = 0;
     memset(s_vat_sum, 0, sizeof s_vat_sum);
+    memset(s_vat_on, 0, sizeof s_vat_on);
     for (a = 0; a < GX_VA_MAX_ATTR; a++) {
         sig_desc(a);
         sig_arr(a);

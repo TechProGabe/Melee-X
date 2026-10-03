@@ -275,6 +275,17 @@ memory after the pushbuffer, and the GPU fetched texture data as methods
 (DMA pusher error, `GPU fault kind 2`, frozen). `[NV2A] frame` lines report
 the interval's peak and mid-frame restarts.
 
+### Display-list cache key (C2)
+
+A cached list is keyed by its address and size, the vertex descriptor and
+the VAT of the formats it uses (`fmt_key`). The VAT part counts only the
+attributes the descriptor has on: a list decodes the same whatever the VAT
+says for an attribute it doesn't have, and HSD changes those freely. With
+every attribute in the key, Fountain of Dreams cached 821 of its 1381
+lists twice (1.7 MB of the 4 MB vertex pool; the console's pool ran full
+and rebuilt hundreds of lists a second); now 560 lists, none twice, 1.8 MB
+of the pool free (xemu census, 4-CPU match).
+
 ### Probes (`docs/fps-plan.md`)
 
 The back end takes part in two test-only probes. `-DXGX_CENSUS=1` counts
