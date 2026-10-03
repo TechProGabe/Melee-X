@@ -433,6 +433,9 @@ a step, the same operations per lane; `test_audio_mix.py` is the gate.
 
 ### F. Picture trades (the user decides; default off)
 
+The user decided (2026-10-03): no picture trades. Nothing in this track is
+built; GPU-side work keeps the picture byte for byte (lockstep shots).
+
 A `[video]` option: fighter shadows updated every second frame in turn,
 Fountain's reflection every second frame or off. Windows 2 and 3 give the
 numbers to decide with; the estimate for four fighters on Fountain is
@@ -529,6 +532,7 @@ may go ahead.
 | B3 prefetch plans | rejected by round 2: +1.3% fps, within the noise, and the simulation it targets +2.4%; removed | | r2f |
 | C3 GPU waits | v50: the CPU never waits on an EFB copy (their waits are in the pushbuffer); the `gpu` bucket is `frame_open`'s one wait a frame for the last frame (`XGX_OVERLAP`) plus the flip, so on Fountain at 720p the GPU finishes about when the CPU does, and CPU savings may turn into that wait. Round 2 builds log it: `[NV2A] per 600 frames: GPU still busy at N frame starts, X us a frame waiting there (done Y us after the present), flip Z us`. Then: a one-frame-deep pipeline (fence per frame, ring and pushbuffer halves) if the GPU idles between kicks, or less GPU work if it doesn't | | round 2: with PGO the GPU is still busy at 94% of frame starts, 4 ms a frame waiting; busy about the whole frame, so no pipeline gain, less GPU work instead |
 | round 2 | done (2026-10-03), read under "Console round 2": PGO +7.8% on dev (35.0 fps Fountain 720p), B4 and B3 rejected, B2 to measure again, the GPU now the limit on Fountain | | |
+| release default | the user (2026-10-03): LTO + PGO become the release build's default once all of this work is in and confirmed on the console (the last step) | | |
 | lockstep shots | done 29afd58: `env MX_LOCKSTEP=1`, the game clock a frame counter, so shots compare across builds of any speed (`docs/testing.md` "Comparing builds by screenshot"); gl: 1.0 ticks per render, B4 on and off the same moment and pixels | | |
 | E audio mixer | done (branch `fps-e`): ADPCM decoded in runs per frame with an s32 sum, a frame's source positions planned before the mix, the float math four outputs a step in SSE1, the output clamp in SSE1, the reverb in stretches between line wraps; `test_audio_mix.py` same bits (SSE1 and plain C, i686 too) | mixer only (static i686 counts): a resampled ADPCM voice ~146 -> ~62 a sample, 1:1 music ~108 -> ~52, silent ~112 -> ~38, reverb ~110 -> ~67 a sample and channel | round 2 (`[PERF]` audio, window 6) |
 | `PObjSetupMtx` (render) | branch `fps-pobj`: v50 profile has it at 7.2% own and ~6% more in its calls (at its call sites: memo `memcpy` 1.5%, `MTXCopy` 0.65%, view `C_MTXConcat` 1.3%, inverse transpose 1.2%, GX loads 0.7%), and ~1.7% on the zeroing stores of its locals; memo entries filled in place, no zeroing, SSE inverse transpose, prefetch hints; `test_pobj_mtx.py` | not run (expect -3 to -5% of all samples) | round 2 |
