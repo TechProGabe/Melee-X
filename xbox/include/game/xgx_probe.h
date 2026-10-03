@@ -8,8 +8,9 @@
  * store in every build; only a census build reads it.
  *
  * Ablations (test builds, xbox/src/hw/xhw_pmc.c): xhw_ablate(n) is 1 while
- * the probe's rotation runs window n (an autopad script's `env MX_ABLATE=1`)
- * and 0 otherwise, always 0 in a release. */
+ * the probe's rotation runs window n (an autopad script's `env MX_ABLATE=1`
+ * for windows 0-7, or a list such as `env MX_ABLATE=0,2,3,8,9`) and 0
+ * otherwise, always 0 in a release. */
 #ifndef XGX_PROBE_H
 #define XGX_PROBE_H
 
@@ -34,8 +35,14 @@ enum {
     XHW_AB_BACKEND = 4,   /* xgx_draw returns at once: black frames */
     XHW_AB_RECHECK = 5,   /* display-list content rechecks off */
     XHW_AB_AUDIO = 6,     /* audio mixer off: silence */
-    XHW_AB_WINDOWS = 8
+    /* 7: the baseline again (drift); round 3's GPU windows: */
+    XHW_AB_NOFILL = 8,    /* every draw scissored to one pixel: the GPU's work but fill */
+    XHW_AB_NOCOPY = 9,    /* no EFB copies (shadow maps, reflection): their GPU time */
+    XHW_AB_WINDOWS = 10
 };
 int xhw_ablate(int window);
+/* nv2a.c, per probe period (xhw_pmc.c): a [GPUP] line, where the GPU's
+ * frame goes (C3), so each window gets its own */
+void xgx_gpu_period_log(void);
 
 #endif

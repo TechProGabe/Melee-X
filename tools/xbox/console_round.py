@@ -34,6 +34,8 @@ APPS = '/F/Applications'
 
 FOD = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_DEBUG_VS=cpu4',
        'env MELEE_DEBUG_VS_TIME=120', 'env MELEE_SEED=1']
+FODLONG = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_DEBUG_VS=cpu4',
+           'env MELEE_DEBUG_VS_TIME=300', 'env MELEE_SEED=1']
 FD = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=32', 'env MELEE_DEBUG_VS_CHARS=2,8',
       'env MELEE_DEBUG_VS_TIME=60', 'env MELEE_SEED=1']
 # folder, build, scenario, switches: in the order they run; the last one is
@@ -66,6 +68,9 @@ CHAINS[3] = [
     ('Melee-X-r3e', 'head-noorder', 'fod', {}),
     ('Melee-X-r3f', 'ltopgo', 'fod', {}),
     ('Melee-X-r3g', 'ltopgo', 'fod', B2),
+    # the GPU's frame by window (-DXHW_PMC=1, LTO + PGO): none, no shadow
+    # maps, no reflection, no fill, no EFB copies, ~10 s each over 5 minutes
+    ('Melee-X-r3h', 'probe', 'fodlong', {'MX_ABLATE': '0,2,3,8,9'}),
     ('Melee-X', 'base', 'fod', {}),
 ]
 CHAIN = []   # main(): CHAINS[N]
@@ -75,7 +80,7 @@ def script(i):
     folder, build, scen, sw = CHAIN[i]
     lines = [f'# docs/fps-plan.md round {ROUND}, run {i + 1} of {len(CHAIN)}: {build}, {scen}, '
              + (' '.join(f'{k}={v}' for k, v in sw.items()) or 'no switches')]
-    lines += FOD if scen == 'fod' else FD
+    lines += {'fod': FOD, 'fodlong': FODLONG, 'fd': FD}[scen]
     lines += [f'env {k}={v}' for k, v in sw.items()]
     if i + 1 < len(CHAIN):
         lines.append(f'env MX_NEXT_XBE=F:\\Applications\\{CHAIN[i + 1][0]}\\default.xbe')
@@ -210,7 +215,7 @@ def match_periods(text):
 
 
 def report():
-    print(f'{"run":12s} {"build":14s} {"scen":4s} {"switches":28s} {"n":>3s} {"fps":>6s} {"sim":>5s} {"rend":>5s} '
+    print(f'{"run":12s} {"build":14s} {"scen":7s} {"switches":28s} {"n":>3s} {"fps":>6s} {"sim":>5s} {"rend":>5s} '
           f'{"dlist":>5s} {"draw":>5s} {"gpu":>5s} {"draws":>6s} {"tick/r":>6s} {"busy":>5s} {"wait":>5s} {"flip":>5s}')
     for folder, build, scen, sw in CHAIN:
         p = LOGS / f'{folder}.log'
@@ -229,7 +234,7 @@ def report():
         draws = sum(r[0] * r[4] for r in rows) / frames
         ticks = sum(r[0] * r[3] for r in rows) / frames
         swn = ','.join(k[3:].lower() for k in sw) or '-'
-        print(f'{folder:12s} {build:14s} {scen:4s} {swn:28s} {len(rows):3d} {frames / secs:6.2f} {ms["sim"]:5.2f} '
+        print(f'{folder:12s} {build:14s} {scen:7s} {swn:28s} {len(rows):3d} {frames / secs:6.2f} {ms["sim"]:5.2f} '
               f'{ms["render"]:5.2f} {ms["dlist"]:5.2f} {ms["draw"]:5.2f} {ms["gpu"]:5.2f} {draws:6.0f} {ticks:6.2f}'
               + (f' {gw[0]:5.0f} {gw[1]:5.2f} {gw[2]:5.2f}' if gw else ''))
     print('busy: frame starts (of 600) with the GPU still on the last frame; wait: ms a frame waiting there; '

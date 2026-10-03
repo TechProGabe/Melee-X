@@ -24,6 +24,7 @@ PERF = re.compile(r'\[PERF\] (\d+) frames ([\d.]+) fps \| ms/frame (.*?) \| ([\d
 PERFX = re.compile(r'\[PERFX\] (\d+) frames (\d+) draws (\d+) verts (\d+) ticks (\d+) renders \| us (.*?) \| span')
 PMC = re.compile(r'\[PMC\] (\d+) (\S+) (\S+) \| k (.*)')
 AB = re.compile(r'\[AB\] (\d+) (.*)')
+GPUP = re.compile(r'\[GPUP\] (\d+) frames, (\d+) late \| us a frame: wait (\d+), span (\d+), lag (\d+)')
 NOISE = ('[FBDUMP]', '[AUTOPAD] SHOT', '[PROF', '[DUMP')
 
 
@@ -62,6 +63,10 @@ def parse(path):
                 f_, draws, verts, ticks, renders = map(int, m.groups()[:5])
                 us = m.group(6).split()
                 cur.update(draws=draws, ticks=ticks, us=dict(zip(us[::2], map(int, us[1::2]))))
+                continue
+            m = GPUP.search(line)
+            if m and cur is not None:
+                cur['gpu'] = tuple(map(int, m.groups()))
                 continue
             m = PMC.search(line)
             if m and cur is not None:
@@ -114,6 +119,24 @@ def main():
             line += (f'   draw {100 * (pd / b_draw - 1):+.1f}%, render {100 * (render_us(rs) / b_render - 1):+.1f}%, '
                      f'tick {100 * (pt / b_tick - 1) if b_tick else 0:+.1f}%')
         print(line)
+
+    # [GPUP] (round 3's GPU windows): frames that found the GPU still busy,
+    # the wait there, the frame's span from its opening to its present, and
+    # the late frames' finish after the present; span + lag is the GPU's
+    # frame while it is the limit (late near 100%)
+    if any('gpu' in r for r in rows):
+        print(f"\n{'window':24}{'n':>3}{'late %':>8}{'wait':>7}{'span':>7}{'lag':>7}{'GPU ms':>8}")
+        for w in sorted(by_w):
+            g = [r['gpu'] for r in by_w[w] if 'gpu' in r]
+            if not g:
+                continue
+            fr = sum(x[0] for x in g)
+            late = sum(x[1] for x in g)
+            wait = sum(x[2] * x[0] for x in g) / fr / 1000
+            span = sum(x[3] * x[0] for x in g) / fr / 1000
+            lag = sum(x[4] * x[1] for x in g) / late / 1000 if late else 0
+            print(f"{w} {names.get(w, '?')[:21]:22}{len(g):3}{100 * late / fr:8.0f}{wait:7.2f}{span:7.2f}{lag:7.2f}"
+                  f"{span + lag:8.2f}")
 
     # counters: each [PMC] row against its own period's bucket cycles ([PERFX] us x the TSC rate)
     def shares(rs):

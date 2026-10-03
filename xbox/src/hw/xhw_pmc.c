@@ -68,8 +68,9 @@ void xhw_set_ftz(int on) {
 
 #if XHW_PMC
 static int s_on;        /* counters running (the console, not xemu) */
-static int s_ablate;    /* MX_ABLATE=1: the windows rotate */
+static int s_ablate;    /* MX_ABLATE=1 or a list: the windows rotate */
 static int s_window;    /* the current ablation window */
+static int s_list[32], s_nlist, s_at;   /* the rotation: window numbers, s_list[s_at] running */
 static int s_pair;      /* the current event pair */
 static uint32_t s_periods;
 static uint64_t s_mark[2];
@@ -148,8 +149,24 @@ void xhw_pmc_period(void) {
     int i, n;
     if (s_periods == 0) {
         const char* e = getenv("MX_ABLATE");
-        s_ablate = e && *e == '1';
-        if (s_ablate) xhw_logf("[AB] %d %s", s_window, "none");
+        s_ablate = e && *e;
+        if (s_ablate && strchr(e, ',')) {   /* a list of windows */
+            while (*e && s_nlist < 32) {
+                int w = atoi(e);
+                if (w >= 0 && w < XHW_AB_WINDOWS) s_list[s_nlist++] = w;
+                while (*e && *e != ',') e++;
+                if (*e) e++;
+            }
+        } else if (s_ablate && *e == '1') {   /* round 1's rotation */
+            for (s_nlist = 0; s_nlist < 8; s_nlist++) s_list[s_nlist] = s_nlist;
+        } else {
+            s_ablate = 0;
+        }
+        if (s_ablate) {
+            s_window = s_list[0];
+            xhw_logf("[AB] %d %s", s_window, s_window == 0 ? "none" : "(first)");
+            if (s_window == XHW_AB_FTZ) xhw_set_ftz(1);
+        }
     }
     if (s_on) {
         xhw_pmc_charge(xhw_perf_bucket());
@@ -164,13 +181,15 @@ void xhw_pmc_period(void) {
         s_pair = (s_pair + 1) % NPAIRS;
         program(s_pair);
     }
+    xgx_gpu_period_log();
     s_periods++;
     if (s_ablate && s_periods % 2 == 0) {
         static const char* const k_ab[XHW_AB_WINDOWS] = { "none", "ftz", "no shadow maps", "no reflection",
                                                           "no back end", "no dlist rechecks", "no audio",
-                                                          "none (drift)" };
+                                                          "none (drift)", "no fill", "no EFB copies" };
         int was = s_window;
-        s_window = (s_window + 1) % XHW_AB_WINDOWS;
+        s_at = (s_at + 1) % s_nlist;
+        s_window = s_list[s_at];
         if (was == XHW_AB_FTZ || s_window == XHW_AB_FTZ) xhw_set_ftz(s_window == XHW_AB_FTZ);
         xhw_logf("[AB] %d %s", s_window, k_ab[s_window]);
     }
