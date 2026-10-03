@@ -6,11 +6,9 @@ First, a huge thank you to **maple72**. They tested release candidate after rele
 
 ## The freeze is fixed
 
-The worst bug in v2 was a hard freeze. It could hit after a while in any match, and 100-Man Melee hit it almost every time. The game would stop and the console needed a power cycle.
+The worst bug in v2 was a hard freeze. It could hit after a while in any match, and 100-Man Melee hit it almost every time, leaving you to power cycle the console. That's fixed, so long sessions and 100-Man Melee keep going instead of locking up. v3 has run overnight on a real console without a hitch.
 
-It turned out to be the Xbox's GPU locking up right after the game copies part of the screen into a texture. Melee does that all the time: shadows, the Pokémon Stadium screen, the freeze frames on the results and Stage Clear screens. Every so often one of those copies left the GPU in a state it couldn't get out of. On its own that happened maybe once in 40 minutes, which made it miserable to chase, so I made a test build that did every copy twenty times over. That turned 40 minutes into 19 seconds, and from there it was a matter of trying fixes until one held. The fixed build ran clean under the same stress, and the fixed game has since run overnight on a real console without a hitch.
-
-A couple of smaller GPU stalls on those copies are fixed too, including two mid-match freezes that only showed up on 128 MB consoles.
+Two other mid-match freezes that only showed up on 128 MB consoles are fixed too.
 
 ## 720p is on by default
 
