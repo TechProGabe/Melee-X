@@ -381,6 +381,13 @@ moves. `[SIMH]` (`xbox/src/sdk/simhash.c`) hashes each fighter's state and
 the random seed every 60 ticks; two runs of one build give the same hashes,
 and every toolchain or simulation change must too.
 
+The code is laid out by profile (`docs/toolchain.md` "Code layout"): the
+console spends a third of its render and back-end cycles waiting on
+instruction fetch (v49's counters), and 4 MB of code in source-path order
+puts each frame's hot paths far apart. xemu cannot show the gain (it has
+no caches): instruction counts are unchanged and the console's `[PERF]`
+decides. ICF stays off because folded functions would compare equal.
+
 ## Edits to imported code
 
 Imported files are kept as they are upstream except for these edits, each

@@ -54,7 +54,7 @@ list(APPEND SDK_SOURCES
 set(SDK_FLAGS
     --target=i686-pc-windows-gnu -mno-ms-bitfields -march=pentium3 -msse -mfpmath=sse
     -ffreestanding -nostdlibinc -fsigned-char -fno-strict-aliasing -fwrapv -ffp-contract=off
-    -mno-stack-arg-probe -fno-asynchronous-unwind-tables -fno-auto-import
+    -mno-stack-arg-probe -fno-asynchronous-unwind-tables -fno-auto-import -ffunction-sections
     -U_WIN32 -U__MINGW32__ -U__MINGW64__ -UWIN32 -U__WIN32 -U__WIN32__
     -DTARGET_PC=1 -DMELEE_PC=1 -DTARGET_XBOX=1 -DNXDK -D__STDC__=1
     -Wno-everything -Werror=implicit-function-declaration -Werror=implicit-int
@@ -88,7 +88,7 @@ target_include_directories(mx_hw PRIVATE
     ${NXDK_DIR}/lib/usb/libusbohci_xbox
     ${NXDK_DIR}/lib/zlib/zlib)
 target_compile_definitions(mx_hw PRIVATE XBOX "USBH_USE_EXTERNAL_CONFIG=\"usbh_config_xbox.h\"")
-target_compile_options(mx_hw PRIVATE -O2 -march=pentium3 -Wall -Wno-unused-function
+target_compile_options(mx_hw PRIVATE -O2 -march=pentium3 -ffunction-sections -Wall -Wno-unused-function
     "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/include/xbuiltin.h")
 # the string routines must not be recognised as themselves (xhw_string.c)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/hw/xhw_string.c PROPERTIES
@@ -108,7 +108,25 @@ target_link_options(melee_x PRIVATE
     "@${GAME_OUT}/objects.txt"
     -stack:1048576
     -include:_automount_d_drive
-    -map:${CMAKE_BINARY_DIR}/melee_x.map)
+    -map:${CMAKE_BINARY_DIR}/melee_x.map
+    # functions are COMDAT sections (-ffunction-sections): never fold two
+    # identical ones into one address, the game compares function pointers
+    -opt:noicf)
+# The code's layout from whole-match profiles (tools/xbox/make_order.py):
+# hot functions first, the rest in link order. A name the link doesn't have
+# (renamed since, or in a library) is skipped without a warning.
+set(ORDER_FILE ${CMAKE_CURRENT_SOURCE_DIR}/order.txt)
+if(EXISTS ${ORDER_FILE})
+    target_link_options(melee_x PRIVATE "-order:@${ORDER_FILE}" -ignore:4037)
+    set_property(TARGET melee_x APPEND PROPERTY LINK_DEPENDS ${ORDER_FILE})
+endif()
+# -ffunction-sections in the game triple names each function's section
+# .text$<name>, which /order can't move: plain .text, like nxdk's triple
+# (tools/xbox/coff_text_plain.py; idempotent)
+add_custom_command(TARGET melee_x PRE_LINK
+    COMMAND python3 ${ROOT}/tools/xbox/coff_text_plain.py "@${GAME_OUT}/objects.txt" $<TARGET_OBJECTS:mx_sdk>
+    COMMAND_EXPAND_LISTS
+    COMMENT "game and sdk objects: .text$* -> .text")
 add_custom_command(TARGET melee_x POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/xbe
     COMMAND ${NXDK_DIR}/tools/cxbe/cxbe "-OUT:${CMAKE_BINARY_DIR}/xbe/default.xbe" "-TITLE:Melee-X" $<TARGET_FILE:melee_x>
