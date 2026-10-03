@@ -20,6 +20,9 @@
 #include <sysdolphin/baselib/tev.h>
 #include <sysdolphin/baselib/util.h>
 #include <sysdolphin/baselib/video.h>
+#ifdef TARGET_XBOX
+#include "xgx_probe.h"   /* PORT: draw census pass (xbox/include/game) */
+#endif
 
 static void splGetCardinalTangent(Vec3* p, DiscVec3* cp, f32 tension, f32 u)
 {
@@ -499,7 +502,14 @@ void lbShadow_8000F38C(s32 arg0)
                 }
             }
 
-            if (fp->x20A4.shadow != NULL && cm != NULL && !fp->x20A4.x0_b3) {
+            if (fp->x20A4.shadow != NULL && cm != NULL && !fp->x20A4.x0_b3
+#ifdef TARGET_XBOX
+                /* PORT: the frame-rate probe's window without shadow maps
+                 * (test builds only, xgx_probe.h) */
+                && !xhw_ablate(XHW_AB_SHADOW)
+#endif
+            )
+            {
                 u8 intensity = Ground_801C0508();
                 shadow2 = fp->x20A4.shadow;
 
@@ -545,6 +555,11 @@ void lbShadow_8000F38C(s32 arg0)
                 }
 
                 HSD_ShadowInit(fp->x20A4.shadow);
+#ifdef TARGET_XBOX
+                {   /* PORT: the draw census's shadow pass, owned by the fighter */
+                    unsigned int tag = xgx_census_tag;
+                    xgx_census_tag = XGX_CENSUS_PASS(XGX_CENSUS_OWNER(tag, HSD_GOBJ_PLINK_FIGHTER), XGX_PASS_SHADOW);
+#endif
                 HSD_StartRender(HSD_RP_OFFSCREEN);
                 HSD_GObj_804D7814 = gobj;
                 HSD_ShadowStartRender(fp->x20A4.shadow);
@@ -553,6 +568,10 @@ void lbShadow_8000F38C(s32 arg0)
                 }
                 HSD_ShadowEndRender(fp->x20A4.shadow);
                 HSD_Init_803755A8();
+#ifdef TARGET_XBOX
+                    xgx_census_tag = tag;
+                }
+#endif
             }
         }
 

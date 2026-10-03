@@ -485,6 +485,25 @@ void xhw_lazy_decommit(void* chunk) {
 
 uint32_t xhw_lazy_committed_kb(void) { return (uint32_t)s_lazy_chunks * (LAZY_CHUNK / 1024); }
 
+/* [MEM] lazy: each region's committed 64 KB chunks per 4 MB range (of 64),
+ * the probe build's view of which ranges could go on 4 MB pages
+ * (docs/fps-plan.md B2) */
+void xhw_lazy_log_map(void) {
+    LONG i, n = s_lazy_n;
+    for (i = 0; i < n; i++) {
+        const Lazy* l = &s_lazy[i];
+        char line[160];
+        uint32_t r, k, len = 0, per = (4u << 20) / LAZY_CHUNK;
+        len += (uint32_t)snprintf(line, sizeof line, "[MEM] lazy %08x:", (unsigned)l->base);
+        for (r = 0; r < l->size / (4u << 20) && len < sizeof line - 8; r++) {
+            uint32_t c = 0;
+            for (k = r * per; k < (r + 1) * per; k++) c += (l->bits[k / 32] >> (k % 32)) & 1;
+            len += (uint32_t)snprintf(line + len, sizeof line - len, " %u", c);
+        }
+        xhw_log(line);
+    }
+}
+
 uint32_t xhw_mem_free_kb(void) {
     MM_STATISTICS st;
     memset(&st, 0, sizeof st);

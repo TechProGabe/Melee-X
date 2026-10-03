@@ -19,7 +19,7 @@ extern "C" {
  * release: BACK does nothing and the counter is off unless settings.ini
  * says fps = 1. */
 #ifndef XHW_TEST_BUILD
-#if (defined(XHW_PROF) && XHW_PROF) || (defined(XHW_AUTOPAD) && XHW_AUTOPAD)
+#if (defined(XHW_PROF) && XHW_PROF) || (defined(XHW_AUTOPAD) && XHW_AUTOPAD) || (defined(XHW_PMC) && XHW_PMC)
 #define XHW_TEST_BUILD 1
 #else
 #define XHW_TEST_BUILD 0
@@ -64,6 +64,9 @@ void xhw_perf_audio(uint64_t ticks);           /* mixer thread: time spent mixin
 void xhw_perf_frame(uint32_t draws, uint32_t verts);   /* once per presented frame */
 void xhw_perf_ticks(uint32_t n);               /* simulation ticks run before a render pass */
 int xhw_perf_bucket(void);                     /* the game thread's current bucket (the profiler's [PROFS]) */
+/* MXCSR flush-to-zero (+ DAZ where the CPU has it) on the calling thread:
+ * the probe's ablation window 1 (xhw_pmc.c; xhw_ablate in xgx_probe.h) */
+void xhw_set_ftz(int on);
 
 /* ---- threads and locks ---- */
 typedef struct xhw_mutex xhw_mutex;
@@ -94,6 +97,7 @@ void xhw_commit(const void* p, uint32_t bytes);
 /* Crash guard hook: commits the chunk at `addr`; 1 if it did. */
 int xhw_lazy_fault(uintptr_t addr);
 uint32_t xhw_lazy_committed_kb(void);
+void xhw_lazy_log_map(void);   /* [MEM] lazy: committed chunks per 4 MB range */
 /* Chunks of a lazy region whose data can live elsewhere (disc-backed ARAM):
  * `fill` runs whenever a chunk gets committed (first touch, xhw_commit),
  * after the commit and before the chunk counts as committed, and puts its

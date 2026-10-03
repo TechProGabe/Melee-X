@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "gx_internal.h"
+#include "xgx_probe.h"
 #include "xhw.h"
 
 #ifndef XGX_STATS_EVERY
@@ -1001,6 +1002,91 @@ static void dlc_drop_mem(int idx, int now) {
 
 static void dlc_drop(int idx) { dlc_drop_mem(idx, 0); }
 
+#ifndef XGX_CENSUS
+#define XGX_CENSUS 0
+#endif
+#if XGX_CENSUS
+/* Display-list census (docs/fps-plan.md step 0.4), with the draw census in
+ * nv2a.c: every XGX_STATS_EVERY presents, [DLCC] lines give the cached
+ * vertex bytes by owner (the p_link of the GObj that drew the list first,
+ * xgx_probe.h), the lists cached under more than one format key, and the
+ * lists built most often in the interval (evicted and drawn again, or
+ * changed). tools/xbox/census_report.py prints them. */
+static uint8_t s_cen_owner[DLC_MAX];
+#define CEN_BUILDS 4096
+typedef struct {
+    const uint8_t* dl;
+    uint32_t nbytes, builds, mem;
+    uint8_t owner;
+} CenBuild;
+static CenBuild s_cen_b[CEN_BUILDS];
+static uint32_t s_cen_lost;
+
+static void cen_build(const DlEntry* e, int idx) {
+    uint32_t h = ((uint32_t)(uintptr_t)e->dl * 2654435761u) >> 20, k;
+    s_cen_owner[idx] = (uint8_t)xgx_census_tag;
+    for (k = 0; k < 32; k++, h = (h + 1) & (CEN_BUILDS - 1)) {
+        CenBuild* b = &s_cen_b[h];
+        if (b->dl == e->dl && b->nbytes == e->nbytes) {
+            b->builds++;
+            b->mem = e->mem_bytes;
+            return;
+        }
+        if (!b->dl) {
+            b->dl = e->dl;
+            b->nbytes = e->nbytes;
+            b->builds = 1;
+            b->mem = e->mem_bytes;
+            b->owner = (uint8_t)xgx_census_tag;
+            return;
+        }
+    }
+    s_cen_lost++;
+}
+
+static void cen_report(void) {
+    static char buf[4096];
+    uint32_t kb[256], lists[256], dup = 0, dup_kb = 0, i, k, n = 0;
+    CenBuild top[12];
+    memset(kb, 0, sizeof kb);
+    memset(lists, 0, sizeof lists);
+    memset(top, 0, sizeof top);
+    for (i = 0; i < DLC_MAX; i++) {
+        const DlEntry* e = &s_dlc[i];
+        int j;
+        if (!e->dl || !e->mem) continue;
+        kb[s_cen_owner[i]] += e->mem_bytes;
+        lists[s_cen_owner[i]]++;
+        /* the same list under another key: same bucket chain */
+        for (j = s_dlc_bucket[dl_bucket(e->dl)]; j >= 0; j = s_dlc[j].next)
+            if ((uint32_t)j < i && s_dlc[j].dl == e->dl && s_dlc[j].nbytes == e->nbytes && s_dlc[j].mem) {
+                dup++;
+                dup_kb += e->mem_bytes;
+                break;
+            }
+    }
+    n += snprintf(buf + n, sizeof buf - (size_t)n, "[DLCC] cached by owner (lists/KB):");
+    for (i = 0; i < 256; i++)
+        if (lists[i]) n += snprintf(buf + n, sizeof buf - (size_t)n, " %u:%u/%u", i, lists[i], kb[i] / 1024);
+    n += snprintf(buf + n, sizeof buf - (size_t)n, "\n[DLCC] %u lists cached under a second key (%u KB)", dup,
+                  dup_kb / 1024);
+    for (i = 0; i < CEN_BUILDS; i++) {
+        CenBuild b = s_cen_b[i];
+        if (!b.dl || b.builds <= top[11].builds) continue;
+        for (k = 11; k > 0 && top[k - 1].builds < b.builds; k--) top[k] = top[k - 1];
+        top[k] = b;
+    }
+    n += snprintf(buf + n, sizeof buf - (size_t)n, "\n[DLCC] built most (list:bytes:owner:KB x builds, %u lost):",
+                  s_cen_lost);
+    for (k = 0; k < 12 && top[k].builds; k++)
+        n += snprintf(buf + n, sizeof buf - (size_t)n, " %08x:%u:%u:%u x%u", (unsigned)(uintptr_t)top[k].dl,
+                      top[k].nbytes, top[k].owner, top[k].mem / 1024, top[k].builds);
+    xhw_log(buf);
+    memset(s_cen_b, 0, sizeof s_cen_b);
+    s_cen_lost = 0;
+}
+#endif
+
 /* The content check (sampled words of the list and its arrays) runs once a
  * frame per list; a list that passed DLC_STABLE checks in a row is checked
  * every fourth frame, staggered by slot, and with a quarter of the samples
@@ -1009,6 +1095,9 @@ static void dlc_drop(int idx) { dlc_drop_mem(idx, 0); }
 #define DLC_STABLE 120
 static int dlc_content_changed(DlEntry* e, uint32_t frame) {
     if (e->checked == frame) return 0;
+#if defined(XHW_PMC) && XHW_PMC
+    if (xhw_ablate(XHW_AB_RECHECK)) return 0;   /* the probe's window 5 */
+#endif
     if (e->stable >= DLC_STABLE && ((frame + (uint32_t)(e - s_dlc)) & 3)) return 0;
     e->checked = frame;
     if (e->stable >= DLC_STABLE ? e->qhash != content_qhash(e) : e->hash != content_hash(e)) {
@@ -1587,9 +1676,14 @@ static int dlc_call(const uint8_t* dl, uint32_t nbytes) {
         s_dlc_bucket[dl_bucket(dl)] = idx;
         s_dlc_n++;
     }
-    if (!e->mem && !dlc_build(e, frame)) {
-        log_uncached(dl, nbytes, s_build_why);
-        return 0;
+    if (!e->mem) {
+        if (!dlc_build(e, frame)) {
+            log_uncached(dl, nbytes, s_build_why);
+            return 0;
+        }
+#if XGX_CENSUS
+        cen_build(e, (int)(e - s_dlc));
+#endif
     }
     e->last_used = s_dlc_lru[e - s_dlc] = frame;
     s_st_dl_hits++;
@@ -1634,6 +1728,9 @@ void gx_vtx_frame_end(void) {
             memset(s_flush_n, 0, sizeof s_flush_n);
             memset(s_flush_who, 0, sizeof s_flush_who);
         }
+#if XGX_CENSUS
+        cen_report();
+#endif
     }
 }
 

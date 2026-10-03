@@ -55,6 +55,13 @@ void* xhw_game_thread(void);           /* its PKTHREAD, NULL before xhw_prof_set
  * interrupt frame on its kernel stack (and the stack pointer it had), 0 when
  * it is waiting instead. Call at DISPATCH_LEVEL (xhw_prof.c). */
 unsigned long xhw_thread_eip(void* kthread, unsigned long* esp_out);
+void xhw_perf_calibrate(void);         /* test builds: [CAL], a loop of known length (xhw_perf.c) */
+/* xhw_pmc.c: [CPU] at boot (test builds); performance counters and the
+ * rotating ablations of the probe build (-DXHW_PMC=1) */
+int xhw_running_in_xemu(void);
+void xhw_cpu_probe(void);
+void xhw_pmc_charge(int bucket);       /* xhw_perf.c: at each bucket switch */
+void xhw_pmc_period(void);             /* xhw_perf.c: after each [PERF] line, on the game thread */
 void xhw_prof_start(void);             /* -DXHW_PROF=1: sampling profiler (xhw_prof.c) */
 void xhw_watchdog_disable(void);
 void xhw_watchdog_busy(int on);   /* a long, deliberate stall (screenshot) */

@@ -1,0 +1,9 @@
+# Console round 1 (docs/fps-plan.md step 1): Fountain of Dreams, 4 CPUs,
+# 5 minutes, the ablation windows rotating every 10 s ([AB] lines).
+# Needs the probe build: -DXHW_PROF=1 -DXHW_AUTOPAD=1 -DXHW_PMC=1 -DXGX_CENSUS=1
+env MELEE_BOOT_SCENE=vs
+env MELEE_DEBUG_VS_STAGE=2
+env MELEE_DEBUG_VS=cpu4
+env MELEE_DEBUG_VS_TIME=300
+env MELEE_SEED=1
+env MX_ABLATE=1
