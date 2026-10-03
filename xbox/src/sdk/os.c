@@ -493,7 +493,13 @@ void xsdk_run_alarms(void) {
 /* The frame loop spins until the pad alarm has queued a sample; sleep toward
  * the earliest alarm instead of burning the CPU the GPU driver needs. */
 void pc_os_wait_alarm(void) {
-    BOOL intr = OSDisableInterrupts();
+    BOOL intr;
+    if (xsdk_lockstep()) {   /* the clock stands still between frames: move it */
+        xsdk_lockstep_advance(1000000);
+        xsdk_run_alarms();
+        return;
+    }
+    intr = OSDisableInterrupts();
     OSTime next = 0, wait;
     OSAlarm* a;
     for (a = s_alarms; a; a = a->next)
@@ -556,8 +562,29 @@ static void card_deliver(void) {
 /* ======================================================================
  * Time: 40.5 MHz ticks since 2000-01-01 (local time, as the GameCube RTC)
  * ====================================================================== */
+/* env MX_LOCKSTEP=1 (test builds): the game's clock advances 1/60 s per
+ * frame boundary and stands still in between, so the pad alarm queues one
+ * sample a frame and every rendered frame is one simulation tick: frame N
+ * shows tick N in any build, however fast (xemu screenshots compare across
+ * builds). The frame loop's wait for a pad sample (pc_os_wait_alarm) moves
+ * it 1 ms at a time instead of sleeping. Pacing is off; [PERF] keeps the
+ * real clock. */
+static int s_lockstep = -1;
+static uint64_t s_lockstep_ns;
+
+int xsdk_lockstep(void) {
+    if (s_lockstep < 0) {
+        const char* e = getenv("MX_LOCKSTEP");
+        s_lockstep = e && atoi(e);
+        if (s_lockstep) xhw_logf("[OS] lockstep: one simulation tick per frame");
+    }
+    return s_lockstep;
+}
+
+void xsdk_lockstep_advance(u32 ns) { s_lockstep_ns += ns; }
+
 OSTime OSGetTime(void) {
-    uint64_t ns = xhw_time_ns() - s_ns_base;
+    uint64_t ns = xsdk_lockstep() ? s_lockstep_ns : xhw_time_ns() - s_ns_base;
     return s_time_base + (OSTime)(ns / 1000000000ull) * OS_TIMER_CLOCK +
            (OSTime)(ns % 1000000000ull) * (OS_TIMER_CLOCK / 1000000) / 1000;
 }
