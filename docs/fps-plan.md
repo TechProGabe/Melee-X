@@ -79,6 +79,69 @@ and round 1's `INST_RETIRED` settles the ratio. The console logs and the
 xemu run are not the same match (the burn-ins had items on), so read the
 ratios as good to about a third.
 
+### Console round 1 (v50, 2026-10-03)
+
+The probe build (`probe-r1` at 345d197: step 0 tools, none of A, C2 or C4)
+on the console, a 4-CPU Fountain match of 303 s, 63 `[PERF]` periods:
+32.3 fps, 789 draws and 1.85 ticks a frame. The probe itself costs ~2% of
+the samples (`xhw_pmc_charge`, `xhw_perf_enter`). Logs on the Windows PC
+in `C:\xemu\hw\logs50` (`tools/xbox/probe_report.py`,
+`prof_report.py --full prof.bin`).
+
+| bucket | ms a frame | share | per unit | IPC | fetch stall | data misses in flight | resource stalls |
+|---|---|---|---|---|---|---|---|
+| render | 14.8 | 48% | 18.8 µs a draw | 0.38 | 39% | 38% | 28% |
+| sim | 7.2 | 23% | 3.9 ms a tick | 0.36 | 24% | 47% | 45% |
+| draw | 5.4 | 17% | 6.8 µs a draw | 0.55 | 35% | 19% | 18% |
+| dlist | 2.0 | 7% | 2.5 µs a draw | 0.31 | 28% | 122-132% | 39% |
+| gpu waits | 1.45 | 5% | | | | | |
+| audio thread | 1.46 | 5% (inside the others) | | | | | |
+
+Fetch stall is `IFU_MEM_STALL` as a share of the bucket's cycles,
+resource stalls `RESOURCE_STALLS`. Data misses are `DCU_MISS_OUTSTANDING`,
+which adds one per miss in flight per cycle and overlaps execution: an
+upper bound, not a stall share (dlist's is over 100%). `L2_IFETCH` ~370k a
+frame in render against ~46k `L2_LINES_IN`: code misses L1 and hits L2.
+`ITLB_MISS` 0.1%, `FP_ASSIST` 0.5% of render's cycles and 0.2% of sim's,
+mispredicts under 1.2%, divides 1.8% of sim. Prefetches: ~17k
+`prefetcht0` a frame in sim, about half of them miss L1 (they fetch).
+
+Ablation windows (n = 4-8 periods each; each window sees other scenes, so
+compare per draw and per tick, not fps):
+
+| window | change against windows 0 and 7 |
+|---|---|
+| 1 FTZ | render per draw +1.7%, draw +0.8%: nothing to gain |
+| 2 no shadow maps | ~120 fewer draws a frame; per draw +5% (the cheap draws went) |
+| 3 no reflection | ~190 fewer draws a frame; per draw -1% |
+| 4 no back end | render per draw -15%: the back end's code and data push HSD's out of the caches |
+| 5 no dlist rechecks | dlist -0.54 ms a frame |
+| 6 no audio | tick -8%, render and draw per draw -4.6%, plus the mixer's own 1.46 ms |
+
+The whole-match profile (`prof.bin`): `xgx_draw` 9.6%, `PObjSetupMtx`
+7.2%, `GXCallDisplayList` 3.0%, `memcpy` 3.0%, `emit_vc` 2.3%,
+`HSD_JObjAnim` 1.8%, `memcmp` 1.6%, `FObjUpdateAnim` 1.5%. The sim alone:
+animation (`HSD_JObjAnim`, `FObjUpdateAnim`, `HSD_FObjInterpretAnim`,
+`HSD_TObjAnimAll`, `HSD_PObjAnimAll`, ...) ~35%, stage collision
+(`mpLib_*`, `mpCheck*`) ~10%, `lbArq_80014BD0` 1.0% (C4 removes it).
+The display-list census matches xemu's (540-690 lists under a second key;
+C2 removes them).
+
+Picked by the conditions under "B. Stalls":
+
+- B1 no: `FP_ASSIST` is under 1% and window 1 was not faster.
+- B2 as `env MX_MEM1_LARGE=1` for round 2: the kernel maps with page
+  tables, so our own 4 MB PDEs. The ranges at least 90% committed are
+  0x10400000-0x10BFFFFF (`[MEM] lazy 10000000: 37 64 64 21 0 0`).
+- B3 for the simulation only: data misses dominate sim (47% against 24%
+  fetch), not render (38% against 39%), and today's prefetches fetch.
+- B4 yes: fetch stall is 39% of render and 35% of draw, and window 4 makes
+  render 15% faster per draw.
+- B5 no: window 5 saves 0.5 ms a frame (the bar is 1 ms).
+- C3 yes: GPU waits are 1.45 ms a frame (the bar is 0.5).
+- E yes: audio is 4.7% on its own, and window 6 takes another ~5% off the
+  game's buckets.
+
 ### Other facts
 
 - The profile is flat: the report's top 192 buckets (12 KB of code) hold
@@ -403,7 +466,7 @@ may go ahead.
 | baseline, dev d1786ec, Fountain 4-CPU | first reading 2026-10-03 (Mac) | ~8.3k / ~0.9-1.1M | 21-22 fps (v43-v45) |
 | baseline, PC, step 0 tools (69bddad) | `gl` / `fodperf` / `fd2` | 7174 / 1.57M; 7740 / 1.03M (±5%); 7781 / 586k | |
 | step 0 tools | done: `[PERFX]`, `[CAL]`, `icount_report.py` (0.1); `[PROFH]`, `prof.bin`, `--full` (0.2); `[CENSUS]`, `[DLCC]`, `census_report.py` (0.3, 0.4); `[SIMH]` (0.5); the pad-alarm wait charged to vsync (it was idle time in sim) | | |
-| round 1 probe build | v49 (196db39): user quit after 130 s, counters good; v50 (345d197, + prefetcht0 umask test) deployed for the full run | | v49: IPC sim 0.34, render 0.35, dlist 0.26, draw 0.53 |
+| round 1 probe build | done: v49 (196db39, 130 s), v50 (345d197, the full 303 s match); read under "Console round 1"; picked B2, B3 (sim), B4, C3, E | | v50: 32.3 fps; IPC sim 0.36, render 0.38, dlist 0.31, draw 0.55 |
 | A1 `-fno-auto-import` | done 0005392: 363 `.refptr` -> 1, `.text` -2.5 KB, gl shots same | -0.3% / 0 (gl); -0.4% / 0 (Fountain) | |
 | C4 ARQ completion in line | done 68a9a42, `[SIMH]` equal, gl shots same | 0 / -9.2% (gl); 0 / -15.2% (Fountain) | |
 | A2 function order | done 083f575: `-ffunction-sections`, `.text$*` renamed to `.text` before the link, `-opt:noicf`, `xbox/order.txt` (xemu instruction profiles of gl, fodperf, fd2, ps, corn); `/opt:ref` drops 133 KB of unreferenced code; `[SIMH]` equal, shots same | 0 / 0 (layout only) | round 2 |
