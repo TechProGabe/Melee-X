@@ -132,6 +132,13 @@ void lbArq_80014BD0(unsigned int source, void* dest, size_t length,
 
     if (rp->callback == NULL) {
         OSRestoreInterrupts(intr);
+#ifdef TARGET_XBOX
+        /* PORT: ARQPostRequest has already copied the data (xbox/src/sdk/
+         * ar.c); deliver the queued completions here, on this thread,
+         * instead of spinning until the ARQ worker thread is scheduled and
+         * does it (two thread switches per load). */
+        ARQFlushQueue();
+#endif
         while (lbArq_80014ABC(rp) != LB_ARQ_STATE_DONE) {
         }
         intr = OSDisableInterrupts();

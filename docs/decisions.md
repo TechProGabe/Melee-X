@@ -622,6 +622,13 @@ marked `PORT:`:
   `-DXGX_CENSUS=1`. `lbShadow_8000F38C` skips a fighter's shadow map and
   `grIzumi_801CCEA0` the reflection while `xhw_ablate` says so, which only
   the probe build's rotation (`-DXHW_PMC=1`, `env MX_ABLATE=1`) ever does.
+- `src/melee/lb/lbarq.c` (`lbArq_80014BD0`), under `TARGET_XBOX`: a
+  blocking ARAM load (no callback) calls `ARQFlushQueue` before it waits
+  for its request. `ARQPostRequest` has already copied the data
+  (`xbox/src/sdk/ar.c`), so the completions are delivered on the game
+  thread at once instead of after two thread switches to the ARQ worker
+  (`docs/fps-plan.md` C4). Same callbacks, same order; the frame-boundary
+  delivery already runs them on the game thread.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after
