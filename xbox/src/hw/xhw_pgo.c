@@ -1,5 +1,5 @@
 /* xhw_pgo.c - the instrumented build's counters out over COM1
- * (docs/fps-plan.md A4; -DXHW_PGO=1, with XBOX_PGO=gen: tools/xbox/pgo.md).
+ * (docs/fps-plan.md A4; -DXHW_PGO=1, with XBOX_PGO=gen: docs/pgo.md).
  *
  * -fprofile-generate code counts into the .lprfc section and refers to
  * __llvm_profile_runtime, which compiler-rt would define and which this
