@@ -310,12 +310,17 @@ nothing. `ftDrawCommon_80080C28` skips the body when the camera-box sphere
 the game itself uses to cull fighters from the main view is outside the
 reflection camera's frustum (edit below).
 
-**The EFB copy's retarget sends the pitch twice (after v45).** The GPU
-stall after an EFB copy (`LIMIT_ZETA` on the clear that follows it) kept
-the copy's colour pitch in the fault dump. A test build that repeats each
-clearing copy 20 times faulted 19 s into a console match; with the pitch
-sent again after the surface format (`-DXGX_COPY_FIX`, `renderer.md`) it
-ran 19 min at 720p without a fault. The stress
+**EFB copies send their surface switches twice (after v45).** The GPU
+stalls after an EFB copy (`LIMIT_ZETA` on the clear that follows it,
+`LIMIT_COLOR` on the copy quad) each kept one colour-side surface write
+that didn't take in the fault dump: the pitch, or the colour DMA object.
+A test build that repeats each clearing copy 20 times faulted 19 s into a
+console match; sending the pitch again after the format held 19 min at
+720p but faulted at 480i after 4 min; also sending the DMA objects, pitch
+and offsets again after a wait for idle (`-DXGX_COPY_FIX=5`,
+`renderer.md`) ran 22 min at 480i with 40 repeats. The cause underneath
+(why a write after a DMA switch is lost) is not known; the second send
+after the wait works around it. The stress
 switch and `scenarios/stall` stay for the next copy-related stall: an
 autopad test build reads its `env` lines, so variants are swapped over FTP
 (`docs/testing.md`) without a rebuild.

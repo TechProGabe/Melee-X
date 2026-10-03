@@ -378,7 +378,7 @@ report.
 | `-DXGX_PB_KICK=<words>` | pushbuffer words per kick (default 8192; v25 and before 4096) |
 | `-DXGX_VB_CACHE_BREAK=0` | no `BREAK_VERTEX_BUFFER_CACHE` at each batch start (v26 added it) |
 | `-DXGX_VBUF_FREE_NOW=0` | evicted display-list vertex buffers go through the deferred free like the rest (v26 freed them at once) |
-| `-DXGX_COPY_FIX=<bits>` | the EFB copy's retarget: 1 (default) sends the surface pitch again after the format (the post-copy `LIMIT_ZETA` stall), 2 clears colour and depth with one `CLEAR_SURFACE`; 0 is v45's. Test builds also read `env MX_COPY_FIX=` from the autopad script |
+| `-DXGX_COPY_FIX=<bits>` | the EFB copy's surface switches (the post-copy GPU stalls): 1 the retarget sends the pitch again after the format, 4 the copy's target and the retarget's DMA objects, pitch and offsets again after a wait for idle, 2 colour and depth cleared by one `CLEAR_SURFACE` (untried); default 5, 0 is v45's. Test builds also read `env MX_COPY_FIX=` from the autopad script |
 | `-DXGX_COPY_STRESS=<n>` | repeat each EFB copy that clears after itself n more times into a scratch texture, with its clear (picture unchanged): makes copy-related GPU faults frequent on the console. Test builds also read `env MX_COPY_STRESS=`; `scenarios/stall` |
 | `-DXGX_OVERLAP=0` | `xgx_present` waits for the GPU before the flip, as up to v32, instead of the next frame's first GPU use (v33) |
 | `-DXGX_DEBUG_VPTRACE[=<n>]` | log the vertex-program selects of two consecutive frames every n (default 600) as `[VPT]` lines: each program (key hash, instructions, key bytes), then the selects in order with `L` where one was loaded; replay with `tools/xbox/vp_policy.py boot.log` |

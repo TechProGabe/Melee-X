@@ -233,11 +233,14 @@ Fix order after RC2 (2026-10-02), details in the entries below:
 - Fixed on dev (after v45): the GPU stall after an EFB copy, the
   100-Man freeze below. The v45 720p burn-in (Fountain, 4 CPUs, items)
   stopped at 38 min with the same `LIMIT_ZETA` on the Z/stencil clear
-  after a copy. The retarget sent the surface pitch before the format,
-  while the copy's swizzled surface was still set, and the colour pitch
-  sometimes stayed the copy's; it now sends it again after the format
-  (`renderer.md`). A stress build (`-DXGX_COPY_STRESS=20`) faulted 19 s
-  into a console match without the fix and ran 19 min clean with it. The
+  after a copy. A colour-side surface write after a context-DMA switch
+  sometimes didn't take (the pitch here; in a 480i stress run the colour
+  DMA object, `LIMIT_COLOR` on the copy quad as in the v1/v2 stalls); the
+  copy and the retarget now send them again after a wait for idle
+  (`renderer.md`). Stress builds (`-DXGX_COPY_STRESS`): no fix faulted
+  19 s into a console match, the final fix ran 22 min clean at 480i with
+  twice the stress. Its frame-rate cost (two more idle waits a copy, ~5
+  copies a frame) is to be measured on the next RC. The
   same burn-in showed no memory leak (free memory flat after 22 min) and
   15-30 fps (median 22) at 720p.
 - 100-Man Melee (Multi-Man Melee) freezes (tester, RC1 = v42, 128 MB

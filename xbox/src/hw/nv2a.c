@@ -349,18 +349,23 @@ static uint32_t* s_pb_base;
  * right after the copy, then PGRAPH busy for good. The fault's register
  * dump kept the copy's colour pitch: the retarget sends the pitch before
  * the format, while the copy's swizzled surface is still set, and now and
- * then that pitch doesn't take. Bits of -DXGX_COPY_FIX: 1 (default) the
- * retarget sends the pitch again after the format (ocx_pb_retarget_repitch;
- * console with XGX_COPY_STRESS=20: 0 faults in 19 min at 720p, against one
- * 19 s in without it), 2 colour and depth cleared by one CLEAR_SURFACE
- * (untried). -DXGX_COPY_STRESS=N repeats each copy that clears after itself
+ * then that pitch doesn't take; a colour DMA object switch can be lost the
+ * same way (LIMIT_COLOR on the copy quad's END, the offset on the target
+ * but the DMA still the back buffer's). Bits of -DXGX_COPY_FIX (default 5):
+ * 1 the retarget sends the pitch again after the format
+ * (ocx_pb_retarget_repitch), 2 colour and depth cleared by one
+ * CLEAR_SURFACE (untried), 4 the copy's target and the retarget's DMA
+ * objects, pitch and offsets sent a second time after a wait for idle.
+ * Console with XGX_COPY_STRESS: 0 faulted 19 s in (720p, N = 20); 1 ran
+ * 19 min clean at 720p but faulted at 480i after 4 min (LIMIT_COLOR); 5
+ * ran 22 min clean at 480i with N = 40. -DXGX_COPY_STRESS=N repeats each copy that clears after itself
  * N more times into a scratch texture, each with its clear (the rect is
  * cleared already, so the picture doesn't change), to make such a fault
  * frequent. Test builds (XHW_AUTOPAD) also take both from the autopad
  * lines "env MX_COPY_FIX=n" and "env MX_COPY_STRESS=n" (copy_switches,
  * tools/xbox/scenarios/stall). */
 #ifndef XGX_COPY_FIX
-#define XGX_COPY_FIX 1
+#define XGX_COPY_FIX 5
 #endif
 #ifndef XGX_COPY_STRESS
 #define XGX_COPY_STRESS 0
@@ -3016,7 +3021,7 @@ static void copy_switches(void) {
     }
 #endif
     ocx_pb_retarget_repitch = s_copy_fix & 1;
-    if (s_copy_fix != 1 || s_copy_stress) xhw_logf("[NV2A] copy clear fix %d, stress %d", s_copy_fix, s_copy_stress);
+    if (s_copy_fix != XGX_COPY_FIX || s_copy_stress) xhw_logf("[NV2A] copy clear fix %d, stress %d", s_copy_fix, s_copy_stress);
 }
 
 static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
@@ -3026,6 +3031,10 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     float v0 = s_cy + src[1] * (float)s_ch / XGX_EFB_H, v1 = v0 + src[3] * (float)s_ch / XGX_EFB_H;
     /* nearest, unless the copy is smaller than its source (copy_dim) */
     uint32_t filt = (float)pw < u1 - u0 - 0.5f || (float)ph < v1 - v0 - 0.5f ? 2 : 1;
+    uint32_t sfmt = (s_bpp == 16 ? NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5 | NV097_SET_SURFACE_FORMAT_ZETA_Z16 << 4
+                                 : NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8 | NV097_SET_SURFACE_FORMAT_ZETA_Z24S8 << 4) |
+                    NV097_SET_SURFACE_FORMAT_TYPE_SWIZZLE << 8 | (uint32_t)log2i((int)pw) << 16 |
+                    (uint32_t)log2i((int)ph) << 24;
     float* v;
     int pf = xhw_perf_enter(XHW_PERF_EFB);
     copy_switches();
@@ -3071,14 +3080,18 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
      * own memory, outside any compressed tile. */
     put1(NV097_SET_CONTEXT_DMA_ZETA, 3);
     put1(NV097_SET_SURFACE_ZETA_OFFSET, (uint32_t)t->mem & 0x03FFFFFF);
-    put1(NV097_SET_SURFACE_FORMAT, (s_bpp == 16 ? NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5 |
-                                                      NV097_SET_SURFACE_FORMAT_ZETA_Z16 << 4
-                                                : NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8 |
-                                                      NV097_SET_SURFACE_FORMAT_ZETA_Z24S8 << 4) |
-                                       NV097_SET_SURFACE_FORMAT_TYPE_SWIZZLE << 8 |
-                                       (uint32_t)log2i((int)pw) << 16 | (uint32_t)log2i((int)ph) << 24);
+    put1(NV097_SET_SURFACE_FORMAT, sfmt);
     put1(NV097_SET_SURFACE_PITCH, pw * bytes | (pw * bytes) << 16);
     put1(NV097_SET_SURFACE_COLOR_OFFSET, (uint32_t)t->mem & 0x03FFFFFF);
+    if (s_copy_fix & 4) {   /* XGX_COPY_FIX 4: the whole target again once the GPU has taken it */
+        put1(NV097_WAIT_FOR_IDLE, 0);
+        put1(NV097_SET_CONTEXT_DMA_COLOR, 3);
+        put1(NV097_SET_CONTEXT_DMA_ZETA, 3);
+        put1(NV097_SET_SURFACE_ZETA_OFFSET, (uint32_t)t->mem & 0x03FFFFFF);
+        put1(NV097_SET_SURFACE_FORMAT, sfmt);
+        put1(NV097_SET_SURFACE_PITCH, pw * bytes | (pw * bytes) << 16);
+        put1(NV097_SET_SURFACE_COLOR_OFFSET, (uint32_t)t->mem & 0x03FFFFFF);
+    }
     put1(NV097_SET_SURFACE_CLIP_HORIZONTAL, pw << 16);
     put1(NV097_SET_SURFACE_CLIP_VERTICAL, ph << 16);
     /* the window clip's max is inclusive (xemu adds 1 too): pw would let
@@ -3149,6 +3162,15 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     {   /* the back buffer is the target before the next clear or draw starts */
         uint32_t* p = pb_begin();
         p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
+        if (s_copy_fix & 4) {   /* and once more after that: the DMA objects, pitch and offsets
+                                 * (colour and depth pitch are equal: frame setup matches them) */
+            p = pb_push1(p, NV097_SET_CONTEXT_DMA_COLOR, 9);
+            p = pb_push1(p, NV097_SET_CONTEXT_DMA_ZETA, 10);
+            p = pb_push1(p, NV097_SET_SURFACE_PITCH, pb_back_buffer_pitch() | pb_back_buffer_pitch() << 16);
+            p = pb_push1(p, NV097_SET_SURFACE_COLOR_OFFSET, 0);
+            p = pb_push1(p, NV097_SET_SURFACE_ZETA_OFFSET, 0);
+            p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
+        }
         pb_end(p);
     }
     memset(s_fixed, 0xFF, sizeof s_fixed);

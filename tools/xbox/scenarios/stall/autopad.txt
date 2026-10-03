@@ -2,10 +2,11 @@
 # 4-CPU Fountain of Dreams match with each clearing copy repeated
 # MX_COPY_STRESS times. Console: upload as D:\autopad.txt next to a
 # -DXHW_AUTOPAD=1 default.xbe; MX_COPY_FIX picks the fix (nv2a.c
-# XGX_COPY_FIX; 0, v45's, faulted 19 s in at 720p). docs/testing.md.
+# XGX_COPY_FIX; 0, v45's, faulted 19 s in at 720p; 1 after 4 min at 480i).
+# docs/testing.md.
 env MELEE_BOOT_SCENE=vs
 env MELEE_DEBUG_VS_STAGE=2
 env MELEE_DEBUG_VS=cpu4
 env MELEE_SEED=1
 env MX_COPY_STRESS=20
-env MX_COPY_FIX=1
+env MX_COPY_FIX=5

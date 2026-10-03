@@ -132,17 +132,22 @@ was a render pass of its own (~75 µs of emulation, ~90% of a match frame).
   `LIMIT_ZETA` as well as `LIMIT_COLOR`: v43's attempt. The first fault now
   also logs PGRAPH 0x400700-0x4008FC and the last eight copies with where
   each one's `END` sits in the pushbuffer.
-- After an EFB copy the retarget to the back buffer sends the surface
-  pitch a second time, after the format (`XGX_COPY_FIX` bit 1, default;
-  `ocx_pb_retarget_repitch` in `patch_pbkit.py`). It sent the pitch before
-  the format, while the copy's swizzled surface was still set, and now and
-  then the colour pitch stayed the copy's: the Z/stencil clear after the
-  copy then faulted with `LIMIT_ZETA` and PGRAPH stayed busy (tester's
-  100-Man freeze on v42, the v45 burn-in at 38 min; about 1 in 300k
-  copies). `-DXGX_COPY_STRESS=N` repeats each clearing copy N more times
-  into a scratch texture to make such a fault frequent: without the fix
-  the console faulted 19 s into a match at N = 20, with it ran 19 min
-  clean. Bit 2 (one `CLEAR_SURFACE` for colour and depth) is untried.
+- An EFB copy's surface switches are sent twice (`XGX_COPY_FIX` 5, the
+  default). Now and then a colour-side surface write right after a
+  context-DMA switch didn't take on the console: the colour pitch stayed
+  the copy's after the retarget (the Z/stencil clear after the copy then
+  faulted `LIMIT_ZETA`: the tester's 100-Man freeze on v42, the v45 burn-in
+  at 38 min), or the copy's colour DMA stayed the back buffer's with the
+  offset on the target (`LIMIT_COLOR` on the copy quad's `END`, the v1/v2
+  stalls' form). PGRAPH stays busy after either. Bit 1: the retarget sends
+  the pitch again after the format (`ocx_pb_retarget_repitch`,
+  `patch_pbkit.py`); bit 4: after a wait for idle the copy sends its
+  target (DMA objects, format, pitch, offsets) again, and the retarget its
+  DMA objects, pitch and offsets. `-DXGX_COPY_STRESS=N` repeats each
+  clearing copy N more times into a scratch texture to make such faults
+  frequent: on the console fix 0 faulted 19 s into a match (720p, N = 20),
+  fix 1 after 4 min at 480i, fix 5 ran 22 min clean at 480i with N = 40.
+  Bit 2 (one `CLEAR_SURFACE` for colour and depth) is untried.
 - An EFB copy reads exactly its source rect: a target pixel's centre
   samples the source pixel under it (`efb_copy_gpu`'s corners, `pix_x`/
   `pix_y` in `read_rect_cpu`). Until v40 both paths sampled one pixel right
