@@ -200,6 +200,22 @@ turns it on. The profiler and autopad builds, which every console test
 round uses, imply `XHW_TEST_BUILD` and keep BACK screenshots and the
 counter (`docs/testing.md`).
 
+**The profiler keeps each match's whole profile (fps-plan 0.2).** The
+periodic `[PROF]` report has only the hottest 192 buckets, ~60% of the
+samples. Profiler builds also count every code bucket of a match in 32-bit
+histograms (all samples and the simulation's, ~550 KB), from the scene's
+entry (`xsdk_scene_log`) to the match's end, and write them once: to
+`prof.bin`, and as `[PROFH]` lines in autopad builds (`docs/testing.md`).
+The match's end comes from `xhw_led_match_end`, already called next to the
+`[GAME] match ends` line, so no imported code changed; the game thread only
+raises a flag and the sampler thread does the writing, as it does for the
+periodic report. One dump per match instead of more reports: each report
+is a hitch. `prof_report.py` now shares a 64-byte bucket among the functions
+it overlaps (by bytes, weighted by sample density) instead of crediting it
+to the function at its start, which put hot neighbours' samples on cold
+functions (`pc_load_disc_fonts`, `xhw_splash_release`); the map was never
+missing static functions.
+
 **Logs that survive a long session.** `boot.log` keeps the first 4 MB, then
 the log alternates between `boot2.log` and `boot3.log` (2 MB each), and
 `[DRAW]` trace lines go to `trace.log`: v28's trace filled the old 2 MB cap

@@ -389,5 +389,5 @@ console still has to confirm. Keep the plan's Status table current.
 | item | state | instructions (draw / tick) | console |
 |---|---|---|---|
 | baseline, dev d1786ec, Fountain 4-CPU | first reading 2026-10-03 (Mac) | ~8.3k / ~0.9-1.1M | 21-22 fps (v43-v45) |
-| step 0 tools | not started | | |
+| step 0 tools | 0.2 whole profile done (branch `fps-prof`: `[PROFH]`, `prof.bin`, `prof_report.py --full`, bucket sharing); 0.1, 0.3-0.5 not started | | |
 | round 1 probe build | not started | | |

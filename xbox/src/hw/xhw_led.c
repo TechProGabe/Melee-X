@@ -87,7 +87,10 @@ void xhw_led_timer(int seconds_left) {
     /* 0 is TIME!: the pattern stays up until the match's end, a frame later */
     if (seconds_left >= 1 && seconds_left <= 10) post(EV_TIMER, seconds_left, 0);
 }
-void xhw_led_match_end(int outcome) { post(EV_END, outcome, 0); }
+void xhw_led_match_end(int outcome) {
+    xhw_prof_match_end();   /* the game's only match-end hook: the whole-match profile goes out too */
+    post(EV_END, outcome, 0);
+}
 void xhw_led_preview(void) { post(EV_PREVIEW, 0, 0); }
 
 /* ---- worker ---- */

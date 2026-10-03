@@ -64,6 +64,11 @@ void xhw_perf_audio(uint64_t ticks);           /* mixer thread: time spent mixin
 void xhw_perf_frame(uint32_t draws, uint32_t verts);   /* once per presented frame */
 void xhw_perf_ticks(uint32_t n);               /* simulation ticks run before a render pass */
 int xhw_perf_bucket(void);                     /* the game thread's current bucket (the profiler's [PROFS]) */
+/* -DXHW_PROF=1 (xhw_prof.c): the whole-match profile restarts at each scene's
+ * entry and is written out once at the match's end ([PROFH], prof.bin);
+ * no-ops in other builds. Game thread; the sampler does the work. */
+void xhw_prof_scene_enter(void);
+void xhw_prof_match_end(void);                 /* from xhw_led_match_end: TIME!/GAME! */
 
 /* ---- threads and locks ---- */
 typedef struct xhw_mutex xhw_mutex;
