@@ -78,6 +78,9 @@ COMPILE_FLAGS = [
     # Everything links statically: data goes straight to its symbol, not
     # through a mingw .refptr stub (an extra load per access).
     '-fno-auto-import',
+    # Each function its own section, so the link can lay the code out by
+    # profile (xbox/order.txt, tools/xbox/make_order.py).
+    '-ffunction-sections',
 ]
 
 

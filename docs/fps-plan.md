@@ -386,8 +386,39 @@ console still has to confirm. Keep the plan's Status table current.
 
 ## Status
 
+Windows PC (2026-10-03): xemu runs `-icount shift=1,sleep=off` under TCG
+(no WHPX), a `gl` match in ~2.5 minutes; `[CAL]` measures 499.9
+instructions per guest microsecond. Instructions below are aggregates of
+`tools/xbox/icount_report.py` (audio mixer taken out): render + dlist +
+draw per draw / sim per tick. Two runs of one build agree within 0.6% on
+`gl`; Fountain's sim per tick varied 5% until C4 (the lbArq spin), now
+0.5%. MSYS2's LLVM 21.1.8 has `llvm-profdata` and `InstrProfData.inc`
+(raw version 10); `-fno-auto-import`, `-flto=thin` and
+`-fprofile-generate` work for the game triple. The game thread's x87
+control word is `027f` (53-bit precision) on xemu and the console: LTO
+may go ahead.
+
 | item | state | instructions (draw / tick) | console |
 |---|---|---|---|
 | baseline, dev d1786ec, Fountain 4-CPU | first reading 2026-10-03 (Mac) | ~8.3k / ~0.9-1.1M | 21-22 fps (v43-v45) |
-| step 0 tools | 0.2 whole profile done (branch `fps-prof`: `[PROFH]`, `prof.bin`, `prof_report.py --full`, bucket sharing); 0.1, 0.3-0.5 not started | | |
-| round 1 probe build | not started | | |
+| baseline, PC, step 0 tools (69bddad) | `gl` / `fodperf` / `fd2` | 7174 / 1.57M; 7740 / 1.03M (±5%); 7781 / 586k | |
+| step 0 tools | done: `[PERFX]`, `[CAL]`, `icount_report.py` (0.1); `[PROFH]`, `prof.bin`, `--full` (0.2); `[CENSUS]`, `[DLCC]`, `census_report.py` (0.3, 0.4); `[SIMH]` (0.5); the pad-alarm wait charged to vsync (it was idle time in sim) | | |
+| round 1 probe build | v49 (196db39): user quit after 130 s, counters good; v50 (345d197, + prefetcht0 umask test) deployed for the full run | | v49: IPC sim 0.34, render 0.35, dlist 0.26, draw 0.53 |
+| A1 `-fno-auto-import` | done 0005392: 363 `.refptr` -> 1, `.text` -2.5 KB, gl shots same | -0.3% / 0 (gl); -0.4% / 0 (Fountain) | |
+| C4 ARQ completion in line | done 68a9a42, `[SIMH]` equal, gl shots same | 0 / -9.2% (gl); 0 / -15.2% (Fountain) | |
+| A2 function order | done: `-ffunction-sections`, `.text$*` renamed to `.text` before the link, `-opt:noicf`, `xbox/order.txt` (xemu instruction profiles of gl, fodperf, fd2, ps, corn); `/opt:ref` drops 133 KB of unreferenced code; `[SIMH]` equal, shots same | 0 / 0 (layout only) | round 2 |
+
+Census (xemu, Fountain 4-CPU, 728 draws a frame): main pass 71% (fighters
+314, stage 144, effects 30, HUD 21 a frame), fighter shadow maps 92 draws
+(13%; 70% of them change only the position matrix), the reflection 119
+(16%: fighters 85, effects 28). Green Greens: shadow maps 92 of 582. The
+display-list cache holds 540-820 lists under a second format key, 1.4-1.7
+MB of the 4 MB vertex pool, on both stages (C2's first target).
+
+v49 console counters (Fountain 4-CPU, 26 periods, few per pair; the full
+run is v50): instruction-fetch stalls (`IFU_MEM_STALL`) are 16-21% of sim's
+cycles, 32-37% of render's, 19-27% of dlist's and 36-38% of draw's;
+`L2_IFETCH` ~300k a frame in render with few `L2_LINES_IN`: the code fits
+L2, not the 16 KB L1. `FP_ASSIST` 58k a frame in render, 13k in sim;
+DAZ is not available (MXCSR mask ffbf). The kernel maps 0x80000000-
+0x83FFFFFF with page tables, not 4 MB pages (`[CPU] pde`).

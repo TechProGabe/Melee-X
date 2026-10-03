@@ -112,6 +112,29 @@ every extern variable through a `.refptr` stub (an extra load), for
 DLL imports this image never has; 362 stubs, one left (a weak reference in
 `src/pc/audio.c`).
 
+### Code layout (`xbox/order.txt`)
+
+Every unit is compiled with `-ffunction-sections`, and the link lays the
+code out by `xbox/order.txt` (`-order:@`, names without the i386
+underscore): the functions the simulation runs, hottest first, down to 99%
+of its samples (~420 functions, ~220 KB), the same for the render pass and
+the back end (~280, ~170 KB), every other function that ran in a match,
+then the rest in link order. The mingw triple names each function's section
+`.text$<name>`, which `/order` cannot move (lld-link orders within one
+section name), so a pre-link step renames them to plain `.text`, as nxdk's
+own triple does (`tools/xbox/coff_text_plain.py`). `-opt:noicf`: identical
+functions are never folded (the game compares function pointers); the
+default `-opt:ref` drops ~130 KB of functions nothing calls. Regenerate the
+order from whole-match profiles of a `-DXHW_PROF=1` build (xemu `-icount`
+runs give instruction profiles; the console's `prof.bin` cycle profiles):
+
+```sh
+python3 tools/xbox/make_order.py --map <that build's melee_x.map> gl.log fodperf.log ... -o xbox/order.txt
+```
+
+A name the order lists and the link doesn't have is skipped quietly
+(`-ignore:4037`), so a stale order only costs layout.
+
 System headers are nxdk's pdclib. `xbox/include/game/` fills what pdclib
 lacks (`<sys/types.h>`, `M_PI`, `va_list` in aurora's `os.h`).
 
