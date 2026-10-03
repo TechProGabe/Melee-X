@@ -410,6 +410,7 @@ may go ahead.
 | A3 ThinLTO | done ae9181c, opt-in `XBOX_LTO=1` (distributed backends, import limit 10: +46 KB) | -2.0% / -1.6% (gl); -1.8% / -2.3% (Fountain) | round 2 |
 | A4 PGO | done ae9181c + d3aca6b, opt-in `XBOX_PGO=xbox/melee.profdata` (`docs/pgo.md`); profile committed with the user's approval | PGO alone: -2.0% / -12.5% (gl), -2.1% / -7.4% (Fountain); with ThinLTO: -9.8% / -19.4% (gl), -9.9% / -16.6% (Fountain), render -17%, `.text` unchanged | round 2 |
 | C1 work removed | shadow maps of inactive shadows: none in 4-CPU matches (census pass 3), nothing to skip; the reflection's effects (28 draws) and off-screen items not looked at yet | | |
+| C5 envelope blends | not done: the fused blend (`HSD_MtxConcatScaledAdd`, ~30 instructions a joint) costs about what validating a cached blend against the joints' matrices would, and nothing reliable bumps an epoch (game code writes `jobj->mtx` too); the per-pass costs are the view concat and `HSD_MtxInverseTranspose`, which depend on the pass | | |
 | C2 vertex pool | done 5be8438: key over enabled attributes' formats; Fountain 821 duplicate lists (1.7 MB) -> 0, pool free 4 KB -> 1.8 MB, rebuilds after warm-up ~0 | dlist -11%, render +1% | round 2 (the console rebuilt 700-3300 lists per 600 frames) |
 
 All gates: xemu `-icount`, `[SIMH]` identical up to the match's end, gl
