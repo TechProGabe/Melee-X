@@ -22,22 +22,36 @@ static int ends_ci(const char* s, const char* suf) {
     return a >= b && _stricmp(s + a - b, suf) == 0;
 }
 
-/* First .iso/.gcm/.ciso in the XBE's folder, any name. xsdk_boot checks that
- * it really is GALE01 (revision 2 is the target; 0 and 1 are accepted). */
-static int find_disc_image(char* out, size_t cap) {
+/* First .iso/.gcm/.ciso in a folder, any name. xsdk_boot checks that it
+ * really is GALE01 (revision 2 is the target; 0 and 1 are accepted). */
+static int find_image_in(const char* dir, char* out, size_t cap) {
     WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA("D:\\*", &fd);
+    char pattern[MAX_PATH];
+    HANDLE h;
+    snprintf(pattern, sizeof pattern, "%s\\*", dir);
+    h = FindFirstFileA(pattern, &fd);
     if (h == INVALID_HANDLE_VALUE) return 0;
     do {
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
         if (ends_ci(fd.cFileName, ".iso") || ends_ci(fd.cFileName, ".gcm") || ends_ci(fd.cFileName, ".ciso")) {
-            snprintf(out, cap, "D:\\%s", fd.cFileName);
+            snprintf(out, cap, "%s\\%s", dir, fd.cFileName);
             FindClose(h);
             return 1;
         }
     } while (FindNextFileA(h, &fd));
     FindClose(h);
     return 0;
+}
+
+/* Next to the XBE. Test builds also take the release folder's image, so a
+ * console round can put build variants in folders of their own
+ * (F:\Applications\Melee-X-r2a\default.xbe, ...) without a copy of the disc
+ * in each (docs/fps-plan.md, round 2). */
+static int find_disc_image(char* out, size_t cap) {
+    if (find_image_in("D:", out, cap)) return 1;
+    if (!XHW_TEST_BUILD) return 0;
+    if (!nxIsDriveMounted('F') && !nxMountDrive('F', "\\Device\\Harddisk0\\Partition6\\")) return 0;
+    return find_image_in("F:\\Applications\\Melee-X", out, cap);
 }
 
 void xhw_error_screen(const char* title, const char* const* lines) {
