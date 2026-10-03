@@ -21,6 +21,14 @@
  * bucket was the simulation (xhw_perf_bucket), to tell its cost from the
  * render pass's in the shared HSD code (animation, matrices).
  *
+ * The whole match: every bucket (all samples and the simulation's) is also
+ * counted in 32-bit histograms the periodic report doesn't reset. They
+ * restart at each scene's entry (xhw_prof_scene_enter) and are written once
+ * at the match's end (xhw_prof_match_end, TIME!/GAME!): as [PROFH] lines in
+ * autopad builds, and as E:\UDATA\4d580001\prof.bin in every profiler
+ * build (prof_report.py --full reads either). The game thread only raises a
+ * flag; the sampler, which already logs from its own thread, does the work.
+ *
  * xhw_thread_eip() is always built: the watchdog uses it to say where the
  * game thread is stuck. */
 #include <windows.h>
@@ -73,6 +81,25 @@ static uint16_t* s_hist;
 static uint16_t* s_hist_sim;   /* the samples taken during the simulation ticks */
 static uint32_t s_nbuckets;
 static uint32_t s_placed, s_outside, s_waiting, s_noframe, s_sim_placed;
+
+/* the whole match: not reset by report() */
+#ifndef XHW_AUTOPAD
+#define XHW_AUTOPAD 0
+#endif
+#define PROFBIN_MAGIC 0x4850584Du   /* "MXPH" */
+#define PROFBIN_VERSION 1
+typedef struct {   /* prof.bin's header; then u32 all[nbuckets], u32 sim[nbuckets] */
+    uint32_t magic, version, image_base, bucket_shift, nbuckets;
+    uint32_t match;                                  /* 1 for the boot's first match */
+    uint32_t ms;                                     /* from the scene's entry to the match's end */
+    uint32_t placed, outside, waiting, noframe, sim_placed;
+} ProfBinHeader;
+static uint32_t* s_whole;      /* the code's buckets only (code_end) */
+static uint32_t* s_whole_sim;
+static uint32_t s_wn;
+static ProfBinHeader s_wh;     /* its counters run with the histograms */
+static uint64_t s_whole_t0;
+static volatile int s_whole_reset, s_whole_dump;   /* raised by the game thread, served by the sampler */
 
 /* return address -> samples, open addressing */
 #define CT_SIZE 4096
@@ -233,6 +260,114 @@ static void report(void) {
     xhw_log(s_rep);
 }
 
+/* the end of the XBE's executable sections (.text): the game thread runs
+ * nothing past it, and the whole image (.bss included) would be ~1.7x the
+ * buckets. XBE header: +0x11C section count, +0x120 their headers (56 bytes:
+ * flags, address, size, ...; flag 4 = executable). */
+static uint32_t code_end(void) {
+    const uint8_t* xbe = (const uint8_t*)xhw_image_base;
+    const uint8_t* sh = (const uint8_t*)*(const uint32_t*)(xbe + 0x120);
+    uint32_t n = *(const uint32_t*)(xbe + 0x11C), i, end = 0;
+    for (i = 0; i < n && i < 64; i++, sh += 56) {
+        uint32_t flags = *(const uint32_t*)sh, va = *(const uint32_t*)(sh + 4), size = *(const uint32_t*)(sh + 8);
+        if ((flags & 4) && va + size > end) end = va + size;
+    }
+    return end > xhw_image_base && end <= xhw_image_end ? end : xhw_image_end;
+}
+
+void xhw_prof_scene_enter(void) { s_whole_reset = 1; }
+void xhw_prof_match_end(void) { s_whole_dump = 1; }
+
+static void whole_clear(void) {
+    if (!s_whole) return;
+    memset(s_whole, 0, s_wn * sizeof s_whole[0]);
+    memset(s_whole_sim, 0, s_wn * sizeof s_whole_sim[0]);
+    s_wh.placed = s_wh.outside = s_wh.waiting = s_wh.noframe = s_wh.sim_placed = 0;
+    s_whole_t0 = xhw_time_ns();
+}
+
+/* s_rep out as one log write once it is nearly full, and at the end */
+static void rep_flush(int force) {
+    if (!s_rlen || (!force && s_rlen < (int)sizeof s_rep - 1024)) return;
+    if (s_rep[s_rlen - 1] == '\n') s_rlen--;
+    s_rep[s_rlen] = '\0';
+    xhw_log(s_rep);
+    s_rlen = 0;
+}
+
+/* One histogram as [PROFH] lines: "<tag> <first bucket> <count>,<count>,..."
+ * in hex, where "+n" stands for n empty buckets; lines stay under ~500
+ * bytes. Returns the sum of the counts (the end line's check). */
+static uint32_t whole_lines(const char* tag, const uint32_t* h) {
+    uint32_t i = 0, sum = 0, gap;
+    int line = -1;   /* s_rlen where the open line started, -1: none */
+    while (i < s_wn) {
+        if (!h[i]) {
+            for (gap = 0; i < s_wn && !h[i]; i++) gap++;
+            if (line < 0) continue;
+            if (i < s_wn && s_rlen - line <= 480) {
+                rep(",+%x", gap);
+            } else {
+                rep("\n");
+                line = -1;
+            }
+            continue;
+        }
+        if (line >= 0 && s_rlen - line > 480) {
+            rep("\n");
+            line = -1;
+        }
+        if (line < 0) {
+            rep_flush(0);
+            line = s_rlen;
+            rep("[PROFH] %s %x %x", tag, i, h[i]);
+        } else {
+            rep(",%x", h[i]);
+        }
+        sum += h[i++];
+    }
+    if (line >= 0) rep("\n");
+    return sum;
+}
+
+/* E:\UDATA\4d580001\prof.bin: the header, then both histograms */
+static void whole_file(void) {
+    DWORD w;
+    HANDLE f = CreateFileA(XHW_UDATA_DIR "prof.bin", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+                           NULL);
+    if (f == INVALID_HANDLE_VALUE) {
+        xhw_log("[PROFH] could not create prof.bin");
+        return;
+    }
+    WriteFile(f, &s_wh, sizeof s_wh, &w, NULL);
+    WriteFile(f, s_whole, s_wn * sizeof s_whole[0], &w, NULL);
+    WriteFile(f, s_whole_sim, s_wn * sizeof s_whole_sim[0], &w, NULL);
+    xhw_flush_handle(f);
+    CloseHandle(f);
+}
+
+static void whole_dump(void) {
+    uint64_t t = xhw_time_ns();
+    s_wh.match++;
+    s_wh.ms = (uint32_t)((t - s_whole_t0) / 1000000u);
+    whole_file();
+    if (XHW_AUTOPAD) {
+        uint32_t all, sim;
+        s_rlen = 0;
+        rep("[PROFH] begin match %u: base %08x shift %u buckets %x, %u ms, %u samples: %u in image, %u outside, "
+            "%u while waiting, %u unreadable, %u in the simulation\n",
+            s_wh.match, xhw_image_base, BUCKET_SHIFT, s_wn, s_wh.ms, s_wh.placed + s_wh.outside,
+            s_wh.placed, s_wh.outside, s_wh.waiting, s_wh.noframe, s_wh.sim_placed);
+        all = whole_lines("all", s_whole);
+        sim = whole_lines("sim", s_whole_sim);
+        rep("[PROFH] end match %u: all %u sim %u\n", s_wh.match, all, sim);
+        rep_flush(1);
+    }
+    xhw_logf("[PROF] whole-match profile %u written: %u samples in %u ms (prof.bin%s), %u ms to write",
+             s_wh.match, s_wh.placed + s_wh.outside, s_wh.ms, XHW_AUTOPAD ? ", [PROFH]" : "",
+             (unsigned)((xhw_time_ns() - t) / 1000000u));
+}
+
 static DWORD WINAPI sampler(LPVOID arg) {
     uint64_t next = xhw_time_ns() + (uint64_t)XHW_PROF_SECS * 1000000000ull;
     (void)arg;
@@ -240,23 +375,46 @@ static DWORD WINAPI sampler(LPVOID arg) {
         ULONG eip, esp = 0, caller = 0;
         KIRQL old;
         Sleep(1);
+        if (s_whole_dump) {   /* before a reset raised with it: the match's end comes first */
+            s_whole_dump = 0;
+            if (s_whole) whole_dump();
+            whole_clear();
+        }
+        if (s_whole_reset) {
+            s_whole_reset = 0;
+            whole_clear();
+        }
         old = KeRaiseIrqlToDpcLevel();   /* the game thread can't run or exit while we read its stack */
         if (!s_game || s_game->State != 1) {
             s_waiting++;
+            s_wh.waiting++;
             eip = 0;
         } else {
             eip = xhw_thread_eip(s_game, &esp);
-            if (!eip) s_noframe++;
-            else if (esp) caller = caller_of(esp);
+            if (!eip) {
+                s_noframe++;
+                s_wh.noframe++;
+            } else if (esp) {
+                caller = caller_of(esp);
+            }
         }
         KfLowerIrql(old);
         if (eip >= xhw_image_base && eip < xhw_image_end) {
             uint32_t b = (eip - xhw_image_base) >> BUCKET_SHIFT;
+            int sim = xhw_perf_bucket() == XHW_PERF_LOGIC;
             if (s_hist[b] != 0xFFFF) s_hist[b]++;
             s_placed++;
-            if (s_hist_sim && xhw_perf_bucket() == XHW_PERF_LOGIC) {
+            if (s_hist_sim && sim) {
                 if (s_hist_sim[b] != 0xFFFF) s_hist_sim[b]++;
                 s_sim_placed++;
+            }
+            if (s_whole && b < s_wn) {
+                s_whole[b]++;
+                s_wh.placed++;
+                if (sim) {
+                    s_whole_sim[b]++;
+                    s_wh.sim_placed++;
+                }
             }
             if (caller) {
                 ct_add(s_callers, caller);
@@ -264,6 +422,7 @@ static DWORD WINAPI sampler(LPVOID arg) {
             }
         } else if (eip) {
             s_outside++;
+            s_wh.outside++;
         }
         if (xhw_time_ns() >= next) {
             report();
@@ -281,6 +440,21 @@ void xhw_prof_start(void) {
     s_hist_sim = (uint16_t*)calloc(s_nbuckets, sizeof s_hist_sim[0]);
     s_libc = (CallerTable*)calloc(1, sizeof *s_libc);
     s_callers = (CallerTable*)calloc(1, sizeof *s_callers);
+    s_wn = (code_end() - xhw_image_base + (1u << BUCKET_SHIFT) - 1) >> BUCKET_SHIFT;
+    s_whole = (uint32_t*)calloc(s_wn, sizeof s_whole[0]);
+    s_whole_sim = (uint32_t*)calloc(s_wn, sizeof s_whole_sim[0]);
+    if (!s_whole || !s_whole_sim) {   /* the periodic report still works without them */
+        free(s_whole);
+        free(s_whole_sim);
+        s_whole = s_whole_sim = NULL;
+    }
+    s_wh.magic = PROFBIN_MAGIC;
+    s_wh.version = PROFBIN_VERSION;
+    s_wh.image_base = xhw_image_base;
+    s_wh.bucket_shift = BUCKET_SHIFT;
+    s_wh.nbuckets = s_wn;
+    s_whole_t0 = xhw_time_ns();
+    DeleteFileA(XHW_UDATA_DIR "prof.bin");   /* an older boot's would read as this one's */
     if (!s_hist || !s_libc || !s_callers) return;
     s_libc_lo = 0xFFFFFFFFu;
     for (i = 0; i < 4; i++) {
@@ -294,9 +468,12 @@ void xhw_prof_start(void) {
         SetThreadPriority(h, THREAD_PRIORITY_TIME_CRITICAL);
         CloseHandle(h);
     }
-    xhw_logf("[PROF] sampling the game thread every 1 ms, %u KB of buckets, callers of %08x-%08x",
-             s_nbuckets * 2 / 1024, s_libc_lo, s_libc_hi);
+    xhw_logf("[PROF] sampling the game thread every 1 ms, %u KB of buckets (%u KB for the whole match), "
+             "callers of %08x-%08x",
+             s_nbuckets * 4 / 1024, s_whole ? s_wn * 8 / 1024 : 0, s_libc_lo, s_libc_hi);
 }
 #else
 void xhw_prof_start(void) {}
+void xhw_prof_scene_enter(void) {}
+void xhw_prof_match_end(void) {}
 #endif

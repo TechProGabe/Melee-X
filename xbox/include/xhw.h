@@ -67,6 +67,11 @@ int xhw_perf_bucket(void);                     /* the game thread's current buck
 /* MXCSR flush-to-zero (+ DAZ where the CPU has it) on the calling thread:
  * the probe's ablation window 1 (xhw_pmc.c; xhw_ablate in xgx_probe.h) */
 void xhw_set_ftz(int on);
+/* -DXHW_PROF=1 (xhw_prof.c): the whole-match profile restarts at each scene's
+ * entry and is written out once at the match's end ([PROFH], prof.bin);
+ * no-ops in other builds. Game thread; the sampler does the work. */
+void xhw_prof_scene_enter(void);
+void xhw_prof_match_end(void);                 /* from xhw_led_match_end: TIME!/GAME! */
 
 /* ---- threads and locks ---- */
 typedef struct xhw_mutex xhw_mutex;
