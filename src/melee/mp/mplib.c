@@ -1622,6 +1622,97 @@ void mpLib_8004ED5C(int line_id, float* x0_out, float* y0_out, float* x1_out,
     *y1_out = y1_f3;
 }
 
+#ifdef TARGET_XBOX
+/* PORT: exact rejects for the line loops below, which tested every enabled
+ * line of every near joint in full (mpLib_8004ED5C's square root and
+ * divisions, mpRemap2d's double division, mpLineIntersection*) though
+ * nearly all of them are far from the query. A line whose box is clear of
+ * the query's by a margin is skipped before that work: the full test would
+ * have failed the bounding tests at the top of mpLineIntersection,
+ * mpLineIntersectionH or mpLineIntersectionV (strict compares, 0.0001 on
+ * the axis H and V test against one end) and returned false, writing
+ * nothing. The margins cover the rounding, mpLib_8004ED5C's lengthening and
+ * mpRemap2d's move with room to spare while the query is inside +-2^16; a
+ * query outside that, or with an infinity or a NaN, makes a NaN box, which
+ * rejects nothing. tools/xbox/test_mplib.py checks the loops against the
+ * code before, bit for bit; the proofs are in docs/decisions.md. */
+typedef struct mpLineBox {
+    float lx, ly, hx, hy;
+} mpLineBox;
+
+/// the box of segment a-b, its y less @p y_shift, widened by @p margin
+static inline void mpLineBoxInit(mpLineBox* box, float ax, float ay, float bx,
+                                 float by, float y_shift, float margin)
+{
+    if (ABS(ax) < 65536.0F && ABS(ay) < 65536.0F && ABS(bx) < 65536.0F &&
+        ABS(by) < 65536.0F && ABS(y_shift) < 65536.0F)
+    {
+        box->lx = (ax < bx ? ax : bx) - margin;
+        box->hx = (ax < bx ? bx : ax) + margin;
+        box->ly = ((ay < by ? ay : by) - y_shift) - margin;
+        box->hy = ((ay < by ? by : ay) - y_shift) + margin;
+    } else {
+        box->lx = box->ly = box->hx = box->hy = __builtin_nanf("");
+    }
+}
+
+/// whether segment (x0,y0)-(x1,y1) is wholly on one side of the box
+/// widened by @p rx and @p ry
+static inline bool mpLineBoxOut(const mpLineBox* box, float rx, float ry,
+                                float x0, float y0, float x1, float y1)
+{
+    float lx = box->lx - rx;
+    float hx = box->hx + rx;
+    float ly = box->ly - ry;
+    float hy = box->hy + ry;
+
+    return (x0 < lx && x1 < lx) || (x0 > hx && x1 > hx) ||
+           (y0 < ly && y1 < ly) || (y0 > hy && y1 > hy);
+}
+
+/// how far mpRemap2d (line a0-a1 to b0-b1) can move a point on one axis,
+/// plus 1: |b0 - a0| + |b1 - a1| bounds its interpolating branch and
+/// |b0 - a0| + |b1 - a0| its other one. Infinite or NaN with the inputs.
+static inline float mpRemapReach(float a0, float a1, float b0, float b1)
+{
+    return ABS(b0 - a0) + ABS(b1 - a1) + ABS(b1 - a0) + 1.0F;
+}
+
+/// for mpLib_800511A4_RightWall and mpLib_800515A0_LeftWall: whether
+/// mpLineIntersection(b0, b1, P, (vx,vy)) fails its bounding test, P being
+/// (px,py) remapped from line a0-a1 to b0-b1. @p edge is b0-b1's box
+/// (margin 0: mpLineIntersection's own compares), @p reach the same widened
+/// by mpRemapReach.
+static inline bool mpEdgeBoxOut(const mpLineBox* edge, const mpLineBox* reach,
+                                float vx, float vy, float px, float py)
+{
+    return (vx < edge->lx && px < reach->lx) ||
+           (vx > edge->hx && px > reach->hx) ||
+           (vy < edge->ly && py < reach->ly) ||
+           (vy > edge->hy && py > reach->hy);
+}
+
+/// mpEdgeBoxOut's boxes; NaN (no reject) unless all eight coordinates are
+/// inside +-2^16
+static inline void mpEdgeBoxInit(mpLineBox* edge, mpLineBox* reach, float a0x,
+                                 float a0y, float a1x, float a1y, float b0x,
+                                 float b0y, float b1x, float b1y)
+{
+    mpLineBoxInit(edge, b0x, b0y, b1x, b1y, 0.0F, 0.0F);
+    mpLineBoxInit(reach, a0x, a0y, a1x, a1y, 0.0F, 0.0F);
+    if (reach->lx == reach->lx) {
+        float rx = mpRemapReach(a0x, a1x, b0x, b1x);
+        float ry = mpRemapReach(a0y, a1y, b0y, b1y);
+        reach->lx = edge->lx - rx;
+        reach->hx = edge->hx + rx;
+        reach->ly = edge->ly - ry;
+        reach->hy = edge->hy + ry;
+    } else {
+        *edge = *reach;
+    }
+}
+#endif
+
 bool mpCheckFloor(float ax, float ay, float bx, float by, float y_offset,
                   Vec3* vec_out, int* line_id_out, u32* flags_out,
                   Vec3* normal_out, int line_id_skip, int joint_id_skip,
@@ -1633,6 +1724,9 @@ bool mpCheckFloor(float ax, float ay, float bx, float by, float y_offset,
     int i_r28;
     bool result_r27;
     bool already_checked;
+#ifdef TARGET_XBOX
+    mpLineBox box;
+#endif
     PAD_STACK(8);
 
     result_r27 = false;
@@ -1641,6 +1735,10 @@ bool mpCheckFloor(float ax, float ay, float bx, float by, float y_offset,
     if (!already_checked) {
         mpBoundingCheck2(ax, ay, bx, by);
     }
+#ifdef TARGET_XBOX
+    /* PORT: mpLineBox, in the lines' own y (before y_offset) */
+    mpLineBoxInit(&box, ax, ay, bx, by, y_offset, 4.0F);
+#endif
 
     for (joint = jointListStart; joint != NULL; joint = joint->next) {
         CollLine* line_r26;
@@ -1690,6 +1788,26 @@ bool mpCheckFloor(float ax, float ay, float bx, float by, float y_offset,
             {
                 continue;
             }
+
+#ifdef TARGET_XBOX
+            /* PORT: skip a line clear of the query before mpLib_8004ED5C
+             * (mpLineBox). The ends it returns are within 1.00001 and
+             * 3.00001 of the vertices (plus rounding) when these are at
+             * least 1 apart; the margin is 4. */
+            {
+                Vec2* p0 = &groundCollVtx[line_r26->x0->v0_idx].pos;
+                Vec2* p1 = &groundCollVtx[line_r26->x0->v1_idx].pos;
+
+                if (mpLineBoxOut(&box, 0.0F, 0.0F, p0->x, p0->y, p1->x,
+                                 p1->y))
+                {
+                    float len2 = SQ(p0->x - p1->x) + SQ(p0->y - p1->y);
+                    if (len2 >= 1.0F && len2 <= F32_MAX) {
+                        continue;
+                    }
+                }
+            }
+#endif
 
             mpLib_8004ED5C(line_offset / (ssize_t) sizeof(CollLine), &x0_sp48,
                            &y0_sp44, &x1_sp40, &y1_sp3C);
@@ -1783,11 +1901,18 @@ bool mpCheckFloorRemap(float ax, float ay, float bx, float by, float y_offset,
     int i;
     bool result = false;
     bool already_checked;
+#ifdef TARGET_XBOX
+    mpLineBox box;
+#endif
 
     already_checked = mpCheckedBounding();
     if (!already_checked) {
         mpBoundingCheck2(ax, ay, bx, by);
     }
+#ifdef TARGET_XBOX
+    /* PORT: mpLineBox */
+    mpLineBoxInit(&box, ax, ay, bx, by, 0.0F, 1.0F);
+#endif
 
     for (joint = jointListStart; joint != NULL; joint = joint->next) {
         CollLine* line;
@@ -1838,6 +1963,27 @@ bool mpCheckFloorRemap(float ax, float ay, float bx, float by, float y_offset,
                 float int_x;
                 float int_y;
                 PAD_STACK(4);
+
+#ifdef TARGET_XBOX
+                /* PORT: skip a line clear of the query (mpLineBox); on a
+                 * moving joint, clear of it by the reach of a's remap */
+                if (!(joint->flags &
+                      (CollJoint_B10 | CollJoint_B9 | CollJoint_B8)))
+                {
+                    if (mpLineBoxOut(&box, 0.0F, 0.0F, x0, y0, x1, y1)) {
+                        continue;
+                    }
+                } else {
+                    float rx = mpRemapReach(v0_r5->x10, v1_r6->x10, x0, x1);
+                    float ry = mpRemapReach(v0_r5->x14, v1_r6->x14, y0, y1);
+
+                    if (rx < 131072.0F && ry < 131072.0F &&
+                        mpLineBoxOut(&box, rx, ry, x0, y0, x1, y1))
+                    {
+                        continue;
+                    }
+                }
+#endif
 
                 if (joint->flags &
                     (CollJoint_B10 | CollJoint_B9 | CollJoint_B8))
@@ -2321,6 +2467,9 @@ bool mpCheckLeftWall(float ax, float ay, float bx, float by, Vec3* vec_out,
     int dynamic_count;
     MapJoint* j_inner;
     bool already_checked;
+#ifdef TARGET_XBOX
+    mpLineBox box;
+#endif
     PAD_STACK(4);
 
     result = false;
@@ -2330,6 +2479,10 @@ bool mpCheckLeftWall(float ax, float ay, float bx, float by, Vec3* vec_out,
     if (!already_checked) {
         mpBoundingCheck2(ax, ay, bx, by);
     }
+#ifdef TARGET_XBOX
+    /* PORT: mpLineBox */
+    mpLineBoxInit(&box, ax, ay, bx, by, 0.0F, 1.0F);
+#endif
 
     for (joint = jointListStart; joint != NULL; joint = joint->next) {
         if (joint->flags & CollJoint_TooFar) {
@@ -2367,6 +2520,12 @@ bool mpCheckLeftWall(float ax, float ay, float bx, float by, Vec3* vec_out,
                 float dist2;
                 float int_x;
                 float int_y;
+#ifdef TARGET_XBOX
+                /* PORT: skip a line clear of the query (mpLineBox) */
+                if (mpLineBoxOut(&box, 0.0F, 0.0F, x0, y0, x1, y1)) {
+                    continue;
+                }
+#endif
                 if (ABS(x0 - x1) > 0.0001) {
                     if (mpLineIntersection(x0, y0, x1, y1, ax, ay, bx, by,
                                            &int_x, &int_y))
@@ -2461,6 +2620,9 @@ bool mpCheckLeftWallRemap(float ax, float ay, float bx, float by,
     int dynamic_count;
     MapJoint* j_inner;
     bool already_checked;
+#ifdef TARGET_XBOX
+    mpLineBox box;
+#endif
     PAD_STACK(8);
 
     result = false;
@@ -2470,6 +2632,10 @@ bool mpCheckLeftWallRemap(float ax, float ay, float bx, float by,
     if (!already_checked) {
         mpBoundingCheck2(ax, ay, bx, by);
     }
+#ifdef TARGET_XBOX
+    /* PORT: mpLineBox */
+    mpLineBoxInit(&box, ax, ay, bx, by, 0.0F, 1.0F);
+#endif
 
     for (joint = jointListStart; joint != NULL; joint = joint->next) {
         if (joint->flags & CollJoint_TooFar) {
@@ -2504,6 +2670,29 @@ bool mpCheckLeftWallRemap(float ax, float ay, float bx, float by,
                 float dist2;
                 float int_x;
                 float int_y;
+
+#ifdef TARGET_XBOX
+                /* PORT: skip a line clear of the query (mpLineBox); on a
+                 * moving joint, clear of it by the reach of a's remap */
+                if (!(joint->flags &
+                      (CollJoint_B10 | CollJoint_B9 | CollJoint_B8)))
+                {
+                    if (mpLineBoxOut(&box, 0.0F, 0.0F, x0, y0, x1, y1)) {
+                        continue;
+                    }
+                } else {
+                    CollVtx* v0 = &groundCollVtx[line->x0->v0_idx];
+                    CollVtx* v1 = &groundCollVtx[line->x0->v1_idx];
+                    float rx = mpRemapReach(v0->x10, v1->x10, x0, x1);
+                    float ry = mpRemapReach(v0->x14, v1->x14, y0, y1);
+
+                    if (rx < 131072.0F && ry < 131072.0F &&
+                        mpLineBoxOut(&box, rx, ry, x0, y0, x1, y1))
+                    {
+                        continue;
+                    }
+                }
+#endif
 
                 if (joint->flags &
                     (CollJoint_B10 | CollJoint_B9 | CollJoint_B8))
@@ -2633,6 +2822,9 @@ bool mpCheckRightWall(float ax, float ay, float bx, float by, Vec3* vec_out,
     int dynamic_count;
     MapJoint* j_inner;
     bool already_checked;
+#ifdef TARGET_XBOX
+    mpLineBox box;
+#endif
     PAD_STACK(4);
 
     result = false;
@@ -2642,6 +2834,10 @@ bool mpCheckRightWall(float ax, float ay, float bx, float by, Vec3* vec_out,
     if (!already_checked) {
         mpBoundingCheck2(ax, ay, bx, by);
     }
+#ifdef TARGET_XBOX
+    /* PORT: mpLineBox */
+    mpLineBoxInit(&box, ax, ay, bx, by, 0.0F, 1.0F);
+#endif
 
     for (joint = jointListStart; joint != NULL; joint = joint->next) {
         if (joint->flags & CollJoint_TooFar) {
@@ -2679,6 +2875,12 @@ bool mpCheckRightWall(float ax, float ay, float bx, float by, Vec3* vec_out,
                 float dist2;
                 float int_x;
                 float int_y;
+#ifdef TARGET_XBOX
+                /* PORT: skip a line clear of the query (mpLineBox) */
+                if (mpLineBoxOut(&box, 0.0F, 0.0F, x0, y0, x1, y1)) {
+                    continue;
+                }
+#endif
                 if (ABS(x0 - x1) > 0.0001) {
                     if (mpLineIntersection(x0, y0, x1, y1, ax, ay, bx, by,
                                            &int_x, &int_y))
@@ -2768,6 +2970,9 @@ bool mpCheckRightWallRemap(float ax, float ay, float bx, float by,
     int i;
     int result;
     bool already_checked;
+#ifdef TARGET_XBOX
+    mpLineBox box;
+#endif
     PAD_STACK(8);
 
     result = false;
@@ -2777,6 +2982,10 @@ bool mpCheckRightWallRemap(float ax, float ay, float bx, float by,
     if (!already_checked) {
         mpBoundingCheck2(ax, ay, bx, by);
     }
+#ifdef TARGET_XBOX
+    /* PORT: mpLineBox */
+    mpLineBoxInit(&box, ax, ay, bx, by, 0.0F, 1.0F);
+#endif
 
     for (joint = jointListStart; joint != NULL; joint = joint->next) {
         CollLine* line;
@@ -2816,6 +3025,29 @@ bool mpCheckRightWallRemap(float ax, float ay, float bx, float by,
                 float dist2;
                 float int_x;
                 float int_y;
+
+#ifdef TARGET_XBOX
+                /* PORT: skip a line clear of the query (mpLineBox); on a
+                 * moving joint, clear of it by the reach of a's remap */
+                if (!(joint->flags &
+                      (CollJoint_B10 | CollJoint_B9 | CollJoint_B8)))
+                {
+                    if (mpLineBoxOut(&box, 0.0F, 0.0F, x0, y0, x1, y1)) {
+                        continue;
+                    }
+                } else {
+                    CollVtx* v0 = &groundCollVtx[line->x0->v0_idx];
+                    CollVtx* v1 = &groundCollVtx[line->x0->v1_idx];
+                    float rx = mpRemapReach(v0->x10, v1->x10, x0, x1);
+                    float ry = mpRemapReach(v0->x14, v1->x14, y0, y1);
+
+                    if (rx < 131072.0F && ry < 131072.0F &&
+                        mpLineBoxOut(&box, rx, ry, x0, y0, x1, y1))
+                    {
+                        continue;
+                    }
+                }
+#endif
 
                 if (joint->flags &
                     (CollJoint_B10 | CollJoint_B9 | CollJoint_B8))
@@ -2941,6 +3173,10 @@ bool mpLib_800511A4_RightWall(float ax, float ay, float bx, float by, float cx,
     int i;
     int result;
     bool already_checked;
+#ifdef TARGET_XBOX
+    mpLineBox edge;
+    mpLineBox reach;
+#endif
     PAD_STACK(8);
 
     result = false;
@@ -2950,6 +3186,10 @@ bool mpLib_800511A4_RightWall(float ax, float ay, float bx, float by, float cx,
     if (!already_checked) {
         mpBoundingCheck3(ax, ay, bx, by, cx, cy, dx, dy);
     }
+#ifdef TARGET_XBOX
+    /* PORT: mpEdgeBoxOut */
+    mpEdgeBoxInit(&edge, &reach, ax, ay, bx, by, cx, cy, dx, dy);
+#endif
 
     for (joint = jointListStart; joint != NULL; joint = joint->next) {
         CollLine* line;
@@ -2998,6 +3238,13 @@ bool mpLib_800511A4_RightWall(float ax, float ay, float bx, float by, float cx,
                     y0 = vtx->pos.y;
                     x1 = vtx->x10;
                     y1 = vtx->x14;
+#ifdef TARGET_XBOX
+                    /* PORT: skip a vertex whose sweep can't reach the
+                     * edge's box (mpEdgeBoxOut) */
+                    if (mpEdgeBoxOut(&edge, &reach, x0, y0, x1, y1)) {
+                        goto vtx1;
+                    }
+#endif
                     mpRemap2d(&x, &y, ax, ay, bx, by, cx, cy, dx, dy, x1, y1);
 
                     vdx = x0 - x;
@@ -3024,12 +3271,21 @@ bool mpLib_800511A4_RightWall(float ax, float ay, float bx, float by, float cx,
                     }
                 }
 
+#ifdef TARGET_XBOX
+            vtx1:
+#endif
                 {
                     vtx = &groundCollVtx[line->x0->v1_idx];
                     x0 = vtx->pos.x;
                     y0 = vtx->pos.y;
                     x1 = vtx->x10;
                     y1 = vtx->x14;
+#ifdef TARGET_XBOX
+                    /* PORT: as above */
+                    if (mpEdgeBoxOut(&edge, &reach, x0, y0, x1, y1)) {
+                        continue;
+                    }
+#endif
                     mpRemap2d(&x, &y, ax, ay, bx, by, cx, cy, dx, dy, x1, y1);
 
                     vdx = x0 - x;
@@ -3085,6 +3341,10 @@ bool mpLib_800515A0_LeftWall(float a0x, float a0y, float a1x, float a1y,
     int i;
     int result;
     bool already_checked;
+#ifdef TARGET_XBOX
+    mpLineBox edge;
+    mpLineBox reach;
+#endif
     PAD_STACK(8);
 
     result = false;
@@ -3094,6 +3354,10 @@ bool mpLib_800515A0_LeftWall(float a0x, float a0y, float a1x, float a1y,
     if (!already_checked) {
         mpBoundingCheck3(a0x, a0y, a1x, a1y, b0x, b0y, b1x, b1y);
     }
+#ifdef TARGET_XBOX
+    /* PORT: mpEdgeBoxOut */
+    mpEdgeBoxInit(&edge, &reach, a0x, a0y, a1x, a1y, b0x, b0y, b1x, b1y);
+#endif
 
     for (joint = jointListStart; joint != NULL; joint = joint->next) {
         CollLine* line;
@@ -3142,6 +3406,13 @@ bool mpLib_800515A0_LeftWall(float a0x, float a0y, float a1x, float a1y,
                     y0 = vtx->pos.y;
                     x1 = vtx->x10;
                     y1 = vtx->x14;
+#ifdef TARGET_XBOX
+                    /* PORT: skip a vertex whose sweep can't reach the
+                     * edge's box (mpEdgeBoxOut) */
+                    if (mpEdgeBoxOut(&edge, &reach, x0, y0, x1, y1)) {
+                        goto vtx1;
+                    }
+#endif
                     mpRemap2d(&x, &y, a0x, a0y, a1x, a1y, b0x, b0y, b1x, b1y,
                               x1, y1);
 
@@ -3169,12 +3440,21 @@ bool mpLib_800515A0_LeftWall(float a0x, float a0y, float a1x, float a1y,
                     }
                 }
 
+#ifdef TARGET_XBOX
+            vtx1:
+#endif
                 {
                     vtx = &groundCollVtx[line->x0->v1_idx];
                     x0 = vtx->pos.x;
                     y0 = vtx->pos.y;
                     x1 = vtx->x10;
                     y1 = vtx->x14;
+#ifdef TARGET_XBOX
+                    /* PORT: as above */
+                    if (mpEdgeBoxOut(&edge, &reach, x0, y0, x1, y1)) {
+                        continue;
+                    }
+#endif
                     mpRemap2d(&x, &y, a0x, a0y, a1x, a1y, b0x, b0y, b1x, b1y,
                               x1, y1);
 
