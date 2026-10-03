@@ -176,6 +176,8 @@ Static functions are named by their file's name alone
 (`-static-func-full-module-prefix=false`), since the lowered sources'
 paths differ between the two builds' object folders. Branch counts are the
 same on the console, whose own profile only differs in where time goes.
+The committed profile, what it needs and how to regenerate it in one
+command (`tools/xbox/pgo_train.sh`): `docs/pgo.md`.
 
 System headers are nxdk's pdclib. `xbox/include/game/` fills what pdclib
 lacks (`<sys/types.h>`, `M_PI`, `va_list` in aurora's `os.h`).
