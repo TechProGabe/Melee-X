@@ -102,6 +102,17 @@ Fix order after RC2 (2026-10-02), details in the entries below:
    a 128 MB console). Drop `[system] ram128` and the menu's Use 128 MB
    RAM row, keep `xhw_mem_hold_upper` unconditional, ignore old ini
    lines; README, platform.md, decisions.md.
+9. Silent after a crash, until a power-off (user, 2026-10-03, round 2's
+   first r2a boot): a crash leaves the AC97 engine running, and the next
+   boot logs `AC97 stuck: civ 0 lvi 6` from the start and a cold reset
+   about every 3 s (17 by tick 420), each freezing the game for about a
+   second; a warm boot or relaunch doesn't clear it, a power-off does
+   (decisions.md "The AC97 is left idle before a relaunch"). To do:
+   detect it (no finished buffer after a few cold resets, or stuck from
+   the first buffer), stop the cold resets (play silent, no hitches), and
+   tell the player on screen once, non-fatally: "Sound hardware is stuck
+   after a crash. Turn the Xbox off and on to get sound back." Test
+   builds also log it as one `[AUDIO] stuck since boot` line.
 
 - Fixed on dev: the v1 release hung on the intro movie (GitHub #5, #6,
   reddit), at any video mode. `xgx_present` called pbkit's `pb_finished`
