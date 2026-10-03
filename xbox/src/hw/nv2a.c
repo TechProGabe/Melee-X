@@ -1098,6 +1098,21 @@ static void state_reset_shadows(void);
  * that wait, the last frame's finish counted from its present, the flip */
 static uint64_t s_present_ns, s_st_open_ns, s_st_lag_ns, s_st_flip_ns;
 static uint32_t s_st_late;
+/* the same per probe period ([GPUP], xgx_gpu_period_log), plus each frame's
+ * span from its opening to its present: span + lag is the GPU's frame when
+ * it is the limit (busy from the first kick to its finish) */
+static uint64_t s_open_ns, s_pp_wait_ns, s_pp_lag_ns, s_pp_span_ns;
+static uint32_t s_pp_frames, s_pp_late;
+
+void xgx_gpu_period_log(void) {
+    if (!s_pp_frames) return;
+    xhw_logf("[GPUP] %u frames, %u late | us a frame: wait %u, span %u, lag %u (late frames)", (unsigned)s_pp_frames,
+             (unsigned)s_pp_late, (unsigned)(s_pp_wait_ns / 1000 / s_pp_frames),
+             (unsigned)(s_pp_span_ns / 1000 / s_pp_frames),
+             (unsigned)(s_pp_late ? s_pp_lag_ns / 1000 / s_pp_late : 0));
+    s_pp_frames = s_pp_late = 0;
+    s_pp_wait_ns = s_pp_lag_ns = s_pp_span_ns = 0;
+}
 
 static void frame_open(void) {
     int i;
@@ -1107,8 +1122,13 @@ static void frame_open(void) {
         if (gpu_busy()) {   /* still on the last frame: how long, and how long after its present */
             wait_idle();
             s_st_late++;
+            s_pp_late++;
             s_st_open_ns += xhw_time_ns() - t;
-            if (s_present_ns) s_st_lag_ns += xhw_time_ns() - s_present_ns;
+            s_pp_wait_ns += xhw_time_ns() - t;
+            if (s_present_ns) {
+                s_st_lag_ns += xhw_time_ns() - s_present_ns;
+                s_pp_lag_ns += xhw_time_ns() - s_present_ns;
+            }
         }
         release_deferred();
     }
@@ -1122,6 +1142,7 @@ static void frame_open(void) {
     }
     s_ring_pos = 0;
     s_frame_open = 1;
+    s_open_ns = xhw_time_ns();
     /* the bars outside the content rect, and a defined EFB. Not when the
      * first pending clear (GXCopyDisp's) writes colour and depth over the
      * whole framebuffer anyway, as it does without a pillarbox: there are
@@ -1351,6 +1372,10 @@ void xgx_present(int black) {
         xhw_perf_leave(pf);
     }
     s_present_ns = xhw_time_ns();
+    if (s_open_ns) {
+        s_pp_span_ns += s_present_ns - s_open_ns;
+        s_pp_frames++;
+    }
     s_st_flip_ns += s_present_ns - t_flip;
     xhw_perf_frame(s_draws, s_pf_verts);
     s_pf_verts = 0;
@@ -2198,6 +2223,7 @@ static void emit_fixed(const XgxState* st) {
     if (x1 > s_cx + s_cw) x1 = s_cx + s_cw;
     if (y1 > s_cy + s_ch) y1 = s_cy + s_ch;
     if (x1 <= x0 || y1 <= y0) { x0 = y0 = 0; x1 = y1 = 1; }
+    if (xhw_ablate(XHW_AB_NOFILL)) { x0 = s_cx; y0 = s_cy; x1 = x0 + 1; y1 = y0 + 1; }   /* probe window */
     /* the hardware's max is inclusive: GX's scissor ends before x1, y1 */
     SETF(13, NV097_SET_WINDOW_CLIP_HORIZONTAL, (uint32_t)x0 | ((uint32_t)(x1 - 1) << 16));
     SETF(14, NV097_SET_WINDOW_CLIP_VERTICAL, (uint32_t)y0 | ((uint32_t)(y1 - 1) << 16));
@@ -3426,7 +3452,7 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
         reusable = reuse && reuse < MAX_TEX && s_tex[reuse].used && s_tex[reuse].w == pw && s_tex[reuse].h == ph &&
                    s_tex[reuse].levels == 1 && !s_tex[reuse].rect && s_tex[reuse].nvfmt == nv_format(cfmt);
         tex = reusable ? reuse : xgx_tex_create(pw, ph, 1, cfmt, NULL);
-        if (tex) efb_copy_gpu(src, &s_tex[tex], mode);
+        if (tex && !xhw_ablate(XHW_AB_NOCOPY)) efb_copy_gpu(src, &s_tex[tex], mode);   /* probe window */
         return tex;
     }
 #endif

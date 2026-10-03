@@ -303,7 +303,11 @@ cache's bytes by owner and its most rebuilt lists. The probe build's
 ablation window 4 (`-DXHW_PMC=1`, `env MX_ABLATE=1`) makes `xgx_draw`
 return at once, frames black, with every state group forced dirty again
 for the first draw after it; window 5 turns the display-list content
-rechecks off (`dlc_content_changed`). Neither changes a release.
+rechecks off (`dlc_content_changed`). Round 3's GPU windows: window 8
+scissors every draw to one pixel (the vertex and state work stay, the fill
+goes) and window 9 skips the EFB copies; `[GPUP]` lines per period time
+the GPU's frame. None of it changes a release; outside a probe build the
+`[GPUP]` sums are a few additions a frame and never logged.
 
 ## Frame and output geometry
 
