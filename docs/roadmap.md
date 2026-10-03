@@ -195,12 +195,15 @@ Fix order after RC2 (2026-10-02), details in the entries below:
   is spawned in the second phase, nothing frees it and the Bill frees
   itself without it. Reproduce in xemu with Peach's Castle and Bullet
   Bills; log the phase changes, `xCA`, and the anim end check.
-- Results screen, several players tied for 1st (xemu, 2026-10-02, 4-CPU
-  time battles ending 0-0, e.g. `scenarios/ps`): the portrait boxes in the
-  bottom cards stay empty for everyone. Already so on v45 (the fps
-  baseline runs), not a regression; with distinct places (`scenarios/res`)
-  the portraits draw. v45's winner-portrait fix was the single-winner path
-  of `fn_80179990`; check the tie branch and its EFB copies.
+- Fixed on dev: results screen, everyone tied for 1st (xemu, 2026-10-02,
+  4-CPU time battles ending 0-0, e.g. `scenarios/ps`): the portrait boxes
+  in the bottom cards stayed black. Not a port bug: `fn_80179854` sets
+  `x0_6` only when a loser slides off, and `fn_80179990` copies a winner's
+  portrait only once `x0_6` is set, so with nobody below 1st the boxes keep
+  the file's black placeholder (64x80 RGB565 of zeros), on the GameCube too.
+  Only Debug VS reaches it (no Sudden Death state); retail ties go to Sudden
+  Death. A `PORT:` deviation sets `x0_6` when nobody lost
+  (`scenarios/tie`: 8 s, Final Destination, 4 CPUs, all 1st).
 - Classic team card corrupted (tester, 2026-10-02, build not stated yet;
   Classic as Luigi, Team Kirby on Fountain of Dreams): on the card before
   the fight some of the Kirbys drew corrupted. The card is the Z-texture

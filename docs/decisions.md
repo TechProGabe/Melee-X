@@ -558,6 +558,10 @@ marked `PORT:`:
   `ResultsDisplayLayout`'s `state`, which overlays it only in the
   GameCube's link order (`lbl_8046E1B0` + 0x1FC). The winner's portrait
   was never copied from the EFB and its box drew black.
+  `fn_80179854` (deviation from the GameCube): when nobody placed below
+  1st (a Debug VS tie, which skips Sudden Death) it sets `x0_6` too, so the
+  winners' card portraits are copied; the GameCube leaves those boxes on
+  the file's black placeholder. Retail results always have a loser there.
 - Front LED effects (`xbox/src/hw/xhw_led.c`, `docs/platform.md` "Front
   LED"), under `TARGET_XBOX`: `src/melee/ft/ft_0D31.c` (`ftCo_800D34E0`,
   the KO bookkeeping) calls `xhw_led_ko` with the port and the stocks left

@@ -94,6 +94,14 @@ void fn_80179854(void)
             lbl_8046E3AC.x0_6 = 1;
         }
     }
+    /* PORT: deviation from the GameCube. When nobody placed below 1st
+     * (a tie in Debug VS, which goes straight to the results, with no
+     * Sudden Death) no loser slides off, x0_6 stays 0 and fn_80179990
+     * never copies the winners' card portraits: the boxes keep the file's
+     * black placeholder. Retail matches always have a loser here. */
+    if (fn_80161004(match_end) == 0) {
+        lbl_8046E3AC.x0_6 = 1;
+    }
 }
 
 extern s32 ftLib_IsFramesRemaining(HSD_GObj*);
