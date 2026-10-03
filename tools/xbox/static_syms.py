@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""Static (file-local) functions for a link map: <map>.statics.
+"""Check a link map against the objects' function symbols: <map>.statics.
 
     tools/xbox/static_syms.py [--map build-xbox/melee_x.map] [--nm llvm-nm]
 
-lld-link's map lists only public symbols, so a profile sample in a static
-function was credited to the public function before it (v32's
-"TObjUpdateFunc" was mostly the static code after it). Every object has a
-single .text section, so a static function sits at its offset from the
-object's .text start, and that start follows from any public symbol of the
-same object (map address minus its offset). Run this right after the build
-whose map it is (it reads build-xbox's objects); console.py stage does.
-sym.load() reads the .statics file next to a map when there is one."""
+lld-link's map lists the public symbols and, after them, a "Static symbols"
+section with the file-local ones; sym.load() reads both. This lists every
+function symbol (T and t) of the build's own objects (game, sdk, hw, pbkit)
+and checks that the map has it at the right address: an object's single
+.text section starts at any of its mapped symbols minus that symbol's offset.
+Functions the map lacks (none so far, on lld 21) go to <map>.statics, which
+sym.load() also reads. Profile samples that land on the wrong neighbour come
+from 64-byte buckets shared by two functions, not from missing symbols:
+prof_report.py shares those out.
+
+Run it right after the build whose map it is (it reads build-xbox's
+objects); console.py stage does."""
 import argparse
-import os
+import collections
 import pathlib
 import re
 import shutil
@@ -46,25 +50,28 @@ def main():
     ap.add_argument('--map', default=str(ROOT / 'build-xbox' / 'melee_x.map'))
     ap.add_argument('--nm', default=shutil.which('llvm-nm') or 'C:/msys64/mingw64/bin/llvm-nm.exe')
     a = ap.parse_args()
-    public = {}
+    mapped = collections.defaultdict(dict)   # object file name -> {symbol: address}, publics and statics
     for va, name, obj in sym.load(a.map, statics=False):
-        public.setdefault((name, obj.split(':')[-1].lower()), va)
-    lines, missed = [], 0
+        mapped[obj.split(':')[-1].lower()].setdefault(name, va)
+    lines, unplaced, nfun, moved = [], 0, 0, 0
     for obj in objects():
         syms = list(nm_syms(a.nm, obj))
-        base = None
-        for off, kind, name in syms:
-            va = public.get((name, obj.name.lower()))
-            if kind == 'T' and va is not None:
-                base = va - off
-                break
+        nfun += len(syms)
+        known = mapped.get(obj.name.lower(), {})
+        base = next((known[name] - off for off, kind, name in syms if name in known), None)
         if base is None:
-            missed += 1
+            unplaced += bool(syms)
             continue
-        lines += [f'{base + off:08x} {name} {obj.name}' for off, kind, name in syms if kind == 't']
+        for off, kind, name in syms:
+            if name not in known:
+                lines.append(f'{base + off:08x} {name} {obj.name}')
+            elif known[name] != base + off:
+                moved += 1
     out = pathlib.Path(a.map + '.statics')
-    out.write_text('\n'.join(sorted(lines)) + '\n')
-    print(f'{out}: {len(lines)} static functions ({missed} objects without a public symbol to place them)')
+    out.write_text(''.join(l + '\n' for l in sorted(lines)))
+    print(f'{nfun} functions in the objects: {len(lines)} missing from the map (-> {out.name}), {moved} at another '
+          f'address than the map says, {unplaced} objects not in the map '
+          f'(archive members the link left out)')
 
 
 if __name__ == '__main__':

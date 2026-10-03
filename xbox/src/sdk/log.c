@@ -300,6 +300,7 @@ void gx_tex_scene_leave(void);
 
 void xsdk_scene_log(const char* what, int mode, int state, int scene) {
     if (!strcmp(what, "leave")) gx_tex_scene_leave();   /* the overflow texture pool goes back */
+    else xhw_prof_scene_enter();                        /* the whole-match profile starts over */
     xhw_led_scene();   /* front LED back to the SMC, unless GAME!'s sweep is still running */
     xhw_logf("[SCENE] %s: mode %d state %d scene %d (retrace %u, presented %u)", what, mode, state, scene,
              xsdk_frame_count(), xgx_present_count());
