@@ -243,7 +243,14 @@ misses in lookups and revalidation rather than useful work. v33:
   node in HSD's animation and display list walks (the P3 has a 128 KB L2
   and no hardware prefetcher); v35 reuses an envelope's matrices when a
   later PObj of the same DObj uses the same joints and weights (~1250
-  envelope matrices a frame in a 4-CPU match, ~630 distinct).
+  envelope matrices a frame in a 4-CPU match, ~630 distinct). After v50
+  (`PObjSetupMtx`, the biggest game function of the v50 console profile
+  at 7.2% of the match, ~13% with what it calls): a new envelope's
+  matrices are computed straight into their memo entry instead of copied
+  there, the setup functions' matrix locals skip the zeroing of
+  `-ftrivial-auto-var-init`, `HSD_MtxInverseTranspose` computes its
+  cofactors in SSE from one read of each row, and the walk prefetches the
+  next envelope and a new envelope's joints. Same matrices, same bits.
 - After v45, per draw: a texture unit built from the same inputs as the
   registers it last sent (texture handle, the map's wrap, filters and LOD
   bias, the unit kind, and an epoch every texture made or freed bumps)

@@ -13,6 +13,7 @@ tools/xbox/test_rc.py            # TEV -> combiners: no-swizzle programs unchang
 tools/xbox/test_card_endian.py   # memory-card files: field tables vs the game's structs, big-endian <-> native
 tools/xbox/test_pool.py          # nv2a.c's pool allocator: random allocations and frees, block-list invariants
 tools/xbox/test_anim_mtx.py      # HSD keyframe interpreter, HSD_MtxSRT, envelope blend vs the code before the rewrites [--full]
+tools/xbox/test_pobj_mtx.py      # PObjSetupMtx (envelope memo, prefetches), SSE HSD_MtxInverseTranspose vs upstream
 tools/xbox/test_audio_mix.py     # src/pc/audio.c's voice mixer (block decoder) vs the per-sample code before it, random voices
 ```
 
@@ -54,6 +55,20 @@ random inputs with denormals, negative zero, infinities and NaNs. Floats
 must have the same bits; a NaN only has to stay a NaN (which NaN operand's
 payload x86 keeps depends on the operand order the compiler picks). A new
 rewrite in this code needs its reference added there first.
+
+`test_pobj_mtx.py` does the same for the matrix setup of HSD's PObjs. It
+builds the current `pobj.c` and `mtx.c` with stubs for GX, the perf
+counters and the joint calls, next to `tests/xbox/pobj_mtx_ref.c`, the
+upstream setup functions (no envelope memo, no fused blend) and
+`HSD_MtxInverseTranspose` before its SSE rewrite. It compares the inverse
+transpose on 4M random matrices (singular and near-singular ones, in place
+and not), then draws 300000 random DObjs the way `HSD_DObjDisp` does
+(memo reset, then rigid, shared-vertex, shape-anim and envelope PObjs whose
+envelopes repeat as separate objects, with and without lighting,
+reflection and highlight texgens, a model node matrix, dirty joints) through
+both: every GX matrix load (slot and the 12 words), `GXSetCurrentMtx`,
+envelope-blend count and joint update in order, the matrix marks, the
+joints and the matrix-load count must agree.
 
 `test_audio_mix.py` does the same for the software AX mixer: it builds
 `src/pc/audio.c` (with the Xbox's SDL3 shim and stubs) next to

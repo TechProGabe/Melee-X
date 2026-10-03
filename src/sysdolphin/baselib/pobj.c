@@ -40,6 +40,15 @@ static struct {
     u32 mark;
 } mtx_mark[2];
 
+#ifdef TARGET_XBOX
+/* PORT: the matrix locals of the setup functions below are always written
+ * before they are read; spared -ftrivial-auto-var-init's zeroing, which was
+ * fifteen unaligned 16-byte stores for each envelope matrix. */
+#define POBJ_NOINIT __attribute__((uninitialized))
+#else
+#define POBJ_NOINIT
+#endif
+
 u32 HSD_PObjGetFlags(HSD_PObj* pobj)
 {
     if (pobj != NULL) {
@@ -1029,7 +1038,7 @@ static void SetupRigidModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
                                u32 rendermode)
 {
     HSD_JObj* jobj;
-    Mtx n;
+    Mtx n POBJ_NOINIT; /* PORT: POBJ_NOINIT (above) */
     PObjSetupFlag flags;
 
     jobj = HSD_JObjGetCurrent();
@@ -1068,7 +1077,7 @@ static void SetupSharedVtxModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
                                    u32 rendermode)
 {
     HSD_JObj* jobj;
-    Mtx n0, n1, m;
+    Mtx n0 POBJ_NOINIT, n1 POBJ_NOINIT, m POBJ_NOINIT; /* PORT: POBJ_NOINIT */
     PObjSetupFlag flags = SETUP_NONE;
 
     jobj = HSD_JObjGetCurrent();
@@ -1144,13 +1153,19 @@ static void SetupSharedVtxModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
  * frame in a 4-CPU match, ~630 distinct. Within one HSD_DObjDisp nothing
  * moves a joint, so a repeat reuses the matrices computed for the first
  * (bit for bit the same) instead of blending, concatenating and inverting
- * again. HSD_DObjDisp clears the memo before its PObjs. */
+ * again. HSD_DObjDisp clears the memo before its PObjs. A new envelope's
+ * matrices are computed straight into the entry that will remember them:
+ * copying them there (a 144-byte memcpy and two MTXCopy calls, each reading
+ * back stores still in flight) was ~2% of the v50 console profile. */
 #define ENV_MEMO 16
 #define ENV_MEMO_JOINTS 4
 typedef struct {
     int n;
     HSD_JObj* jobj[ENV_MEMO_JOINTS];
     u32 weight[ENV_MEMO_JOINTS];
+} EnvKey;
+typedef struct {
+    EnvKey k;
     MtxPtr vmtx;
     int flags, perf;
     Mtx pos, nrm;
@@ -1165,7 +1180,7 @@ void HSD_PObjEnvelopeMemoReset(void)
 }
 
 /* the envelope chain as a memo key; 0 if it has too many joints */
-static int env_key(HSD_Envelope* env, EnvMemo* k)
+static int env_key(HSD_Envelope* env, EnvKey* k)
 {
     k->n = 0;
     for (; env != NULL; env = env->next) {
@@ -1179,16 +1194,16 @@ static int env_key(HSD_Envelope* env, EnvMemo* k)
     return 1;
 }
 
-static EnvMemo* env_find(const EnvMemo* k)
+static EnvMemo* env_find(const EnvKey* k, MtxPtr vmtx, int flags)
 {
     int i, j;
     for (i = 0; i < env_memo_n; i++) {
         EnvMemo* m = &env_memo[i];
-        if (m->n != k->n || m->vmtx != k->vmtx || m->flags != k->flags) {
+        if (m->k.n != k->n || m->vmtx != vmtx || m->flags != flags) {
             continue;
         }
         for (j = 0; j < k->n; j++) {
-            if (m->jobj[j] != k->jobj[j] || m->weight[j] != k->weight[j]) {
+            if (m->k.jobj[j] != k->jobj[j] || m->k.weight[j] != k->weight[j]) {
                 break;
             }
         }
@@ -1197,6 +1212,54 @@ static EnvMemo* env_find(const EnvMemo* k)
         }
     }
     return NULL;
+}
+
+/* the entry a new envelope's matrices are computed into; env_keep() makes
+ * it findable once they are */
+static EnvMemo* env_slot(void)
+{
+    EnvMemo* m = &env_memo[env_memo_next];
+    env_memo_next = (env_memo_next + 1) % ENV_MEMO;
+    if (env_memo_n < ENV_MEMO) {
+        env_memo_n++;
+    }
+    m->k.n = -1;   /* matches no key until env_keep */
+    return m;
+}
+
+static void env_keep(EnvMemo* m, const EnvKey* k, MtxPtr vmtx, int flags,
+                     int perf)
+{
+    int j;
+    for (j = 0; j < k->n; j++) {
+        m->k.jobj[j] = k->jobj[j];
+        m->k.weight[j] = k->weight[j];
+    }
+    m->k.n = k->n;
+    m->vmtx = vmtx;
+    m->flags = flags;
+    m->perf = perf;
+}
+
+/* Prefetch hints (no result changes): the next list entry's envelope, and
+ * the lines of a new envelope's joints that the blend reads (flags, matrix,
+ * envelope matrix pointer), all in flight at once rather than one miss
+ * after the other. */
+static inline void env_prefetch_next(HSD_SList* list)
+{
+    if (list->next != NULL) {
+        HSD_PREFETCH(list->next->data);
+    }
+}
+
+static inline void env_prefetch_joints(const EnvKey* k)
+{
+    int j;
+    for (j = 0; j < k->n; j++) {
+        HSD_PREFETCH(&k->jobj[j]->flags);
+        HSD_PREFETCH(&k->jobj[j]->mtx[0][0]);
+        HSD_PREFETCH(&k->jobj[j]->envelopemtx);
+    }
 }
 #endif
 
@@ -1210,6 +1273,9 @@ static void SetupEnvelopeModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
     Mtx mtx;
     PObjSetupFlag flags = SETUP_NONE;
 
+#ifdef TARGET_XBOX
+    HSD_PREFETCH(pobj->u.envelope_list);   /* PORT: hint (above) */
+#endif
     jobj = HSD_JObjGetCurrent();
     HSD_PObjClearMtxMark(NULL, HSD_MTX_ENVELOPE);
     flags = GetSetupFlags(jobj, rendermode);
@@ -1218,8 +1284,9 @@ static void SetupEnvelopeModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
     for (MtxIdx = 0, list = pobj->u.envelope_list; MtxIdx < 10 && list;
          MtxIdx++, list = list->next)
     {
-        Mtx mtx, tmp;
+        Mtx mtx POBJ_NOINIT, tmp POBJ_NOINIT; /* PORT: POBJ_NOINIT */
         MtxPtr mtxp;
+        MtxPtr pos = tmp, nrm = mtx; /* PORT: or the memo entry's (above) */
         HSD_Envelope* envelope = list->data;
         s32 mtx_no = HSD_Index2PosNrmMtx(MtxIdx);
         int perf = 0;
@@ -1227,13 +1294,12 @@ static void SetupEnvelopeModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
         HSD_ASSERT(1872, envelope);
 #ifdef TARGET_XBOX
         /* PORT: a repeat of an envelope this DObj already set up (above) */
-        EnvMemo key;
-        int memo_ok = right == NULL && env_key(envelope, &key);
-        if (memo_ok) {
-            EnvMemo* m;
-            key.vmtx = vmtx;
-            key.flags = flags;
-            m = env_find(&key);
+        EnvKey key POBJ_NOINIT;
+        EnvMemo* memo = NULL;
+        HSD_PREFETCH(list->next);
+        if (right == NULL && env_key(envelope, &key)) {
+            EnvMemo* m = env_find(&key, vmtx, flags);
+            env_prefetch_next(list);
             if (m != NULL) {
                 HSD_PerfCountEnvelopeBlending(m->perf);
                 GXLoadPosMtxImm(m->pos, mtx_no);
@@ -1251,6 +1317,12 @@ static void SetupEnvelopeModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
                 }
                 continue;
             }
+            env_prefetch_joints(&key);
+            memo = env_slot();
+            pos = memo->pos;
+            nrm = memo->nrm;
+        } else {
+            env_prefetch_next(list);
         }
 #endif
         if (envelope->weight >= (1.0f - FLT_EPSILON)) {
@@ -1287,34 +1359,24 @@ static void SetupEnvelopeModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
         if (right) {
             MTXConcat(mtxp, right, mtx);
         }
-        MTXConcat(vmtx, mtxp, tmp);
-        GXLoadPosMtxImm(tmp, mtx_no);
+        MTXConcat(vmtx, mtxp, pos);
+        GXLoadPosMtxImm(pos, mtx_no);
         HSD_PerfCountMtxLoad();
 
         if (flags & SETUP_NORMAL) {
-            HSD_MtxInverseTranspose(tmp, mtx);
+            HSD_MtxInverseTranspose(pos, nrm);
             if (jobj->flags & JOBJ_LIGHTING) {
-                GXLoadNrmMtxImm(mtx, mtx_no);
+                GXLoadNrmMtxImm(nrm, mtx_no);
                 HSD_PerfCountMtxLoad();
             }
             if (flags & SETUP_NORMAL_PROJECTION) {
-                GXLoadTexMtxImm(mtx, HSD_Index2TexMtx(MtxIdx), GX_MTX3x4);
+                GXLoadTexMtxImm(nrm, HSD_Index2TexMtx(MtxIdx), GX_MTX3x4);
                 HSD_PerfCountMtxLoad();
             }
         }
 #ifdef TARGET_XBOX
-        if (memo_ok) {   /* PORT: remembered for this DObj's other PObjs */
-            EnvMemo* m = &env_memo[env_memo_next];
-            env_memo_next = (env_memo_next + 1) % ENV_MEMO;
-            if (env_memo_n < ENV_MEMO) {
-                env_memo_n++;
-            }
-            *m = key;
-            m->perf = perf;
-            MTXCopy(tmp, m->pos);
-            if (flags & SETUP_NORMAL) {
-                MTXCopy(mtx, m->nrm);
-            }
+        if (memo != NULL) {   /* PORT: remembered for this DObj's other PObjs */
+            env_keep(memo, &key, vmtx, flags, perf);
         }
 #endif
     }

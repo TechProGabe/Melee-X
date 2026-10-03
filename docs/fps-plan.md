@@ -475,6 +475,7 @@ may go ahead.
 | C1 work removed | shadow maps of inactive shadows: none in 4-CPU matches (census pass 3), nothing to skip; the reflection's effects (28 draws) and off-screen items not looked at yet | | |
 | C5 envelope blends | not done: the fused blend (`HSD_MtxConcatScaledAdd`, ~30 instructions a joint) costs about what validating a cached blend against the joints' matrices would, and nothing reliable bumps an epoch (game code writes `jobj->mtx` too); the per-pass costs are the view concat and `HSD_MtxInverseTranspose`, which depend on the pass | | |
 | C2 vertex pool | done 5be8438: key over enabled attributes' formats; Fountain 821 duplicate lists (1.7 MB) -> 0, pool free 4 KB -> 1.8 MB, rebuilds after warm-up ~0 | dlist -11%, render +1% | round 2 (the console rebuilt 700-3300 lists per 600 frames) |
+| `PObjSetupMtx` (render) | branch `fps-pobj`: v50 profile has it at 7.2% own and ~6% more in its calls (at its call sites: memo `memcpy` 1.5%, `MTXCopy` 0.65%, view `C_MTXConcat` 1.3%, inverse transpose 1.2%, GX loads 0.7%), and ~1.7% on the zeroing stores of its locals; memo entries filled in place, no zeroing, SSE inverse transpose, prefetch hints; `test_pobj_mtx.py` | not run (expect -3 to -5% of all samples) | round 2 |
 
 All gates: xemu `-icount`, `[SIMH]` identical up to the match's end, gl
 (and Fountain where it matters) screenshots the same. One open oddity:
