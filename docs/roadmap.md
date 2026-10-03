@@ -257,10 +257,9 @@ Fix order after RC2 (2026-10-02), details in the entries below:
   the AC97 engine half running; `xhw_audio_shutdown` now stops the pump
   and resets the bus masters first (`decisions.md`). After a crash the
   console still needs a power-off for sound (the same stuck codec).
-- Flying-ship stage flicker (console, v48 at 720p, 2026-10-02; user's
+- Rainbow Cruise flicker (console, v48 at 720p, 2026-10-02; user's
   BACK screenshots on the console, pull them before the next boot): the
-  ship flashes now and then, looks like a shadow problem. Which stage
-  (Corneria's Great Fox or Rainbow Cruise) from the shots. Shadow maps are
+  ship flashes now and then, looks like a shadow problem. Shadow maps are
   EFB copies, and v46-v48 changed the copy path (`XGX_COPY_FIX` 5: a second
   send after a wait for idle) and texture binding (the per-unit memo,
   `emit_textures`): check whether v45 shows it (`-DXGX_COPY_FIX=0` first),
