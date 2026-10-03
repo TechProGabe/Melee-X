@@ -9,6 +9,7 @@
 
 #include "pc/pc.h"
 #include "pc/widescreen.h"
+#include "xgx.h"
 #include "xhw.h"
 #include "xsdk.h"
 
@@ -73,7 +74,10 @@ void xsdk_frame_boundary(void) {
 
     /* 60.000 Hz regardless of the output: 50 Hz PAL 480i consoles too */
     now = xhw_time_ns();
-    if (next_ns == 0 || now > next_ns + period * 2) {
+    if (xsdk_lockstep()) {
+        xsdk_lockstep_advance(1000000000u / 60);   /* os.c: the game's clock, one frame on */
+        xgx_set_fps_overlay(0);   /* real time: it would differ between builds' shots */
+    } else if (next_ns == 0 || now > next_ns + period * 2) {
         next_ns = now;   /* a hitch (loading): don't try to catch up */
     } else {
         int pf = xhw_perf_enter(XHW_PERF_VSYNC);
