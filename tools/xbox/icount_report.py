@@ -19,7 +19,9 @@ median of the rows and the aggregate (the bucket's total over the total
 count), which is the steadier of the two for comparing runs.
 
 [SIMH] lines (simulation hashes every 60 ticks) of two logs are compared
-tick by tick: equal hashes mean the same simulation."""
+tick by tick up to the match's end: equal hashes mean the same simulation.
+After TIME!/GAME! the fighters' states depend on frame timing (two runs of
+one build part there), so those ticks are left out."""
 import argparse
 import re
 import statistics
@@ -34,7 +36,7 @@ NOISE = ('[FBDUMP]', '[AUTOPAD] SHOT', '[PROF', '[DUMP')
 
 
 def parse(path, with_audio=False):
-    rows, simh, cal, noisy, in_match, matches = [], [], None, False, False, 0
+    rows, simh, cal, noisy, in_match, matches, ended = [], [], None, False, False, 0, False
     with open(path, encoding='utf-8', errors='replace') as f:
         for line in f:
             line = line.rstrip('\r\n')
@@ -43,13 +45,17 @@ def parse(path, with_audio=False):
                 cal = int(m.group(1)) / max(1, int(m.group(2)))
             m = SIMH.search(line)
             if m:
-                if not in_match:
+                if not in_match and not ended:
                     in_match, noisy = True, True   # the period that holds the match's start
                     matches += 1
-                simh.append((matches, int(m.group(1)), m.group(2)))
+                if in_match:   # after TIME!/GAME! the ticks depend on frame timing
+                    simh.append((matches, int(m.group(1)), m.group(2)))
                 continue
             if '[GAME] match ends' in line:
-                in_match = False
+                in_match, ended = False, True
+                continue
+            if '[SCENE] enter' in line:
+                ended = False
                 continue
             if line.startswith(NOISE):
                 noisy = True

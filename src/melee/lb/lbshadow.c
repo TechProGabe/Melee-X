@@ -558,7 +558,9 @@ void lbShadow_8000F38C(s32 arg0)
 #ifdef TARGET_XBOX
                 {   /* PORT: the draw census's shadow pass, owned by the fighter */
                     unsigned int tag = xgx_census_tag;
-                    xgx_census_tag = XGX_CENSUS_PASS(XGX_CENSUS_OWNER(tag, HSD_GOBJ_PLINK_FIGHTER), XGX_PASS_SHADOW);
+                    xgx_census_tag = XGX_CENSUS_PASS(XGX_CENSUS_OWNER(tag, HSD_GOBJ_PLINK_FIGHTER),
+                                                     fp->x20A4.shadow->active ? XGX_PASS_SHADOW
+                                                                              : XGX_PASS_SHADOW_IDLE);
 #endif
                 HSD_StartRender(HSD_RP_OFFSCREEN);
                 HSD_GObj_804D7814 = gobj;
