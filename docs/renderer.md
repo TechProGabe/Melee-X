@@ -286,6 +286,31 @@ lists twice (1.7 MB of the 4 MB vertex pool; the console's pool ran full
 and rebuilt hundreds of lists a second); now 560 lists, none twice, 1.8 MB
 of the pool free (xemu census, 4-CPU match).
 
+### Deferred back end (B4)
+
+With `-DXGX_DEFER=1` (or `env MX_DEFER=1` in a test build) `xgx_draw`
+doesn't draw: it appends a record to a 32 KB queue and returns. A record is
+the primitive, the vertex count, where the vertices are (`xgx_vtx_alloc`'s
+ring or a cached list's buffer, as `s_draw_base` had it), the dirty bits,
+the layout when it differs from the last record's, and a copy of each state
+group the dirty bits name; for position and texture matrices only the slots
+`posmtx_mask` and `texmtx_mask` name. `dq_flush` replays the records into a
+state of the back end's own (`s_dq_st`) and draws each through `draw_now`,
+the back end as it was. The front end marks a group dirty whenever any of
+its fields changes, so after each record `s_dq_st` holds what `g_xgx` held
+at that draw wherever `draw_now` reads.
+
+The queue flushes when it is full and before anything else reaches the GPU
+or could free what a queued draw uses: `xgx_clear`, `xgx_present`, the EFB
+copies and reads, `xgx_ztex_mask`, `xgx_tex_destroy` (its handle may be
+reused at once), `xgx_set_content_aspect`, and every `wait_idle` (the vertex
+ring's wrap, deferred frees, full pools). Recording opens the frame first,
+so the frame's pending clears still come before its first draw. A
+pushbuffer restart during a replay (`pb_budget`) keeps the vertex ring's
+position: the later records' vertices are further on and not drawn yet.
+Census tags travel with the records. The point is the console's code cache
+(`docs/fps-plan.md` B4); xemu shows only that the picture is the same.
+
 ### Probes (`docs/fps-plan.md`)
 
 The back end takes part in two test-only probes. `-DXGX_CENSUS=1` counts
