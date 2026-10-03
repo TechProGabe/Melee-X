@@ -388,7 +388,8 @@ tick, fewer ticks per render). Done, roughly by gain:
   SSE, the fused envelope blend, no calls for idle animations, prefetches
   in the list walks (v34), the envelope-matrix memo (v35).
 
-Ideas left, in order:
+The current plan, with the measurements behind it, is `docs/fps-plan.md`
+(2026-10-03). The older list:
 
 1. **Render pass** (~12 ms of a ~27 ms frame in v36): HSD's per-material
    setup (`HSD_MObjSetup`, TEV/channel setters) and `PObjSetupMtx`. A

@@ -25,6 +25,12 @@ Updated 2026-10-02 (Mac round, v39-v45).
   clean, LED works, winner portrait fixed, Fountain faster, 720p textures
   right. v45 not checked yet: first boot in 720p, BACK-at-boot 480i, then a
   60-min 720p burn-in (Fountain, 4 CPUs, items) - pull its logs.
+- **Frame-rate work (2026-10-03):** planned, nothing implemented and no code
+  changed. `docs/fps-plan.md` has the measurements (the console runs at
+  ~0.3-0.5 instructions per cycle, so stalls come before instruction
+  counts), the plan and, under "Picking this up", the prompt the executing
+  session starts from. Next: its step 0 (tools), then the probe build for
+  one console round.
 - **Open, in `docs/roadmap.md` "Known issues":** memory leak since v39
   (~55 KB/min in 192 KB steps, `[BEAT]` free), long-uptime whole-system
   freeze, Pokémon Stadium screen flicker (cause found; the first fix broke
