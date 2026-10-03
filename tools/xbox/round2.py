@@ -151,6 +151,28 @@ PERF = re.compile(r'\[PERF\] (\d+) frames ([\d.]+) fps \| ms/frame (.*?) \| ([\d
                   r'\| (\d+) draws')
 
 
+GPUW = re.compile(r'\[NV2A\] per 600 frames: GPU still busy at (\d+) frame starts, (\d+) us a frame waiting there '
+                  r'\(done (\d+) us after the present on average\), flip (\d+) us a frame')
+
+
+def gpu_waits(text):
+    """C3: the match's [NV2A] wait lines (each covers 600 frames): frame
+    starts with the GPU still busy (of 600), ms a frame waiting there, ms a
+    frame waiting for the flip."""
+    rows, on = [], False
+    for line in text.splitlines():
+        if line.startswith('[SCENE] enter:') and 'scene 2 ' in line:
+            on = True
+        elif line.startswith('[GAME] match ends'):
+            on = False
+        elif on and (m := GPUW.search(line)):
+            rows.append((int(m[1]), int(m[2]) / 1000, int(m[4]) / 1000))
+    if not rows:
+        return None
+    n = len(rows)
+    return sum(r[0] for r in rows) / n, sum(r[1] for r in rows) / n, sum(r[2] for r in rows) / n
+
+
 def match_periods(text):
     """[PERF] periods of the match: after the versus scene's entry (its first
     period holds the loading), up to the match's end."""
@@ -171,13 +193,15 @@ def match_periods(text):
 
 def report():
     print(f'{"run":12s} {"build":7s} {"scen":4s} {"switches":28s} {"n":>3s} {"fps":>6s} {"sim":>5s} {"rend":>5s} '
-          f'{"dlist":>5s} {"draw":>5s} {"gpu":>5s} {"draws":>6s} {"tick/r":>6s}')
+          f'{"dlist":>5s} {"draw":>5s} {"gpu":>5s} {"draws":>6s} {"tick/r":>6s} {"busy":>5s} {"wait":>5s} {"flip":>5s}')
     for folder, build, scen, sw in CHAIN:
         p = LOGS / f'{folder}.log'
         if not p.exists():
             print(f'{folder:12s} (no log)')
             continue
-        rows = match_periods(p.read_text('utf-8', 'replace'))
+        text = p.read_text('utf-8', 'replace')
+        rows = match_periods(text)
+        gw = gpu_waits(text)
         if not rows:
             print(f'{folder:12s} (no match periods)')
             continue
@@ -188,7 +212,10 @@ def report():
         ticks = sum(r[0] * r[3] for r in rows) / frames
         swn = ','.join(k[3:].lower() for k in sw) or '-'
         print(f'{folder:12s} {build:7s} {scen:4s} {swn:28s} {len(rows):3d} {frames / secs:6.2f} {ms["sim"]:5.2f} '
-              f'{ms["render"]:5.2f} {ms["dlist"]:5.2f} {ms["draw"]:5.2f} {ms["gpu"]:5.2f} {draws:6.0f} {ticks:6.2f}')
+              f'{ms["render"]:5.2f} {ms["dlist"]:5.2f} {ms["draw"]:5.2f} {ms["gpu"]:5.2f} {draws:6.0f} {ticks:6.2f}'
+              + (f' {gw[0]:5.0f} {gw[1]:5.2f} {gw[2]:5.2f}' if gw else ''))
+    print('busy: frame starts (of 600) with the GPU still on the last frame; wait: ms a frame waiting there; '
+          'flip: ms a frame waiting for the flip (C3)')
 
 
 def clean():
