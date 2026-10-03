@@ -161,7 +161,7 @@ void xhw_autopad_apply(int port, xhw_pad* out) {
     int i;
     if (port != 0) return;
     /* before the events: a round 2 script has only env lines */
-    if (s_match_end && GetTickCount() - s_match_end > 12000) {
+    if (s_match_end && (LONG)(GetTickCount() - s_match_end) > 12000) {   /* signed: s_match_end | 1 may be 1 ms ahead */
         const char* next = getenv("MX_NEXT_XBE");
         if (next) xhw_launch_xbe(next);
         s_match_end = 0;
