@@ -2,9 +2,12 @@
 """Build and run tests/xbox/test_pobj_mtx.c on the host: pobj.c's
 PObjSetupMtx (the per-DObj envelope memo computed in place, prefetch hints)
 and mtx.c's SSE HSD_MtxInverseTranspose against the upstream code
-(tests/xbox/pobj_mtx_ref.c), bit for bit.
-  tools/xbox/test_pobj_mtx.py"""
+(tests/xbox/pobj_mtx_ref.c), bit for bit. CC and CFLAGS are honoured; the
+Xbox's float code generation (i686, scalar SSE, no SSE2) on Windows:
+  CC=i686-w64-mingw32-gcc CFLAGS="-march=pentium3 -msse -mfpmath=sse" tools/xbox/test_pobj_mtx.py
+(i686 without -mfpmath=sse rounds the reference through x87 and fails)."""
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -34,7 +37,7 @@ UNUSED = ["GXBegin", "GXCallDisplayList", "GXClearVtxDesc", "GXColor1u16", "GXCo
 
 
 def main():
-    cc = os.environ.get("CC", "cc")
+    cc = shlex.split(os.environ.get("CC", "cc"))
     with tempfile.TemporaryDirectory() as tmp:
         exe = os.path.join(tmp, "test_pobj_mtx")
         # the test #includes pobj.c and mtx.c to reach their static functions
@@ -57,7 +60,7 @@ def main():
                    os.path.join(ROOT, "extern/aurora/lib/dolphin/mtx/vec.c"),
                    os.path.join(ROOT, "extern/aurora/lib/dolphin/mtx/quat.c")]
         sources += [os.path.join(ROOT, "src/pc/libm", n) for n in LIBM]
-        cmd = [cc, *FLAGS, "-o", exe, *sources,
+        cmd = [*cc, *FLAGS, *shlex.split(os.environ.get("CFLAGS", "")), "-o", exe, *sources,
                "-include", os.path.join(ROOT, "src/pc/libm/pc_trig.h"),
                "-I" + os.path.join(ROOT, "tests/xbox"),
                "-I" + os.path.join(ROOT, "xbox/include"),
