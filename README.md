@@ -116,15 +116,13 @@ Press **Back** on the title screen ("Press Start") and the settings menu opens. 
 | Widescreen (16:9) | 16:9 at 480i/480p when the dashboard is set to widescreen. After a restart |
 | Frame-rate counter | shows the fps in the top left corner, right away |
 | BACK screenshots | when on, pressing Back saves a screenshot (`shotNN.bmp`) next to your settings. Handy for bug reports |
-| Front LED effects | the front light flashes on KOs, in the last seconds and on GAME!. Off by default. **Don't turn it on if your console has a modchip that drives the front LED** (see the warning below) |
+| Front LED effects | the front light flashes on KOs, in the last seconds and on GAME!. Off by default. If something else controls your front LED, such as a Kronos modchip, it's best to leave this off |
 | Use 128 MB RAM | only for consoles upgraded to 128 MB. On a stock 64 MB Xbox it's locked off, so you can't break anything |
 | Rumble | off, or 25% to 100% |
 | Controller, dead zones, trigger click | pick a port, then set its stick dead zones and how far the triggers go in before they count as a full press |
 | Save and restart | saves and relaunches Melee-X, so video changes kick in |
 
 Anything that needs a restart gets a `*` next to it. Button remapping isn't in the menu yet, that's still done in the file below.
-
-> **Warning: front LED effects and modchips.** The LED effects write to the Xbox's SMC over SMBus. On a console with a modchip that also drives the front LED (a Kronos board was reported), the two fight over it, and that console needed a Cerbios recovery afterwards. The effects are off by default since this report; leave them off on any modded console whose chip controls the LED.
 
 ## Settings file
 
