@@ -325,6 +325,18 @@ switch and `scenarios/stall` stay for the next copy-related stall: an
 autopad test build reads its `env` lines, so variants are swapped over FTP
 (`docs/testing.md`) without a rebuild.
 
+**The AC97 is left idle before a relaunch (after v47).** The settings
+menu's Save and restart (and quitting to the dashboard) relaunch through
+`XLaunchXBE`. `xhw_audio_shutdown` cleared the run bit after a 10 ms sleep
+without waiting for the pump thread, which could start the engine again,
+and never reset the bus masters: on v47 the boot after a restart had the
+engine stuck on descriptor 0 ("AC97 stuck: civ 0"), the codec never came
+back through cold resets, and each recovery attempt froze the game for a
+second (silent and hitching until a power-off). The shutdown now waits for
+the pump to exit, then stops and resets both bus masters; v48 on the
+console kept its sound through restarts. A crash still leaves the engine
+running: after a GPU-stall freeze, power the console off for sound.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 

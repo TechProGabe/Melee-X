@@ -249,6 +249,11 @@ Fix order after RC2 (2026-10-02), details in the entries below:
   copies a frame) is to be measured on the next RC. The
   same burn-in showed no memory leak (free memory flat after 22 min) and
   15-30 fps (median 22) at 720p.
+- Fixed on dev (after v47): no sound and heavy hitching after the
+  settings menu's Save and restart (v47 on the console). The relaunch left
+  the AC97 engine half running; `xhw_audio_shutdown` now stops the pump
+  and resets the bus masters first (`decisions.md`). After a crash the
+  console still needs a power-off for sound (the same stuck codec).
 - 100-Man Melee (Multi-Man Melee) freezes (tester, RC1 = v42, 128 MB
   with `ram128 = 1`, 480 at 32 bits; not reproduced on the 64 MB console).
   The GPU stall family, logs in `~/xemu/hw/logs-tester-100man/`. First

@@ -31,7 +31,7 @@ static uint32_t s_in_rate = 32000;
 #define ACI ((volatile uint8_t*)0xFEC00000)
 
 static int16_t* s_outbuf[NBUF];
-static int s_pump_run, s_started, s_aci_on;
+static int s_pump_run, s_pump_alive, s_started, s_aci_on;
 static unsigned s_queued;
 static uint32_t s_frac;
 
@@ -296,6 +296,7 @@ static void apu_pump(void) {
 
 static void pump(void* arg) {
     (void)arg;
+    ASET(s_pump_alive, 1);
     while (AGET(s_pump_run)) {
         if (s_apu) {
             apu_pump();
@@ -320,6 +321,7 @@ static void pump(void* arg) {
         }
         Sleep(2);
     }
+    ASET(s_pump_alive, 0);
 }
 
 static int running_in_xemu(void) {
@@ -356,17 +358,29 @@ int xhw_audio_init(uint32_t rate) {
     ASET(s_pump_run, 1);
     xhw_thread_start(pump, NULL, 2, 16 * 1024);   /* AC97: the pump starts the engine */
     s_started = 1;
-    xhw_logf("[AUDIO] %s, %u Hz in -> 48 kHz", s_apu ? "xemu APU voice" : "AC97 polled", s_in_rate);
+    xhw_logf("[AUDIO] %s, %u Hz in -> 48 kHz (AC97 global status %08x)", s_apu ? "xemu APU voice" : "AC97 polled",
+             s_in_rate, (unsigned)((volatile uint32_t*)ACI)[0x130 >> 2]);
     return 1;
 }
 
 void xhw_audio_stop(void) { xhw_audio_shutdown(); }
 
+/* Before a relaunch or the dashboard: the pump has stopped (it could
+ * restart the engine after a bare run-bit clear), then the bus masters are
+ * stopped and reset, so the next XBE takes over an idle AC97. v47 on the
+ * console: after the settings menu's restart the next boot's engine never
+ * left descriptor 0 ("AC97 stuck: civ 0") and cold resets never brought
+ * the codec back; only a power-off did. */
 void xhw_audio_shutdown(void) {
+    int i;
     if (!s_started) return;
     ASET(s_pump_run, 0);
-    Sleep(10);
-    aci_run(0);
-    if (s_apu) APU_PIO(0x128, APU_VOICE);   /* VOICE_OFF */
+    for (i = 0; i < 200 && AGET(s_pump_alive); i++) Sleep(1);
+    if (s_apu) {
+        APU_PIO(0x128, APU_VOICE);   /* VOICE_OFF */
+    } else {
+        aci_run(0);
+        aci_bm_reset();
+    }
     s_started = 0;
 }
