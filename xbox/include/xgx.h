@@ -86,6 +86,7 @@ typedef struct {
     float ptmtx[XGX_NUM_PTMTX][3][4];
     uint32_t cur_posmtx;            /* GX_PNMTX0..9 (0, 3, .. 27) */
     uint32_t posmtx_mask;           /* matrices (bit per PNMTX) loaded since the back end last read them */
+    uint32_t texmtx_mask;           /* texmtx (bits 0-9) and ptmtx (10-29) loaded since the deferred back end read them */
     uint32_t cur_texmtx[XGX_MAX_TEXGEN];
 
     /* lighting: COLOR0, ALPHA0, COLOR1, ALPHA1 */
