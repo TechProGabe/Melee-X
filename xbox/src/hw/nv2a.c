@@ -2836,6 +2836,8 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
 #if XHW_PMC
     if (xhw_ablate(XHW_AB_BACKEND)) {   /* the probe's window 4: no back end (black frames) */
         s_draw_force = XGX_DIRTY_ALL;    /* everything again once it ends */
+        s_draws++;                       /* still counted: [PERF]'s render per draw */
+        s_pf_verts += count;
         return;
     }
 #endif

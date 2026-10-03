@@ -90,23 +90,29 @@ def main():
         d = sum(r.get('draws', 0) for r in rs)
         return sum(sum(r['us'].get(k, 0) for k in ('render', 'dlist', 'draw')) for r in rs if 'us' in r) / d if d else 0
 
+    def render_us(rs):   # the game's own side only: what window 4 (no back end) is about
+        d = sum(r.get('draws', 0) for r in rs)
+        return sum(sum(r['us'].get(k, 0) for k in ('render', 'dlist')) for r in rs if 'us' in r) / d if d else 0
+
     def per_tick_ms(rs):
         t = sum(r.get('ticks', 0) for r in rs)
         return sum(r['us'].get('sim', 0) for r in rs if 'us' in r) / 1000 / t if t else 0
 
     base = by_w.get(0, []) + by_w.get(7, [])
     b_draw, b_tick = per_draw_us(base), per_tick_ms(base)
+    b_render = render_us(base) or 1
     print(f"\n{'window':24}{'n':>3}{'fps':>7}" + ''.join(f'{b:>7}' for b in BUCKETS)
-          + f"{'us/draw':>9}{'ms/tick':>9}{'d/frame':>9}")
+          + f"{'us/draw':>9}{'render':>8}{'ms/tick':>9}{'d/frame':>9}")
     for w in sorted(by_w):
         rs = by_w[w]
         draws_f = mean([r['draws'] / r['frames'] for r in rs if 'draws' in r])
         line = f"{w} {names.get(w, '?')[:21]:22}{len(rs):3}{mean([r['fps'] for r in rs]):7.1f}"
         line += ''.join(f"{mean([r['ms'].get(b, 0) for r in rs]):7.2f}" for b in BUCKETS)
         pd, pt = per_draw_us(rs), per_tick_ms(rs)
-        line += f'{pd:9.2f}{pt:9.2f}{draws_f:9.0f}'
+        line += f'{pd:9.2f}{render_us(rs):8.2f}{pt:9.2f}{draws_f:9.0f}'
         if w not in (0, 7) and b_draw:
-            line += f'   draw {100 * (pd / b_draw - 1):+.1f}%, tick {100 * (pt / b_tick - 1) if b_tick else 0:+.1f}%'
+            line += (f'   draw {100 * (pd / b_draw - 1):+.1f}%, render {100 * (render_us(rs) / b_render - 1):+.1f}%, '
+                     f'tick {100 * (pt / b_tick - 1) if b_tick else 0:+.1f}%')
         print(line)
 
     # counters: baseline windows only (and every row if the windows did not rotate)
