@@ -40,6 +40,9 @@
 #ifdef TARGET_PC
 #include "pc/widescreen.h"
 #endif
+#ifdef TARGET_XBOX
+#include "xgx_probe.h"   /* PORT: draw census pass (xbox/include/game) */
+#endif
 
 struct DISC_STRUCT grIzumi_YakumonoParam {
     float x0;
@@ -756,6 +759,13 @@ void grIzumi_801CCEA0(HSD_GObj* gobj, intptr_t renderpass)
     HSD_GObj* src_gobj;
     HSD_CObj* cobj;
 
+#ifdef TARGET_XBOX
+    /* PORT: the frame-rate probe's window without the reflection (test
+     * builds only, xgx_probe.h) */
+    if (xhw_ablate(XHW_AB_REFLECT)) {
+        return;
+    }
+#endif
     if (refl->image != NULL) {
         cobj = GET_COBJ(gobj);
         ftDrawCommon_80081140();
@@ -778,6 +788,10 @@ void grIzumi_801CCEA0(HSD_GObj* gobj, intptr_t renderpass)
                 HSD_CObjSetInterest(dst, &vec);
             }
         }
+#ifdef TARGET_XBOX
+        /* PORT: the draw census's reflection pass */
+        xgx_census_tag = XGX_CENSUS_PASS(xgx_census_tag, XGX_PASS_REFLECT);
+#endif
         if (HSD_CObjSetCurrent(cobj)) {
             HSD_SetEraseColor(0xFF, 0xFF, 0xFF, 1);
             HSD_CObjEraseScreen(cobj, 1, 0, 0);
@@ -795,6 +809,9 @@ void grIzumi_801CCEA0(HSD_GObj* gobj, intptr_t renderpass)
             HSD_CObjEndCurrent();
         }
         lb_800122C8(refl->image, 0, 0, 1);
+#ifdef TARGET_XBOX
+        xgx_census_tag = XGX_CENSUS_PASS(xgx_census_tag, XGX_PASS_MAIN);   /* PORT: see above */
+#endif
 #ifdef TARGET_PC
         /* Built from the projection actually submitted: the reflection was
          * rendered through this camera in the widened SCREEN pass, so a

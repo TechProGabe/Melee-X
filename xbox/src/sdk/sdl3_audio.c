@@ -8,6 +8,7 @@
 #include <SDL3/SDL.h>
 #include <string.h>
 
+#include "game/xgx_probe.h"
 #include "xhw.h"
 
 #define RATE 32000
@@ -34,8 +35,24 @@ static uint32_t queued_frames(void) { return RING_FRAMES - xhw_audio_space(); }
 
 static void mixer(void* arg) {
     struct SDL_AudioStream* s = (struct SDL_AudioStream*)arg;
+#if defined(XHW_PMC) && XHW_PMC
+    int ftz = 0;
+#endif
     while (__atomic_load_n(&s->run, __ATOMIC_ACQUIRE)) {
         uint32_t q = queued_frames();
+#if defined(XHW_PMC) && XHW_PMC
+        if (ftz != xhw_ablate(XHW_AB_FTZ)) xhw_set_ftz(ftz = !ftz);   /* the probe's window 1 */
+        if (q < LEAD_FRAMES && xhw_ablate(XHW_AB_AUDIO)) {           /* window 6: silence, no mixing */
+            static const int16_t zero[2 * 256];
+            uint32_t n = LEAD_FRAMES - q;
+            while (n) {
+                uint32_t k = n < 256 ? n : 256;
+                xhw_audio_write(zero, k);
+                n -= k;
+            }
+            continue;
+        }
+#endif
         if (q < LEAD_FRAMES) {
             int want = (int)((LEAD_FRAMES - q) * 2 * sizeof(float));
             uint64_t t0 = xhw_perf_now();

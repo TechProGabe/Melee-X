@@ -488,8 +488,12 @@ void pc_os_wait_alarm(void) {
     OSRestoreInterrupts(intr);
     wait = next - OSGetTime();
     if (next != 0 && wait > 0) {
+        /* pacing, not simulation: [PERF] charges it to vsync (under xemu's
+         * -icount the sleep is idle guest time, not instructions) */
+        int pf = xhw_perf_enter(XHW_PERF_VSYNC);
         if (wait >= OSMillisecondsToTicks(1)) xhw_sleep_ms(1);
         else xhw_yield();
+        xhw_perf_leave(pf);
     }
     xsdk_dvd_deliver();
 }

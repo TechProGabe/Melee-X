@@ -348,6 +348,23 @@ running: after a GPU-stall freeze, power the console off for sound.
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 
+### Frame-rate measurement (2026-10-03)
+
+`docs/fps-plan.md` measures before it changes anything. In xemu,
+`-icount shift=1,sleep=off` makes guest time count instructions (2 ns each:
+`[CAL]` at boot runs 20M instructions in 40008 us), so test builds log
+`[PERFX]` (every bucket in microseconds, unrounded, plus the audio mixer's
+time inside each bucket) and `tools/xbox/icount_report.py` turns it into
+instructions per draw and per tick. Two runs of one build agree within
+0.6%. The wait for the pad alarm at the top of the frame loop
+(`pc_os_wait_alarm`, `xbox/src/sdk/os.c`) is charged to `vsync`: it is
+pacing, and under `sleep=off` its sleep is idle guest time, which had
+doubled `sim` per tick in xemu. On the console the loop rarely waits in a
+heavy match (the pad queue is not empty), so `[PERF]`'s `sim` there barely
+moves. `[SIMH]` (`xbox/src/sdk/simhash.c`) hashes each fighter's state and
+the random seed every 60 ticks; two runs of one build give the same hashes,
+and every toolchain or simulation change must too.
+
 ## Edits to imported code
 
 Imported files are kept as they are upstream except for these edits, each
@@ -577,6 +594,18 @@ marked `PORT:`:
   matrix) skips `HSD_JObjDispAll` of its body; the flags, parts and
   per-kind callbacks run as before. The magnifier's direct calls are
   untouched.
+- Frame-rate probes (`docs/fps-plan.md` steps 0 and 1), under `TARGET_XBOX`,
+  no change to what is simulated or drawn:
+  `src/melee/gm/gmscene.c` (`gm_801A4D34`) calls `xsdk_sim_tick` after each
+  simulation tick (`[SIMH]`, test builds; `xbox/src/sdk/simhash.c`);
+  `src/sysdolphin/baselib/gobj.c` (`render_gobj`, `HSD_GObj_80390FC0`),
+  `src/melee/lb/lbshadow.c` (`lbShadow_8000F38C`, around the shadow map's
+  render) and `src/melee/gr/grizumi.c` (`grIzumi_801CCEA0`, around the
+  reflection) keep `xgx_census_tag` (`xbox/include/game/xgx_probe.h`) for
+  the draw census: a plain store in every build, read only by
+  `-DXGX_CENSUS=1`. `lbShadow_8000F38C` skips a fighter's shadow map and
+  `grIzumi_801CCEA0` the reflection while `xhw_ablate` says so, which only
+  the probe build's rotation (`-DXHW_PMC=1`, `env MX_ABLATE=1`) ever does.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after

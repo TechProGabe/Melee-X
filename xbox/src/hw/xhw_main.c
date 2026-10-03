@@ -100,6 +100,8 @@ static void main_body(void* arg) {
     xhw_watchdog_start();
     xhw_prof_set_game_thread();
     xhw_prof_start();
+    xhw_perf_calibrate();
+    xhw_cpu_probe();
     xhw_mem_log("boot");
     xhw_splash_show();
 

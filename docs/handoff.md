@@ -88,6 +88,8 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `tie` | results screen with all four CPUs tied for 1st after an 8 s Final Destination match: the cards' portraits (Debug VS only; `fn_80179854` deviation) |
 | `clear` | Classic stage 1 won at once (`MELEE_INSTANT_WIN`): the Stage Clear screen's sepia freeze frame |
 | `toy` | Classic's last stage won at once, Game Clear, START: the trophy fall (`gmregtyfall.c`, scene 15 of mode 21; a second START goes on to the credits) |
+| `fd2` | Final Destination, 2 CPUs (Fox, Mario), 60 s: the frame-rate plan's light case |
+| `probe`, `probe2` | console round 1 (`docs/fps-plan.md` step 1): Fountain of Dreams / Peach's Castle, 4 CPUs, 5 minutes, ablation windows rotating (`env MX_ABLATE=1`, probe build) |
 
 ## Working notes (from the agent's memory)
 

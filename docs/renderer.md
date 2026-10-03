@@ -275,6 +275,18 @@ memory after the pushbuffer, and the GPU fetched texture data as methods
 (DMA pusher error, `GPU fault kind 2`, frozen). `[NV2A] frame` lines report
 the interval's peak and mid-frame restarts.
 
+### Probes (`docs/fps-plan.md`)
+
+The back end takes part in two test-only probes. `-DXGX_CENSUS=1` counts
+each `xgx_draw` (draws, vertices, the dirty groups) by pass and owner from
+`xgx_census_tag`, which the game's render paths keep
+(`xbox/include/game/xgx_probe.h`), and `gx_vtx.c` adds the display-list
+cache's bytes by owner and its most rebuilt lists. The probe build's
+ablation window 4 (`-DXHW_PMC=1`, `env MX_ABLATE=1`) makes `xgx_draw`
+return at once, frames black, with every state group forced dirty again
+for the first draw after it; window 5 turns the display-list content
+rechecks off (`dlc_content_changed`). Neither changes a release.
+
 ## Frame and output geometry
 
 - The logical EFB is the GameCube's 640x480. The back end maps it onto a

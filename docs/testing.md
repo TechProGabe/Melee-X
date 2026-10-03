@@ -236,6 +236,36 @@ itself spends its time, sample the host process during a match:
 `sample $(pgrep -x xemu) 5 -file xemu.txt` and read the `pfifo_thread` tree.
 The xemu source is in `~/xemu/xemu-src` (`hw/xbox/nv2a/pgraph/gl`).
 
+### Instruction counts in xemu (`-icount`)
+
+For comparing builds (`docs/fps-plan.md` step 0.1), run xemu with
+`MX_XEMU_ARGS="... -icount shift=1,sleep=off"` (TCG only; on Windows xemu
+already runs TCG). Guest time then counts instructions, 2 ns each, free of
+softfloat skew and host noise, so a test build's `[PERFX]` buckets are
+instruction counts (500 per microsecond; `[CAL]` at boot checks it). Drop
+the `SHOT` lines (screenshots stall the game) and stop at the results:
+
+```sh
+sed -i '/^[0-9]* *SHOT/d' <staged copy>/autopad.txt
+tools/xbox/xemu_run.sh 1500 '\[GAME\] end banner done'
+python3 tools/xbox/icount_report.py base.log new.log   # per draw, per tick, [SIMH] compared
+```
+
+`icount_report.py` takes the match's `[PERFX]` periods, takes the audio
+mixer's time out of the buckets it preempted, and prints instructions per
+draw (render, dlist, draw) and per simulation tick, as medians and as
+aggregates; with two logs it also compares their `[SIMH]` hashes and exits
+non-zero if they differ. Two runs of one build agree within ~0.6%. On the
+Windows PC a `gl` match takes ~2.5 minutes this way. `gpu` and `vsync` are
+spin loops and mean nothing here.
+
+Census builds (`-DXGX_CENSUS=1`) add `[CENSUS]` and `[DLCC]` blocks every
+600 frames: draws, vertices and changed state by pass (main, fighter
+shadow maps, Fountain's reflection) and owner (the p_link class of the
+GObj that drew), and the display-list cache by owner, lists cached under a
+second key and the lists rebuilt most. `tools/xbox/census_report.py` sums
+them. The counts are the same on the console.
+
 ## Logs
 
 Everything is written to `E:\UDATA\4d580001\` (the title ID is `4d580001`):
@@ -274,7 +304,18 @@ Lines worth reading first:
   RAM above 64 MB was allocated at boot and is never used
   (`settings.ini` `ram128 = 0`, the default; `xhw_mem_hold_upper`). `[NV2A] GPU stalled` dumps the words at the current GET only
   when that address is mapped.
-- `[PERF]`: see "Measuring on the console". `ticks per render` near 5 means
+- `[PERF]`: see "Measuring on the console". Test builds add `[PERFX]`:
+  the same buckets in microseconds, the raw counts, the audio mixer's time
+  inside each bucket, and the game thread's x87 control word and MXCSR
+  (`027f`: 53-bit precision). `[CAL]` at boot: 20M instructions timed
+  (40000 us under `-icount shift=1`).
+- `[SIMH] tick N: hash`: test builds, every 60 simulation ticks of a match:
+  each fighter's kind, port, action, facing, position, velocities, damage
+  and the random seed, hashed. Equal lines = the same simulation.
+- `[CPU]`: test builds, at boot: CPUID 1 and 2, CR0/CR3/CR4, MXCSR and its
+  mask (DAZ), the x87 control word, and on the console the MTRRs, PAT and
+  the page directory's 4 MB entries. `[MEM] lazy <base>: ...` at each scene
+  leave: committed 64 KB chunks of each 4 MB range (of 64). `ticks per render` near 5 means
   the game can't keep up and is slowing down (5 is the cap).
 - `[NV2A] per N draws: ...`: what changed before each draw (nothing, only a
   position matrix, then per dirty group) and draws by primitive; `[DLC]`
@@ -363,6 +404,8 @@ report.
 | `-DXHW_AUDIO_APU=0` | never use the xemu APU fallback |
 | `-DXHW_AUTOPAD=1` | scripted input from `D:\autopad.txt`: `<frame> <buttons/SHOT> [for N]` per line (`xhw_autopad.c`). `env NAME=VALUE` lines feed `getenv`, which reaches melee-pc's test hooks (below) |
 | `-DXSDK_ARAM_VERIFY=1` | compares every ARAM copy left on the disc (`ar.c`) with the image; `[AR] verify:` lines |
+| `-DXGX_CENSUS=1` | draw and display-list census: `[CENSUS]`/`[DLCC]` every 600 frames (`nv2a.c`, `gx_vtx.c`, `tools/xbox/census_report.py`) |
+| `-DXHW_PMC=1` | the console probe build's counters (`xhw_pmc.c`, with `-DXHW_PROF=1 -DXHW_AUTOPAD=1`): one pair of Pentium III performance-counter events per `[PERF]` period, summed per bucket, as `[PMC]` lines (ten pairs in turn; off in xemu). With `env MX_ABLATE=1` in the autopad script the ablation windows rotate every two periods (`[AB]` lines: FTZ, no shadow maps, no reflection, no back end, no display-list rechecks, no audio). `tools/xbox/probe_report.py`; `scenarios/probe`, `probe2` |
 | `-DXHW_PROF=1` | sampling profiler: `[PROF]` lines every 20 s (`xhw_prof.c`, `tools/xbox/prof_report.py`) |
 | `-DXHW_PROF_SECS=<n>`, `-DXHW_PROF_TOP=<n>` | profiler report period (default 20 s); buckets and call sites per report (default 192) |
 | `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU (into A8R8G8B8 textures) instead of drawn by the GPU, at every bpp; 720p used the CPU readback always until the GPU copy learned R5G6B5 targets |

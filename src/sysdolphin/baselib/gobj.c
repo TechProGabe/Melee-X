@@ -1,5 +1,8 @@
 extern unsigned int aurora_draw_tag; /* aurora: which GX link is rendering */
 #include "gobj.h"
+#ifdef TARGET_XBOX
+#include "xgx_probe.h"   /* PORT: draw census owner (xbox/include/game) */
+#endif
 
 #include "cobj.h"
 #include "fog.h"
@@ -134,9 +137,17 @@ u32 HSD_GObj_80390EB8(s32 i)
 static inline void render_gobj(HSD_GObj* cur, int i)
 {
     HSD_GObj* saved = HSD_GObj_804D7814;
+#ifdef TARGET_XBOX
+    /* PORT: the draw census counts draws by the p_link of their GObj */
+    unsigned int tag = xgx_census_tag;
+    xgx_census_tag = XGX_CENSUS_OWNER(tag, cur->p_link);
+#endif
     HSD_GObj_804D7814 = cur;
     cur->render_cb(cur, i);
     HSD_GObj_804D7814 = saved;
+#ifdef TARGET_XBOX
+    xgx_census_tag = tag;
+#endif
 }
 
 /// GObj_SetTextureCamera
@@ -182,11 +193,17 @@ void HSD_GObj_80390FC0(void)
         if (cur->render_cb != NULL) {
             saved = HSD_GObj_804D7818;
             HSD_GObj_804D7818 = cur;
+#ifdef TARGET_XBOX
+            xgx_census_tag = XGX_CENSUS_OWNER(xgx_census_tag, cur->p_link);   /* PORT: as render_gobj */
+#endif
             cur->render_cb(cur, 0);
             HSD_GObj_804D7818 = saved;
         }
         cur = cur->next_gx;
     }
+#ifdef TARGET_XBOX
+    xgx_census_tag = XGX_CENSUS_OWNER(xgx_census_tag, 0xFF);   /* PORT */
+#endif
 }
 
 struct _unk_gobj_struct HSD_GObj_DelayedProcInfo;

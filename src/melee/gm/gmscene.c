@@ -379,6 +379,8 @@ static bool scene_end_gate(struct gm_80479D58_t* st)
 /* PORT: the render pass for [PERF] (xbox/src/sdk/vi.c) */
 void xsdk_perf_render_begin(int ticks);
 void xsdk_perf_render_end(void);
+/* PORT: [SIMH] simulation hash after each tick, test builds (xbox/src/sdk/simhash.c) */
+void xsdk_sim_tick(void);
 #endif
 
 void gm_801A4D34(void (*on_frame)(void), GameSceneInfo* info)
@@ -444,6 +446,9 @@ void gm_801A4D34(void (*on_frame)(void), GameSceneInfo* info)
             while (pc_net_after_tick(temp_r25->unk_C != 0 || s_scene_end_held != 0)) {
                 gm_RunSimTick(frame_fn, temp_r25);
             }
+#ifdef TARGET_XBOX
+            xsdk_sim_tick();   /* PORT: [SIMH], see above */
+#endif
             /* Per TICK, not per pad batch: a batch is however many pad
              * periods the last load let pile up, so checking once per batch
              * ends the scene a whole batch late on the peer that loaded

@@ -1,0 +1,8 @@
+# Console round 1, second boot if there is time: Peach's Castle, 4 CPUs,
+# 5 minutes, ablation windows as in scenarios/probe.
+env MELEE_BOOT_SCENE=vs
+env MELEE_DEBUG_VS_STAGE=4
+env MELEE_DEBUG_VS=cpu4
+env MELEE_DEBUG_VS_TIME=300
+env MELEE_SEED=1
+env MX_ABLATE=1

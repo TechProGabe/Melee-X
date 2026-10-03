@@ -33,6 +33,7 @@
 #include "nv2a_rc.h"
 #include "nv2a_vp.h"
 #include "nv2a_vpmem.h"
+#include "game/xgx_probe.h"
 #include "xgx.h"
 #include "xhw.h"
 #include "xhw_internal.h"
@@ -1139,6 +1140,55 @@ static void pb_budget(void) {
 #ifndef XGX_STATS_EVERY
 #define XGX_STATS_EVERY 600   /* [NV2A] frame line every N presents */
 #endif
+
+/* Draw census (-DXGX_CENSUS=1, docs/fps-plan.md step 0.3): draws, vertices
+ * and what changed before them, per pass and per owner, from the tag the
+ * game's render paths keep (xbox/include/game/xgx_probe.h). A [CENSUS]
+ * block every XGX_STATS_EVERY presents; tools/xbox/census_report.py names
+ * the owners. The tag is stored in every build, read only here. */
+#ifndef XGX_CENSUS
+#define XGX_CENSUS 0
+#endif
+#ifndef XHW_PMC
+#define XHW_PMC 0
+#endif
+unsigned int xgx_census_tag = 0xFF;
+#if XGX_CENSUS
+#define CENSUS_PASSES 4
+typedef struct {
+    uint32_t draws, verts, none, mtx, dirty[13];
+} CensusSlot;
+static CensusSlot s_census[CENSUS_PASSES][256];
+
+static void census_count(uint32_t d, uint32_t count) {
+    uint32_t pass = (xgx_census_tag >> 8) & 0xFF, bits = d & 0x1FFFu;
+    CensusSlot* c = &s_census[pass < CENSUS_PASSES ? pass : CENSUS_PASSES - 1][xgx_census_tag & 0xFF];
+    c->draws++;
+    c->verts += count;
+    if (!d) c->none++;
+    else if (d == XGX_DIRTY_POSMTX) c->mtx++;
+    for (; bits; bits &= bits - 1) c->dirty[__builtin_ctz(bits)]++;
+}
+
+static void census_report(void) {
+    static char buf[16384];
+    int n = 0, p, o, k;
+    n += snprintf(buf + n, sizeof buf - (size_t)n,
+                  "[CENSUS] per %u frames: pass owner draws verts | none mtx | proj view posmtx texmtx lights chans "
+                  "texgen tev tevreg pixel fog maps scissor",
+                  XGX_STATS_EVERY);
+    for (p = 0; p < CENSUS_PASSES; p++)
+        for (o = 0; o < 256; o++) {
+            const CensusSlot* c = &s_census[p][o];
+            if (!c->draws || n > (int)sizeof buf - 256) continue;
+            n += snprintf(buf + n, sizeof buf - (size_t)n, "\n[CENSUS] %d %d %u %u | %u %u |", p, o, c->draws, c->verts,
+                          c->none, c->mtx);
+            for (k = 0; k < 13; k++) n += snprintf(buf + n, sizeof buf - (size_t)n, " %u", c->dirty[k]);
+        }
+    xhw_log(buf);
+    memset(s_census, 0, sizeof s_census);
+}
+#endif
 #ifndef XHW_FBDUMP_EVERY
 #define XHW_FBDUMP_EVERY 0   /* [FBDUMP] screenshot every N presents (xhw_fbdump.c) */
 #endif
@@ -1317,6 +1367,9 @@ void xgx_present(int black) {
                  s_st_dirty[10], s_st_dirty[11], s_st_dirty[12]);
         memset(s_st_dirty, 0, sizeof s_st_dirty);
         s_st_draws = s_st_dirty_none = s_st_dirty_mtx = 0;
+#if XGX_CENSUS
+        census_report();
+#endif
         s_st_waits = s_st_efb = s_st_tex_kb = s_st_verts = s_st_tex_fail = s_st_pb_peak = s_st_pb_resets = 0;
     }
     s_draws = s_approx = 0;
@@ -2780,6 +2833,12 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     uint32_t first, d, lay;
 
     if (!count) return;
+#if XHW_PMC
+    if (xhw_ablate(XHW_AB_BACKEND)) {   /* the probe's window 4: no back end (black frames) */
+        s_draw_force = XGX_DIRTY_ALL;    /* everything again once it ends */
+        return;
+    }
+#endif
     pf = xhw_perf_enter(XHW_PERF_DRAW);
     s_st_verts += count;
     s_pf_verts += count;
@@ -2794,6 +2853,9 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         else if (d == XGX_DIRTY_POSMTX) s_st_dirty_mtx++;
         for (; bits; bits &= bits - 1) s_st_dirty[__builtin_ctz(bits)]++;
     }
+#if XGX_CENSUS
+    census_count(d, count);
+#endif
     s_draw_force = 0;
     lay = (layout->off_nrm >= 0) | (layout->off_col[0] >= 0) << 1 | (layout->off_col[1] >= 0) << 2;
     /* Its inputs, without indirect stages: the TEV stages, swap tables and

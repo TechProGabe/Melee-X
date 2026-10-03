@@ -1,0 +1,11 @@
+# Final Destination, 2 CPUs (Fox, Mario), 60 s: the light case of the
+# frame-rate plan (docs/fps-plan.md step 0.1)
+env MELEE_BOOT_SCENE=vs
+env MELEE_DEBUG_VS_STAGE=32
+env MELEE_DEBUG_VS_CHARS=2,8
+env MELEE_DEBUG_VS_TIME=60
+env MELEE_SEED=1
+200 SHOT
+500 SHOT
+800 SHOT
+1200 SHOT
