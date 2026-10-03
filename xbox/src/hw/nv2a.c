@@ -74,21 +74,6 @@ static float z_store(float g) {
     return g * s_zmax;
 }
 
-/* -DXGX_DEFER=1: the deferred back end (docs/fps-plan.md B4, xgx_draw). Test
- * builds (XHW_AUTOPAD) also take it from the autopad line "env MX_DEFER=n". */
-#ifndef XGX_DEFER
-#define XGX_DEFER 0
-#endif
-#ifndef XGX_DEFER_KB
-#define XGX_DEFER_KB 32
-#endif
-#ifndef XGX_DEFER_CHECK
-#define XGX_DEFER_CHECK 0   /* [DQCHECK]: each replayed state against the recorded one */
-#endif
-static int s_dq_on = XGX_DEFER, s_dq_replaying;
-static uint32_t s_dq_len;
-static uint32_t s_st_dq_flushes, s_st_dq_draws, s_st_dq_bytes;   /* per [NV2A] interval */
-static void dq_flush(void);
 static uint32_t s_draw_force = XGX_DIRTY_ALL;   /* groups xgx_draw must rebuild regardless of dirty bits */
 static float s_display_aspect = 4.0f / 3.0f;
 static float s_content_aspect = 73.0f / 60.0f;
@@ -110,7 +95,6 @@ void xgx_output_size(uint32_t* w, uint32_t* h) {
 
 void xgx_set_content_aspect(float aspect) {
     if (aspect <= 0.0f || fabsf(aspect - s_content_aspect) < 1e-4f) return;
-    if (s_dq_len) dq_flush();
     s_content_aspect = aspect;
     update_content_rect();
     s_draw_force = XGX_DIRTY_ALL;
@@ -534,9 +518,7 @@ static int gpu_busy(void) { return !gpu_quiet() || !gpu_quiet(); }
 
 static void wait_idle(void) {
     uint64_t t0 = 0;
-    int reported = 0, pf;
-    if (s_dq_len) dq_flush();   /* what waits for the GPU waits for the queued draws too */
-    pf = xhw_perf_enter(XHW_PERF_GPU);
+    int reported = 0, pf = xhw_perf_enter(XHW_PERF_GPU);
     s_st_waits++;
     pb_close();
     while (gpu_busy()) {
@@ -981,7 +963,6 @@ uint32_t xgx_tex_bytes(uint32_t tex) {
 
 void xgx_tex_destroy(uint32_t tex) {
     if (!tex || tex >= MAX_TEX || !s_tex[tex].used) return;
-    if (s_dq_len) dq_flush();   /* queued draws may bind it (and its handle is reused) */
     defer_free(s_tex[tex].base);
     s_tex_epoch++;
     s_tex[tex].used = 0;
@@ -1060,7 +1041,6 @@ void xgx_clear(const int32_t r[4], const uint8_t rgba[4], uint32_t z24, int colo
     int x0, y0, x1, y1;
     uint32_t argb = (uint32_t)rgba[3] << 24 | (uint32_t)rgba[0] << 16 | (uint32_t)rgba[1] << 8 | rgba[2];
     (void)alpha;
-    if (s_dq_len) dq_flush();
     x0 = map_x((float)r[0]);
     y0 = map_y((float)r[1]);
     x1 = map_x((float)(r[0] + r[2]));
@@ -1166,9 +1146,7 @@ static void pb_budget(void) {
     wait_idle();
     pb_reset();
     s_pb_base = pb_begin();
-    /* not in a replay: the queued draws after this one have their vertices
-     * further on in the ring, and the GPU has yet to read them */
-    if (!s_dq_replaying) s_ring_pos = 0;
+    s_ring_pos = 0;
 }
 
 #ifndef XGX_STATS_EVERY
@@ -1307,7 +1285,6 @@ static void z16_frame_end(void);
 void xgx_present(int black) {
     int ovl;
     uint64_t t_flip;
-    if (s_dq_len) dq_flush();
     frame_open();
     if (black) clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 0, 0);
     pb_budget();   /* the frame's pushbuffer peak */
@@ -1416,10 +1393,6 @@ void xgx_present(int black) {
                  (unsigned)(s_st_flip_ns / 1000 / XGX_STATS_EVERY));
         s_st_late = 0;
         s_st_open_ns = s_st_lag_ns = s_st_flip_ns = 0;
-        if (s_dq_on)
-            xhw_logf("[NV2A] per %u frames: %u draws queued, %u flushes (%u a frame), %u KB of records", XGX_STATS_EVERY,
-                     s_st_dq_draws, s_st_dq_flushes, s_st_dq_flushes / XGX_STATS_EVERY, s_st_dq_bytes / 1024);
-        s_st_dq_draws = s_st_dq_flushes = s_st_dq_bytes = 0;
         s_st_waits = s_st_efb = s_st_tex_kb = s_st_verts = s_st_tex_fail = s_st_pb_peak = s_st_pb_resets = 0;
     }
     s_draws = s_approx = 0;
@@ -2878,7 +2851,7 @@ static void emit_fog(const XgxState* st) {
     }
 }
 
-static void draw_now(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* st) {
+void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* st) {
     int i, pf;
     uint32_t first, d, lay;
 
@@ -3002,187 +2975,6 @@ static void draw_now(uint32_t prim, uint32_t count, const XgxLayout* layout, Xgx
     s_st_draws++;
     s_st_prim[(prim >> 3) & 7]++;
     xhw_perf_leave(pf);
-}
-
-/* ======================================================================
- * Deferred back end (docs/fps-plan.md B4, -DXGX_DEFER=1 or MX_DEFER=1)
- * ====================================================================== */
-/* The console spends ~37% of the render and draw buckets' cycles waiting
- * for code: per draw, HSD's walk, the GX front end, this back end and pbkit
- * take turns in a 16 KB code cache, and with the back end switched off
- * (round 1's window 4) HSD's own walk ran 15% faster per draw. Queued, a
- * draw is a record of what changed since the one before: xgx_draw copies
- * the state groups its dirty bits name (only the matrices the masks name),
- * and dq_flush replays the records through draw_now on a state of its own
- * (s_dq_st) that every replayed record brings up to date. Each phase then
- * runs for many draws in a row. The groups are exactly the fields
- * gx_state.c and gx_tex.c mark them dirty for, so after a record s_dq_st
- * equals the front end's state wherever draw_now reads it.
- *
- * Everything else that reaches the GPU or frees what a queued draw uses
- * flushes first: clears, EFB copies and reads, the Z-texture mask, texture
- * destroys (their handles are reused), the present, and every wait for the
- * GPU (the vertex ring's wrap, the deferred frees, full pools). The vertices
- * stay where the front end put them (the ring or a cached list's buffer). */
-#define DQ_BYTES (XGX_DEFER_KB * 1024u)
-#define DQ_LAYOUT 1u   /* DqHead.flags: an XgxLayout follows */
-typedef struct {
-    uint32_t prim, count, dirty, posmask, texmask, flags, bytes, tag;
-    const uint8_t* base;
-#if XGX_DEFER_CHECK
-    uint32_t hash;
-#endif
-} DqHead;
-static uint8_t* s_dq;
-static XgxState s_dq_st;      /* the front end's state as the replayed draws see it */
-static XgxLayout s_dq_layout, s_dq_rec_layout;
-
-/* bytes from field a through field b of an XgxState */
-#define DQ_SPAN(s, a, b) ((void*)&(s)->a), (uint32_t)(offsetof(XgxState, b) + sizeof((s)->b) - offsetof(XgxState, a))
-
-static uint8_t* dq_x(uint8_t* q, void* f, uint32_t n, int rec) {
-    if (rec) memcpy(q, f, n);
-    else memcpy(f, q, n);
-    return q + n;
-}
-
-/* The groups of dirty bits d between s and the queue at q: rec copies the
- * state into the record, otherwise the record into the state. Counts
- * (ntev) come first, so both directions read the same ones. */
-static uint8_t* dq_xfer(uint8_t* q, XgxState* s, uint32_t d, uint32_t pm, uint32_t tm, int rec) {
-    uint32_t k, n;
-    if (d & XGX_DIRTY_PROJ) q = dq_x(q, DQ_SPAN(s, proj, proj_ortho), rec);
-    if (d & XGX_DIRTY_VIEWPORT) q = dq_x(q, DQ_SPAN(s, viewport, viewport), rec);
-    if (d & XGX_DIRTY_SCISSOR) q = dq_x(q, DQ_SPAN(s, scissor, scissor), rec);
-    if (d & XGX_DIRTY_POSMTX) {
-        q = dq_x(q, DQ_SPAN(s, cur_posmtx, cur_posmtx), rec);
-        for (k = 0; k < XGX_NUM_POSMTX; k++)
-            if (pm >> k & 1) {
-                q = dq_x(q, s->posmtx[k], sizeof s->posmtx[k], rec);
-                q = dq_x(q, s->nrmmtx[k], sizeof s->nrmmtx[k], rec);
-            }
-    }
-    if (d & XGX_DIRTY_TEXMTX) {
-        for (k = 0; k < XGX_NUM_TEXMTX; k++)
-            if (tm >> k & 1) q = dq_x(q, s->texmtx[k], sizeof s->texmtx[k], rec);
-        for (k = 0; k < XGX_NUM_PTMTX; k++)
-            if (tm >> (XGX_NUM_TEXMTX + k) & 1) q = dq_x(q, s->ptmtx[k], sizeof s->ptmtx[k], rec);
-    }
-    if (d & XGX_DIRTY_LIGHTS) q = dq_x(q, DQ_SPAN(s, light, light), rec);
-    if (d & XGX_DIRTY_CHANS) q = dq_x(q, DQ_SPAN(s, nchans, mat), rec);
-    if (d & XGX_DIRTY_TEXGEN) q = dq_x(q, DQ_SPAN(s, ntexgen, texgen), rec);
-    if (d & XGX_DIRTY_TEV) {
-        /* draw_now reads stages 0 .. max(ntev, 1) - 1 (derive_units) */
-        q = dq_x(q, DQ_SPAN(s, ntev, ntev), rec);
-        n = s->ntev > XGX_MAX_TEV ? XGX_MAX_TEV : s->ntev ? s->ntev : 1;
-        q = dq_x(q, s->tev, n * (uint32_t)sizeof s->tev[0], rec);
-        q = dq_x(q, DQ_SPAN(s, swap, ind_mtx), rec);
-    }
-    if (d & XGX_DIRTY_TEVREG) q = dq_x(q, DQ_SPAN(s, tevreg, konst), rec);
-    if (d & XGX_DIRTY_PIXEL) {
-        q = dq_x(q, DQ_SPAN(s, alpha_comp0, cull), rec);
-        q = dq_x(q, DQ_SPAN(s, dither, dither), rec);
-    }
-    if (d & (XGX_DIRTY_TEV | XGX_DIRTY_PIXEL)) q = dq_x(q, DQ_SPAN(s, ztex, ztex), rec);
-    if (d & XGX_DIRTY_FOG) q = dq_x(q, DQ_SPAN(s, fog_type, fog_color), rec);
-    if (d & XGX_DIRTY_MAPS) q = dq_x(q, DQ_SPAN(s, map, map), rec);
-    return q;
-}
-
-#if XGX_DEFER_CHECK
-/* -DXGX_DEFER_CHECK=1: a hash of everything draw_now may read, taken from
- * the front end's state at the record and from s_dq_st at the replay; any
- * difference is logged ([DQCHECK]). TEV stages past max(ntev, 1) and
- * cur_texmtx (never read) are left out, as the records leave them out. */
-static uint32_t s_dq_checked, s_dq_bad;
-static uint32_t dq_hash(const XgxState* st) {
-    uint32_t n = st->ntev > XGX_MAX_TEV ? XGX_MAX_TEV : st->ntev ? st->ntev : 1, h;
-    h = fnv(st, offsetof(XgxState, posmtx_mask));
-    h ^= fnv(&st->nchans, offsetof(XgxState, tev) - offsetof(XgxState, nchans)) * 3u;
-    h ^= fnv(st->tev, n * (uint32_t)sizeof st->tev[0]) * 5u;
-    h ^= fnv(&st->tevreg, offsetof(XgxState, dirty) - offsetof(XgxState, tevreg)) * 7u;
-    return h;
-}
-#endif
-
-static void dq_flush(void) {
-    uint32_t at = 0;
-    const uint8_t* base = s_draw_base;
-#if XGX_CENSUS
-    unsigned int tag = xgx_census_tag;
-#endif
-    if (!s_dq_len || s_dq_replaying) return;
-    s_dq_replaying = 1;
-    s_st_dq_flushes++;
-    s_st_dq_bytes += s_dq_len;
-    while (at < s_dq_len) {
-        const DqHead* h = (const DqHead*)(s_dq + at);
-        uint8_t* q = (uint8_t*)(h + 1);
-        if (h->flags & DQ_LAYOUT) {
-            memcpy(&s_dq_layout, q, sizeof s_dq_layout);
-            q += sizeof s_dq_layout;
-        }
-        dq_xfer(q, &s_dq_st, h->dirty, h->posmask, h->texmask, 0);
-        s_dq_st.dirty = h->dirty;
-        s_dq_st.posmtx_mask |= h->posmask;   /* build_mtx clears it; a probe's window 4 skips build_mtx */
-#if XGX_DEFER_CHECK
-        s_dq_checked++;
-        if (dq_hash(&s_dq_st) != h->hash && s_dq_bad++ < 16)
-            xhw_logf("[DQCHECK] frame %u draw %u: replayed state differs (dirty %08x, checked %u)", (unsigned)s_frame,
-                     (unsigned)s_draws, (unsigned)h->dirty, (unsigned)s_dq_checked);
-        if ((s_dq_checked & 0x3FFFF) == 0)
-            xhw_logf("[DQCHECK] %u draws checked, %u differ", (unsigned)s_dq_checked, (unsigned)s_dq_bad);
-#endif
-        s_draw_base = h->base;
-#if XGX_CENSUS
-        xgx_census_tag = h->tag;
-#endif
-        draw_now(h->prim, h->count, &s_dq_layout, &s_dq_st);
-        at += h->bytes;
-    }
-#if XGX_CENSUS
-    xgx_census_tag = tag;
-#endif
-    s_draw_base = base;
-    s_dq_len = 0;
-    s_dq_replaying = 0;
-}
-
-void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* st) {
-    DqHead* h;
-    uint8_t* q;
-    if (!s_dq_on || !count) {
-        draw_now(prim, count, layout, st);
-        return;
-    }
-    /* frame_open's clears go before the draw, as without the queue */
-    frame_open();
-    if (s_dq_len + sizeof(DqHead) + sizeof(XgxLayout) + sizeof(XgxState) > DQ_BYTES) dq_flush();
-    h = (DqHead*)(s_dq + s_dq_len);
-    h->prim = prim;
-    h->count = count;
-    h->dirty = st->dirty;
-    h->posmask = st->posmtx_mask;
-    h->texmask = st->texmtx_mask;
-    h->base = s_draw_base;
-    h->tag = xgx_census_tag;
-    h->flags = 0;
-#if XGX_DEFER_CHECK
-    h->hash = dq_hash(st);
-#endif
-    q = (uint8_t*)(h + 1);
-    if (memcmp(layout, &s_dq_rec_layout, sizeof *layout) != 0) {
-        s_dq_rec_layout = *layout;
-        memcpy(q, layout, sizeof *layout);
-        q += sizeof *layout;
-        h->flags |= DQ_LAYOUT;
-    }
-    q = dq_xfer(q, st, h->dirty, h->posmask, h->texmask, 1);
-    st->posmtx_mask = 0;   /* read, as build_mtx would have */
-    st->texmtx_mask = 0;
-    h->bytes = ((uint32_t)(q - (uint8_t*)h) + 3u) & ~3u;
-    s_dq_len += h->bytes;
-    s_st_dq_draws++;
 }
 
 /* ======================================================================
@@ -3492,7 +3284,6 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
  * alpha), but only when the copy clears the rect after itself, as the team
  * card's does; it overwrites the rect's colour. */
 int xgx_ztex_mask(const int32_t src[4], uint32_t z24, int clears) {
-    if (s_dq_len) dq_flush();
 #if XGX_EFB_GPU_COPY
     static const VpKey k_mask = { .copy = 1 };
     int x0, y0, x1, y1, i;
@@ -3602,7 +3393,6 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
     uint32_t pw, ph, n, i;
     int reusable;
     if (!dst_w || !dst_h || dst_w > 1024 || dst_h > 1024) return 0;
-    if (s_dq_len) dq_flush();
 #ifdef XGX_DEBUG_NOEFB
     return 0;
 #endif
@@ -3676,7 +3466,6 @@ void xgx_read_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, uint8_t*
     uint32_t i, n = dst_w * dst_h;
     uint32_t* buf = (uint32_t*)malloc(n * 4);
     if (!buf) return;
-    if (s_dq_len) dq_flush();
     read_rect(src, dst_w, dst_h, buf);
     for (i = 0; i < n; i++) {
         rgba[i * 4] = (uint8_t)(buf[i] >> 16);
@@ -3795,14 +3584,6 @@ int xgx_init(void) {
     setup_state();
     xhw_logf("[NV2A] up: %dx%d %d-bit, %s, tex pool %u KB", s_fbw, s_fbh, s_bpp,
              vm->widescreen ? "16:9" : "4:3", s_tp.bytes / 1024);
-#if defined(XHW_AUTOPAD) && XHW_AUTOPAD
-    {
-        const char* e = getenv("MX_DEFER");
-        if (e) s_dq_on = atoi(e) != 0;
-    }
-#endif
-    if (s_dq_on && !(s_dq = (uint8_t*)malloc(DQ_BYTES))) s_dq_on = 0;
-    if (s_dq_on) xhw_logf("[NV2A] deferred back end: %u KB queue", DQ_BYTES / 1024);
     {   /* physical layout: a GPU or DMA write past a buffer lands in whatever
          * sits next to it (the 480p hang overwrote the pushbuffer) */
         unsigned l[8];

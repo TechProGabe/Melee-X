@@ -82,7 +82,6 @@ GXFifoObj* GXInit(void* base, u32 size) {
     g_xgx.scissor[3] = XGX_EFB_H;
     g_xgx.dirty = XGX_DIRTY_ALL;
     g_xgx.posmtx_mask = (1u << XGX_NUM_POSMTX) - 1;
-    g_xgx.texmtx_mask = (1u << (XGX_NUM_TEXMTX + XGX_NUM_PTMTX)) - 1;
     g_gx.clear_z = 0xFFFFFF;
     gx_tex_init();
     gx_vtx_reset();
@@ -257,15 +256,13 @@ void GXLoadNrmMtxImm3x3(const void* mtx, u32 id) {
 void GXLoadTexMtxImm(const void* mtx, u32 id, GXTexMtxType type) {
     float(*dst)[4];
     float m[3][4];
-    u32 bits = XGX_DIRTY_TEXMTX, pos = 0, tbit = 0;
+    u32 bits = XGX_DIRTY_TEXMTX, pos = 0;
     if (id >= GX_PTTEXMTX0) {
         u32 k = (id - GX_PTTEXMTX0) / 3;
         if (k >= XGX_NUM_PTMTX) return;
         dst = g_xgx.ptmtx[k];
-        tbit = 1u << (XGX_NUM_TEXMTX + k);
     } else if (id >= GX_TEXMTX0 && id < GX_IDENTITY) {
         dst = g_xgx.texmtx[(id - GX_TEXMTX0) / 3];
-        tbit = 1u << ((id - GX_TEXMTX0) / 3);
     } else if (id < GX_TEXMTX0) {
         if (id / 3 >= XGX_NUM_POSMTX) return;
         dst = g_xgx.posmtx[id / 3];   /* texgens may read position matrices */
@@ -285,7 +282,6 @@ void GXLoadTexMtxImm(const void* mtx, u32 id, GXTexMtxType type) {
     FLUSH();
     mtx34_copy(dst, m);
     if (pos) g_xgx.posmtx_mask |= 1u << (id / 3);
-    g_xgx.texmtx_mask |= tbit;
     DIRTY(bits);
 }
 
