@@ -1,5 +1,7 @@
 /* audio_mix_ref.c - src/pc/audio.c's sample fetch and voice mixer as they
- * were before the block decoder (dev fda070e), renamed ref_*: the reference
+ * were before the block decoder (dev fda070e), render_frame's output clamp
+ * as the Xbox (no SSE2) built it and the aux reverb's network before its
+ * stretches (dev 46cfa00), renamed ref_*: the reference
  * tests/xbox/test_audio_mix.c compares the current mix_voice against, bit for
  * bit. #included after audio.c, whose Voice, AXPB, clamp16, globals and
  * is_music_stream it uses. */
@@ -357,4 +359,88 @@ static void ref_mix_voice(Voice* v, float* out) {
     }
     pb->ve.currentVolume = (u16)vol;
     set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
+}
+
+/* render_frame's output clamp without SSE2 */
+static void ref_clamp_frame(float* out) {
+    for (int i = 0; i < AX_FRAME * 2; i++) {
+        float s = out[i] * s_master;
+        out[i] = s > 1.0f ? 1.0f : (s < -1.0f ? -1.0f : s);
+    }
+}
+
+/* axfx_reverb_run before the stretches between line wraps */
+static void ref_axfx_reverb_run(struct AXFX_REVHI_WORK* rv, struct AXFX_BUFFERUPDATE* b) {
+    long* chan[AXFX_CHANNELS] = {b->left, b->right};
+    float in[AXFX_CHANNELS][AX_FRAME];
+    int ch, k, i;
+    float damp = rv->damping;
+    float ap = rv->allPassCoeff;
+    float wet = rv->level;
+
+    if (rv->C[0].inputs == NULL) {
+        return;
+    }
+    if (damp < 0.0f) {
+        damp = 0.0f;
+    } else if (damp > 0.95f) {
+        damp = 0.95f;
+    }
+
+    for (i = 0; i < AX_FRAME; i++) {
+        in[0][i] = (float)chan[0][i];
+        in[1][i] = (float)chan[1][i];
+        if (rv->crosstalk > 0.0f) {
+            float c = rv->crosstalk;
+            float l = in[0][i] + c * in[1][i];
+            float r = in[1][i] + c * in[0][i];
+            in[0][i] = l;
+            in[1][i] = r;
+        }
+    }
+    for (ch = 0; ch < AXFX_CHANNELS; ch++) {
+        struct AXFX_REVHI_DELAYLINE* line[6];
+        float* buf[6];
+        int32_t pos[6], len[6];
+        float lp = rv->lpLastout[ch];
+
+        for (k = 0; k < 3; k++) {
+            line[k] = &rv->C[ch * 3 + k];
+            line[3 + k] = &rv->AP[ch * 3 + k];
+        }
+        for (k = 0; k < 6; k++) {
+            buf[k] = line[k]->inputs;
+            pos[k] = line[k]->outPoint;
+            len[k] = line[k]->length;
+        }
+        for (i = 0; i < AX_FRAME; i++) {
+            float acc = 0.0f;
+            float y;
+
+            for (k = 0; k < 3; k++) {
+                float out = buf[k][pos[k]];
+                lp = out * (1.0f - damp) + lp * damp;
+                buf[k][pos[k]] = in[ch][i] + lp * rv->combCoef[ch * 3 + k];
+                if (++pos[k] >= len[k]) {
+                    pos[k] = 0;
+                }
+                acc += out;
+            }
+            y = acc * (1.0f / 3.0f);
+            for (k = 3; k < 6; k++) {
+                float out = buf[k][pos[k]];
+                float v = y + ap * out;
+                buf[k][pos[k]] = v;
+                if (++pos[k] >= len[k]) {
+                    pos[k] = 0;
+                }
+                y = out - ap * v;
+            }
+            chan[ch][i] = (long)(y * wet);
+        }
+        for (k = 0; k < 6; k++) {
+            line[k]->inPoint = line[k]->outPoint = pos[k];
+        }
+        rv->lpLastout[ch] = lp;
+    }
 }

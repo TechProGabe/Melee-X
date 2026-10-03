@@ -478,6 +478,34 @@ marked `PORT:`:
   u32 to float is an x87 round trip through memory on the Pentium III.
   Same bits as before (`tools/xbox/test_audio_mix.py`, against
   `tests/xbox/audio_mix_ref.c`).
+- `src/pc/audio.c`, the mixer thread's per-sample loops for the Pentium III
+  (fps-plan item E; switching audio off made the game's other buckets ~5%
+  faster on the console besides the mixer's own 4.7%), same bits
+  (`test_audio_mix.py`, now also built as plain C with `PC_AUDIO_SCALAR`
+  and checked for the output clamp):
+  - `decode_samples`: ADPCM decodes the rest of a frame (up to the end
+    address or the count) in one run without the per-sample header, bounds
+    and end checks, and its sum stays in s32 (the multiple of 2048 leaves
+    the shift; the two products are halved with their carry), so no 64-bit
+    adds; about 35 instructions a sample on i686 instead of 65.
+  - `mix_voice`: a frame's samples are decoded in one call and its source
+    positions (`src_steps`) worked out first, then the float math runs four
+    outputs a step in SSE1 (`src_interp`, `mix_out`, `mix_out_dry`), each
+    lane the scalar operations in the same order; integers enter the lanes
+    through float bias bits instead of a `cvtsi2ss` each, and the volume
+    ramp steps in float (exact integers). Silent voices only decode and take
+    their final state in closed form. It replaced a `src_next()` call per
+    source sample. Frames that would decode more than `SRC_MAX` samples keep
+    the sample-at-a-time loop (`mix_voice_stepped`).
+  - `render_frame`'s clamp (`clamp_frame`) in SSE1 with the constants as
+    the first operand, so a NaN passes through as in the scalar compares
+    (the SSE2 path, not built on the Xbox, turned one into 1.0); the frame
+    buffers are 16-byte aligned.
+  - `axfx_reverb_run` (the stage reverb on aux A): the samples up to the
+    next wrap of any of a channel's six lines run as one stretch, a pointer
+    per line, without the six wrap checks per sample (~110 instructions a
+    sample and channel on i686, now ~67); same float operations in the
+    same order, checked against the per-sample network.
 - `src/melee/mp/mpisland.c` (`mpIsland_8005A728`, `mpIsland_8005B004`): the
   1.5 KB `visited` arrays, which the code `memzero`s itself, are exempt from
   `-ftrivial-auto-var-init=zero` (it zeroed them a second time per call).

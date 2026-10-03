@@ -475,6 +475,7 @@ may go ahead.
 | C1 work removed | shadow maps of inactive shadows: none in 4-CPU matches (census pass 3), nothing to skip; the reflection's effects (28 draws) and off-screen items not looked at yet | | |
 | C5 envelope blends | not done: the fused blend (`HSD_MtxConcatScaledAdd`, ~30 instructions a joint) costs about what validating a cached blend against the joints' matrices would, and nothing reliable bumps an epoch (game code writes `jobj->mtx` too); the per-pass costs are the view concat and `HSD_MtxInverseTranspose`, which depend on the pass | | |
 | C2 vertex pool | done 5be8438: key over enabled attributes' formats; Fountain 821 duplicate lists (1.7 MB) -> 0, pool free 4 KB -> 1.8 MB, rebuilds after warm-up ~0 | dlist -11%, render +1% | round 2 (the console rebuilt 700-3300 lists per 600 frames) |
+| E audio mixer | done (branch `fps-e`): ADPCM decoded in runs per frame with an s32 sum, a frame's source positions planned before the mix, the float math four outputs a step in SSE1, the output clamp in SSE1, the reverb in stretches between line wraps; `test_audio_mix.py` same bits (SSE1 and plain C, i686 too) | mixer only (static i686 counts): a resampled ADPCM voice ~146 -> ~62 a sample, 1:1 music ~108 -> ~52, silent ~112 -> ~38, reverb ~110 -> ~67 a sample and channel | round 2 (`[PERF]` audio, window 6) |
 
 All gates: xemu `-icount`, `[SIMH]` identical up to the match's end, gl
 (and Fountain where it matters) screenshots the same. One open oddity:
