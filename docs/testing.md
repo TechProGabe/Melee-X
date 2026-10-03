@@ -135,7 +135,9 @@ console's address in `MX_FTP_HOST`):
    screenshots, counter on); a release candidate is a plain build.
 2. `console.py stage vNN` copies `default.xbe`, `default.tbn`,
    `TitleImage.xbx` and `TitleMeta.xbx` into `stage-vNN/`, the map to
-   `melee_x.vNN.map` and its static functions to `melee_x.vNN.map.statics`.
+   `melee_x.vNN.map`, and checks the map against the build's objects
+   (`static_syms.py`: any function the map lacks goes to
+   `melee_x.vNN.map.statics`; none so far).
 3. `console.py deploy vNN` deletes the console's old logs and shots, then
    uploads (the XBE and icon to `/F/Applications/Melee-X/`, the dashboard
    files to `/E/UDATA/4d580001/`) and re-downloads each file to compare.
@@ -186,8 +188,15 @@ same build:
 tools/xbox/prof_report.py boot.log --map path/to/melee_x.map
 ```
 
-Profile buckets are 64 bytes, so a small function right after another can
-be credited to its neighbour (pdclib's `memcmp` showed up as `longjmp`).
+Profile buckets are 64 bytes; three functions in four start inside one and
+half are shorter than one. `prof_report.py` shares a bucket out among the
+functions it overlaps, by their bytes in it weighted by each function's
+sample density over the whole profile. Crediting the whole bucket to the
+function at its start (`--first`, the old way) put `pc_atanf`'s samples on
+the end of `pc_load_disc_fonts`, `memcpy`'s on `xhw_splash_release` and
+pdclib's `memcmp`'s on `longjmp`. The map itself is complete: lld-link
+lists the static functions after the public ones, and `static_syms.py`
+checks every function of the build's objects against it.
 
 Each sample also records a caller: the first word above the interrupted
 stack pointer that points into the XBE right after a call instruction (the
@@ -198,6 +207,42 @@ level up). `prof_report.py` folds both into functions after the main table.
 `[PROFS]` lines (v33 on) count only the samples taken while `[PERF]`'s
 current bucket was the simulation: `prof_report.py` lists them last, as the
 simulation's own profile (HSD's animation and matrix code runs in both).
+
+The periodic report lists the hottest 192 buckets only (~60% of the
+samples). The whole profile of a match is kept too: every bucket of the
+code, all samples and the simulation's, in 32-bit counts the periodic
+report doesn't reset. It restarts at each scene's entry and is written
+once at the match's end (TIME!/GAME!, from `xhw_led_match_end`; the
+sampler thread does the writing): as `E:\UDATA\4d580001\prof.bin` in every
+profiler build (`console.py pull` fetches it; a profiler build deletes the
+previous boot's at startup), and in autopad builds also as `[PROFH]` lines
+on COM1 and in the log, so an xemu run has it in `serial.log`. A
+`[PROF] whole-match profile N written` line follows. It costs 8 bytes per
+64 bytes of `.text` (~550 KB), on top of the periodic report's 4 per 64
+bytes of the whole image (~490 KB).
+
+```sh
+tools/xbox/prof_report.py --full serial.log --map path/to/melee_x.map   # [PROFH]: every match in the log
+tools/xbox/prof_report.py --full prof.bin --map ... --csv match.csv     # the console's file; --last, -n N
+```
+
+lists every function with samples, its share and the cumulative share,
+for all samples and for the simulation's alone; `--csv` writes both to a
+spreadsheet. The formats (counts in hex; buckets of 64 bytes counted from
+the image base):
+
+```
+[PROFH] begin match 1: base 00010000 shift 6 buckets 111c0, 61000 ms, 60512 samples: 60400 in image, 112 outside, 830 while waiting, 20 unreadable, 17020 in the simulation
+[PROFH] all 141 2a,3,+4,1f,...   first bucket, then its count and the next ones'; +n skips n empty buckets
+[PROFH] sim 2b7 5,+1c,9,...      (lines stay under 500 bytes, written ~23 KB per log call)
+[PROFH] end match 1: all 60400 sim 17020   the sums, which prof_report.py checks
+```
+
+`prof.bin` is little-endian: twelve u32 (magic `MXPH`, version 1, image
+base, bucket shift, bucket count, match number, milliseconds, samples in
+the image, outside it, while waiting, unreadable, in the simulation), then
+`u32 all[count]` and `u32 sim[count]`. A second match in the same boot
+overwrites it (match number 2); the `[PROFH]` lines keep every match.
 
 ### Performance runs in xemu
 
@@ -406,7 +451,7 @@ report.
 | `-DXSDK_ARAM_VERIFY=1` | compares every ARAM copy left on the disc (`ar.c`) with the image; `[AR] verify:` lines |
 | `-DXGX_CENSUS=1` | draw and display-list census: `[CENSUS]`/`[DLCC]` every 600 frames (`nv2a.c`, `gx_vtx.c`, `tools/xbox/census_report.py`) |
 | `-DXHW_PMC=1` | the console probe build's counters (`xhw_pmc.c`, with `-DXHW_PROF=1 -DXHW_AUTOPAD=1`): one pair of Pentium III performance-counter events per `[PERF]` period, summed per bucket, as `[PMC]` lines (ten pairs in turn; off in xemu). With `env MX_ABLATE=1` in the autopad script the ablation windows rotate every two periods (`[AB]` lines: FTZ, no shadow maps, no reflection, no back end, no display-list rechecks, no audio). `tools/xbox/probe_report.py`; `scenarios/probe`, `probe2` |
-| `-DXHW_PROF=1` | sampling profiler: `[PROF]` lines every 20 s (`xhw_prof.c`, `tools/xbox/prof_report.py`) |
+| `-DXHW_PROF=1` | sampling profiler: `[PROF]` lines every 20 s (`xhw_prof.c`, `tools/xbox/prof_report.py`), and each match's whole profile at its end in `prof.bin` (with `-DXHW_AUTOPAD=1` also as `[PROFH]` lines; `prof_report.py --full`) |
 | `-DXHW_PROF_SECS=<n>`, `-DXHW_PROF_TOP=<n>` | profiler report period (default 20 s); buckets and call sites per report (default 192) |
 | `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU (into A8R8G8B8 textures) instead of drawn by the GPU, at every bpp; 720p used the CPU readback always until the GPU copy learned R5G6B5 targets |
 | `-DXHW_VIDEO_480_BPP=16` | 640x480 at 16 bits: R5G6B5 colour, Z16 depth and 720p's pool sizes, the 720p rendering path at a size xemu can show (xemu has no 720p). Test only: shots and `[FBDUMP]` are 16-bit |

@@ -3,7 +3,7 @@
 
     tools/xbox/console.py stage v33            # build-xbox -> hw/stage-v33 + hw/melee_x.v33.map
     tools/xbox/console.py deploy v33           # upload hw/stage-v33, verify (deletes old logs/shots first)
-    tools/xbox/console.py pull v33             # logs + shots -> hw/logs33
+    tools/xbox/console.py pull v33             # logs + shots (+ prof.bin) -> hw/logs33
     tools/xbox/console.py ls                   # what's in the log folder
 
 hw/ is ~/xemu/hw unless MX_HW is set. The console's FTP server is at
@@ -12,8 +12,9 @@ MX_FTP_USER / MX_FTP_PASS say otherwise.
 Deploy puts default.xbe and default.tbn in /F/Applications/Melee-X/ next to
 the disc image, and TitleImage.xbx and TitleMeta.xbx in /E/UDATA/4d580001/
 (UnleashX's icon cache). Logs (boot*.log, trace.log, crash.log, hang.log,
-shotNN.bmp) are in /E/UDATA/4d580001/. Keep each deployed build's map: sym.py
-and prof_report.py need the map of the build that wrote the log.
+shotNN.bmp, and a profiler build's whole-match prof.bin) are in
+/E/UDATA/4d580001/. Keep each deployed build's map: sym.py and prof_report.py
+need the map of the build that wrote the log.
 """
 import ftplib
 import io
@@ -31,7 +32,7 @@ USER = os.environ.get("MX_FTP_USER", "xbox")
 PASS = os.environ.get("MX_FTP_PASS", "xbox")
 APP = "/F/Applications/Melee-X"
 UDATA = "/E/UDATA/4d580001"
-LOGS = re.compile(r"^(shot\d+\.bmp|boot(\d|_prev)?\.log|trace\.log|crash\.log|hang\.log)$")
+LOGS = re.compile(r"^(shot\d+\.bmp|boot(\d|_prev)?\.log|trace\.log|crash\.log|hang\.log|prof\.bin)$")
 FILES = {"default.xbe": APP, "default.tbn": APP, "TitleImage.xbx": UDATA, "TitleMeta.xbx": UDATA}
 
 

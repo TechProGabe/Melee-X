@@ -19,8 +19,9 @@ LINE = re.compile(r'^\s*[0-9a-f]{4}:[0-9a-f]{8}\s+(\S+)\s+([0-9a-f]{16})\s+(?:f\
 
 
 def load(path, statics=True):
-    """The map's public symbols, plus the static functions in <map>.statics
-    (tools/xbox/static_syms.py) when that file exists."""
+    """The map's symbols, public and static (lld-link lists the file-local
+    ones after the publics, in the same format), plus any functions
+    tools/xbox/static_syms.py found missing from it (<map>.statics)."""
     syms = []
     with open(path, errors='replace') as f:
         for line in f:
