@@ -97,6 +97,11 @@ Fix order after RC2 (2026-10-02), details in the entries below:
 6. 100-Man freeze: the post-copy GPU stall, fixed on dev; confirm with
    the tester on the next RC.
 7. Classic Team Kirby card: some Kirbys corrupted (tester).
+8. 128 MB consoles always run in 64 MB (user, 2026-10-02: the 128 MB
+   mode only causes problems; both mid-match LIMIT_COLOR stalls came from
+   a 128 MB console). Drop `[system] ram128` and the menu's Use 128 MB
+   RAM row, keep `xhw_mem_hold_upper` unconditional, ignore old ini
+   lines; README, platform.md, decisions.md.
 
 - Fixed on dev: the v1 release hung on the intro movie (GitHub #5, #6,
   reddit), at any video mode. `xgx_present` called pbkit's `pb_finished`
