@@ -392,6 +392,9 @@ Game fixes:
   reading address 3 after 14 VS matches). With it, `OSAlloc` (os.c) takes
   its own lock: the audio heap is allocated from on those workers and freed
   on the game thread.
+- `src/melee/gr/granime.c` (`grAnime_801C8318`): the AObj that
+  `fn_801C82E8` longjmps back with is a `volatile` local (clang returned
+  NULL, so stage "animation ended" checks never fired: Kraid froze).
 
 Speed (same results, bit for bit where a test is named):
 - HSD animation and matrices (`test_anim_mtx.py`, `anim_mtx_ref.c`; a NaN

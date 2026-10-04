@@ -47,7 +47,8 @@
                                           u32 type, void* param, int arg5);
 ///* 1C7B24 */ static void grAnime_801C7B24(HSD_GObj* gobj, int arg1, u32 arg2,
 ///                                          f32 arg8);
-/* 1C82E8 */ static void fn_801C82E8(HSD_AObj* arg0, HSD_AObj** arg1);
+/* 1C82E8 */ static void fn_801C82E8(HSD_AObj* arg0,
+                                     HSD_AObj* volatile* arg1);
 /* 4D6958 */ static float grAnime_804D6958;
 /* 4D695C */ static float grAnime_804D695C;
 
@@ -1047,7 +1048,7 @@ void grAnime_801C8138(HSD_GObj* gobj, enum_t arg1, s32 arg2)
     HSD_JObjAnimAll(jobj);
 }
 
-void fn_801C82E8(HSD_AObj* arg0, HSD_AObj** arg1)
+void fn_801C82E8(HSD_AObj* arg0, HSD_AObj* volatile* arg1)
 {
     *arg1 = arg0;
     longjmp(grAnime_8049EE40, 1);
@@ -1057,7 +1058,12 @@ HSD_AObj* grAnime_801C8318(HSD_GObj* gobj, int arg1, u32 arg2)
 {
     HSD_JObj* jobj;
     enum _HSD_TypeMask var_r30 = 0;
-    HSD_AObj* sp14 = NULL;
+    /* PORT: volatile. fn_801C82E8 stores the first AObj here and longjmps
+     * back; C leaves a non-volatile local changed after setjmp
+     * indeterminate, and clang returned the NULL it was set to before
+     * setjmp, so grAnime_801C83D0/84A4 never saw an animation end (Kraid
+     * froze after rising and never turned the stage). */
+    HSD_AObj* volatile sp14 = NULL;
     jobj = Ground_801C3FA4(gobj, arg1);
     if (jobj == NULL) {
         return 0;
