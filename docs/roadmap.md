@@ -76,9 +76,15 @@ Fix order (2026-10-04):
    (`scenarios/castle`).
 5. **Particles not drawn** (console, v45, 480, all particles; v43 had smoke
    and hits: bisect v43..v45 in xemu). `psdisp.c`: blend/TEV, texture
-   format or a dropped primitive type. Same group, status unknown since
-   v43: Adventure Corneria's Arwing cutscene silent with Falco's face
-   frozen (voice bank or a stale EFB copy); trophy transition lighting dark
+   format or a dropped primitive type. Same group: Adventure Corneria's
+   Arwing cutscene silent with the comm portrait frozen (v43; tester v52
+   "Slippy's frame does not move") is fixed for v53 by the grAnime fix
+   (`grAnime_801C8318` returned NULL after its longjmp, so the comm
+   window's `grAnime_801C83D0` open-anim check never fired and it never
+   reached the talk state: no text, voice or mouth anim). In xemu
+   (`scenarios/cntalk`) all three lines now play with text and talk anims
+   and a voice handle held ~100 frames each; confirm the voices on the
+   console. Trophy transition lighting dark
    and a background flash (`scenarios/toy`; suspects in `nv2a_vp.c`:
    normals normalized where GX doesn't, spot cosine not clamped at 0).
 6. **100-Man freeze** (tester, RC1 = v42, 128 MB, 480): `LIMIT_ZETA` on
