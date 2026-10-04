@@ -115,6 +115,14 @@ void xhw_lazy_set_fill(const void* base, void (*fill)(void* chunk));
 int xhw_lazy_is_committed(const void* p);
 void xhw_lazy_decommit(void* chunk);
 uint32_t xhw_mem_free_kb(void);
+/* Memory breakdown (-DXHW_MEMB=<secs>, docs/testing.md): _due is 1 once
+ * every `secs` seconds; _log writes a [MEMB] line with the kernel's buckets,
+ * the malloc heap and the thread count, then `extra` (the caller's own). */
+#ifndef XHW_MEMB
+#define XHW_MEMB (XHW_TEST_BUILD ? 60 : 0)
+#endif
+int xhw_mem_breakdown_due(uint32_t secs);
+void xhw_mem_breakdown_log(const char* extra);
 /* 128 MB consoles: takes the RAM above 64 MB for good, so the game and the
  * kernel run in the low 64 MB as on a stock console (settings.ini
  * ram128 = 0, the default). Returns the KB held; 0 on a 64 MB console. */

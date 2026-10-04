@@ -1717,7 +1717,21 @@ void gx_vtx_cache_flush(void) {
         if (s_dlc[i].dl) dlc_drop(i);
 }
 
+/* The memory breakdown (xhw_mem_breakdown_log) with the display-list
+ * cache's malloc'd part: batch tables and dynamic lists. */
+static void memb_log(void) {
+    char extra[200];
+    uint32_t batch = 0;
+    int i;
+    for (i = 0; i < DLC_MAX; i++)
+        if (s_dlc[i].dl) batch += (uint32_t)sizeof(DlBatch) * s_dlc[i].nbatch;
+    snprintf(extra, sizeof extra, "DLC %d lists, batches %u B, dynamic %u B | vertex pool %u KB free, tex pool %u KB free",
+             s_dlc_n, batch, s_dyn_bytes, xgx_vbuf_pool_free_kb(), xgx_tex_pool_free_kb());
+    xhw_mem_breakdown_log(extra);
+}
+
 void gx_vtx_frame_end(void) {
+    if (XHW_MEMB && xhw_mem_breakdown_due(XHW_MEMB)) memb_log();
     if (xgx_present_count() % XGX_STATS_EVERY == 0 && s_dlc_ready) {
         int i, vol = 0, dyn = 0;
         for (i = 0; i < DLC_MAX; i++) {

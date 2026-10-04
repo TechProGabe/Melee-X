@@ -54,10 +54,20 @@ Fix order (2026-10-04):
 1. **Memory leak since v39.** `[BEAT]` free memory falls ~55 KB a minute
    in 192 KB steps during matches (v43: 9.7 -> 3.6 MB in 110 min; v39
    flat for 75 min; v45's 720p burn-in did not leak). MEM1+ARAM barely
-   moves, no new allocation in v39..v43. Next: log a per-subsystem memory
-   breakdown each minute, 15-20 min in xemu; 192 KB = three 64 KB
-   granules, so check kernel-side allocations (VM, handles, threads,
-   contiguous memory) too.
+   moves, no new allocation in v39..v43. Fix in v53, awaiting the console:
+   SDL's event queue (`xhw_pad.c`). Nothing reads SDL events, but every
+   stick, trigger or button change of a real controller was queued as an
+   `SDL_JOY*` event, ~80 bytes of malloc each, up to 65535 (5 MB); the
+   heap grew in 64 KB VirtualAlloc segments. It follows input, not the
+   video mode: v52 gold (480i, played) 64 KB every ~2 min, the tester
+   (480i, 7 short matches) every ~17 s, v52 red's and v45's CPU-only
+   burn-ins flat once the menus were done (SDL drops a stick's jitter
+   until it first moves more than 1/80 of its range). xemu has no
+   controller: three 10-min matches (APU, AC97, profiler builds) stayed
+   flat; synthetic axis events (`env MX_PAD_NOISE`) reproduce the growth
+   with `-DXHW_PAD_DRAIN=0`. Joystick events are now off and the queue is
+   emptied each poll. Check: a v53 test build's `[MEMB]` lines (heap and
+   `SDL events` flat) in a played 30-min match.
 2. **Whole-system freeze after a long uptime** (v39 ~82 min, v43 113
    min): log stops between two heartbeats, no fault or hang report (the
    watchdog stopped too), audio repeats its last buffer. Suspects: an

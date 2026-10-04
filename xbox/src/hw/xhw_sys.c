@@ -589,6 +589,57 @@ void xhw_mem_log(const char* where) {
                  (unsigned)(st.PoolPagesCommitted * 4), xhw_lazy_committed_kb());
 }
 
+/* ---- memory breakdown (XHW_MEMB, docs/testing.md) ----
+ * nxdk's malloc is dlmalloc on VirtualAlloc: the heap grows in 64 KB
+ * segments, counted in the kernel's virtual-memory total along with the
+ * MEM1/ARAM chunks. Its own counters are reachable under their dl names. */
+struct xhw_dlmallinfo {
+    size_t arena, ordblks, smblks, hblks, hblkhd, usmblks, fsmblks, uordblks, fordblks, keepcost;
+};
+struct xhw_dlmallinfo dlmallinfo(void);
+size_t dlmalloc_footprint(void);
+
+int xhw_mem_breakdown_due(uint32_t secs) {
+    static uint64_t s_next;
+    uint64_t now = xhw_time_ns();
+    if (!secs || now < s_next) return 0;
+    s_next = now + (uint64_t)secs * 1000000000ull;
+    return 1;
+}
+
+void xhw_mem_breakdown_log(const char* extra) {
+    MM_STATISTICS st;
+    struct xhw_dlmallinfo mi;
+    PKTHREAD me = KeGetCurrentThread();
+    PKPROCESS p = me->ApcState.Process;
+    PLIST_ENTRY e;
+    KIRQL old;
+    unsigned threads = 0, used;
+    memset(&st, 0, sizeof st);
+    st.Length = sizeof st;
+    if (MmQueryStatistics(&st) < 0) return;
+    old = KeRaiseIrqlToDpcLevel();
+    for (e = p->ThreadListHead.Flink; e != &p->ThreadListHead && threads < 256; e = e->Flink) threads++;
+    KfLowerIrql(old);
+    mi = dlmallinfo();
+    /* what the kernel's buckets don't cover: contiguous memory (pbkit, the
+     * NV2A pools, audio), page tables, the kernel itself */
+    used = (unsigned)(st.TotalPhysicalPages - st.AvailablePages) * 4;
+    xhw_logf("[MEMB] free %u | virt %u (MEM1+ARAM %u, heap %u) reserved %u | image %u pool %u stack %u cache %u | "
+             "other %u | heap in use %u B, free %u B, mmapped %u, %u chunks free | threads %u, SDL events %u%s%s",
+             (unsigned)(st.AvailablePages * 4), (unsigned)(st.VirtualMemoryBytesCommitted / 1024),
+             xhw_lazy_committed_kb(), (unsigned)(dlmalloc_footprint() / 1024),
+             (unsigned)(st.VirtualMemoryBytesReserved / 1024), (unsigned)(st.ImagePagesCommitted * 4),
+             (unsigned)(st.PoolPagesCommitted * 4), (unsigned)(st.StackPagesCommitted * 4),
+             (unsigned)(st.CachePagesCommitted * 4),
+             used - (unsigned)(st.VirtualMemoryBytesCommitted / 1024) -
+                 (unsigned)((st.ImagePagesCommitted + st.PoolPagesCommitted + st.StackPagesCommitted +
+                             st.CachePagesCommitted) * 4),
+             (unsigned)mi.uordblks, (unsigned)mi.fordblks, (unsigned)(mi.hblkhd / 1024), (unsigned)mi.ordblks, threads,
+             (unsigned)xhw_pad_events_queued(),
+             extra && *extra ? " | " : "", extra ? extra : "");
+}
+
 /* ======================================================================
  * Paths
  * ====================================================================== */
