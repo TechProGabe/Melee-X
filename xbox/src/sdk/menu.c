@@ -226,6 +226,9 @@ static void draw_hint(void) {
         s_msg_frames--;
         snprintf(s_ovl.text[0], XGX_OVERLAY_COLS, "%s", s_msg);
         s_ovl.rgb[0] = 0xFFE070;
+    } else if (xhw_log_fallback()) {   /* stays up on the title: the boot's notice may be gone by then */
+        snprintf(s_ovl.text[0], XGX_OVERLAY_COLS, "Can't write to E: (full?): nothing will be saved");
+        s_ovl.rgb[0] = 0xFFA040;
     } else {
         snprintf(s_ovl.text[0], XGX_OVERLAY_COLS, "BACK: Melee-X settings");
         s_ovl.rgb[0] = 0xC8D0E8;

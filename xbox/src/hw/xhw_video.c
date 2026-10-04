@@ -95,6 +95,9 @@ void xhw_video_boot(void) {
     } else {
         set_mode_480();
     }
+    xhw_logf("[VIDEO] dashboard: encoder %08x, AV pack %u, widescreen %d, 480p %d, 720p %d",
+             (unsigned)XVideoGetEncoderSettings(), (unsigned)(XVideoGetEncoderSettings() & VIDEO_ADAPTER_MASK),
+             xhw_video_widescreen_set(), xhw_video_480p_allowed(), xhw_video_720p_allowed());
     xhw_logf("[VIDEO] %dx%d %d-bit%s%s", s_mode.width, s_mode.height, s_mode.bpp,
              s_mode.progressive ? " progressive" : " interlaced", s_mode.widescreen ? " 16:9" : " 4:3");
 }

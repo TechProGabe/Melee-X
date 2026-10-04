@@ -416,6 +416,34 @@ audio is unchanged (same mixer, rate, buffers and start); its log gains the
 `found`/`idle` lines. `-DXHW_AUDIO_TEST` (testing.md) leaves the engine
 running across a relaunch or fakes a stuck one, for xemu.
 
+**Writes to a full or unwritable E: (2026-10-04).** A player on a 128 MB,
+CPU-upgraded console reported that settings.ini was never made, BACK
+screenshots never appeared and the widescreen setting did nothing: all of
+them are files in `E:\UDATA\4d580001\` (widescreen at 480 also needs the
+dashboard's widescreen flag). A full E: (a partition of ~4.9 GB that
+dashboards and saves fill) was the first guess, ruled out below, but it
+showed that every write there failed quietly. A card save opened its `.gci` for writing in place, so a failed write truncated the
+save itself. Now: boot logs E:'s free space (`[BOOT] E: N MB free of M MB`);
+when boot.log can't be created there or E: has less than 1 MB free, the log
+goes to `D:\boot.log` (next to default.xbe) and a 10 s notice says the save
+folder can't be written, and the title screen's hint line says so in place
+of "BACK: Melee-X settings" for as long as the game runs (the notice can be
+gone before the title). Otherwise boot makes and deletes a `probe.tmp` and
+logs `[BOOT] save folder write test` with settings.ini's attributes; boot
+also logs the dashboard's video flags (`[VIDEO] dashboard`: 16:9 at 480
+needs its widescreen flag) and a failed settings save logs errno. The
+player has since said E: has over 1 GB free, so those lines are what his
+boot.log is for. A card save writes `<name>.tmp` and renames it over
+the `.gci` (`xhw_replace_file`), so the previous save survives a failed
+write; the game gets `CARD_RESULT_IOERROR` (and shows its own memory card
+message), a create or rename that can't be written is undone, and the next
+boot takes a complete `.tmp` whose `.gci` is gone and deletes any other. A
+BACK screenshot that can't be written is deleted rather than left half
+written. Each failure puts up a notice (`xhw_notice`, now in `xhw.h` and
+reusable once the one before has gone; a notice posted while one is up is
+logged as `[NOTICE] dropped`). The settings menu already said
+"settings.ini could not be saved".
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 

@@ -84,20 +84,45 @@ void xhw_flush_handle(HANDLE h) {
     NtFlushBuffersFile(h, &iosb);
 }
 
+/* The folder boot.log is in: the save folder, or D:\ (next to default.xbe)
+ * when the save folder can't be written, so a console whose saves, settings
+ * and screenshots never appear still leaves a log (xhw_log_fallback). */
+static const char* s_log_dir = "";
+static unsigned s_log_fallback;   /* the save folder's error, 0 when boot.log is there */
+#define LOG_MIN_FREE (1024 * 1024)   /* less free on E: than this counts as not writable */
+
+static int e_has_room(void) {
+    ULARGE_INTEGER free_b;
+    return !GetDiskFreeSpaceExA("E:\\", &free_b, NULL, NULL) || free_b.QuadPart >= LOG_MIN_FREE;
+}
+
+unsigned xhw_log_fallback(void) { return s_log_fallback; }
+
 void xhw_log_open_file(void) {
     char path[MAX_PATH], prev[MAX_PATH];
-    snprintf(path, sizeof path, "%sboot.log", xhw_save_dir());
+    s_log_dir = xhw_save_dir();
+    snprintf(path, sizeof path, "%sboot.log", s_log_dir);
     /* the previous boot's log stays as boot_prev.log: a "Save and restart"
      * or a relaunch after a freeze would otherwise wipe the one that matters */
-    snprintf(prev, sizeof prev, "%sboot_prev.log", xhw_save_dir());
+    snprintf(prev, sizeof prev, "%sboot_prev.log", s_log_dir);
     if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) xhw_replace_file(path, prev);
     s_bootlog = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (s_bootlog == INVALID_HANDLE_VALUE || !e_has_room()) {
+        s_log_fallback = s_bootlog == INVALID_HANDLE_VALUE ? (unsigned)GetLastError() : ERROR_DISK_FULL;
+        if (s_bootlog != INVALID_HANDLE_VALUE) {
+            CloseHandle(s_bootlog);
+            DeleteFileA(path);
+        }
+        s_log_dir = "D:\\";
+        snprintf(path, sizeof path, "%sboot.log", s_log_dir);
+        s_bootlog = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    }
     /* the previous session's continuation files would read as this one's */
-    snprintf(path, sizeof path, "%sboot2.log", xhw_save_dir());
+    snprintf(path, sizeof path, "%sboot2.log", s_log_dir);
     DeleteFileA(path);
-    snprintf(path, sizeof path, "%sboot3.log", xhw_save_dir());
+    snprintf(path, sizeof path, "%sboot3.log", s_log_dir);
     DeleteFileA(path);
-    snprintf(path, sizeof path, "%strace.log", xhw_save_dir());
+    snprintf(path, sizeof path, "%strace.log", s_log_dir);
     DeleteFileA(path);
 }
 
@@ -108,7 +133,7 @@ static void bootlog_next_part(void) {
     xhw_flush_handle(s_bootlog);
     CloseHandle(s_bootlog);
     s_bootlog_part = s_bootlog_part == 2 ? 3 : 2;
-    snprintf(path, sizeof path, "%sboot%d.log", xhw_save_dir(), s_bootlog_part);
+    snprintf(path, sizeof path, "%sboot%d.log", s_log_dir, s_bootlog_part);
     s_bootlog = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     s_bootlog_bytes = 0;
 }
@@ -118,7 +143,7 @@ static void tracelog_write_locked(const char* s, size_t n) {
     if (s_tracelog == INVALID_HANDLE_VALUE) {
         char path[MAX_PATH];
         if (s_bootlog == INVALID_HANDLE_VALUE) return;   /* no save folder yet */
-        snprintf(path, sizeof path, "%strace.log", xhw_save_dir());
+        snprintf(path, sizeof path, "%strace.log", s_log_dir);
         s_tracelog = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         if (s_tracelog == INVALID_HANDLE_VALUE) return;
     }
@@ -234,8 +259,8 @@ void xhw_log_keep(const char* name) {
         log_flush_locked();
         CloseHandle(s_bootlog);
         s_bootlog = INVALID_HANDLE_VALUE;
-        snprintf(from, sizeof from, "%sboot.log", xhw_save_dir());
-        snprintf(to, sizeof to, "%s%s", xhw_save_dir(), name);
+        snprintf(from, sizeof from, "%sboot.log", s_log_dir);
+        snprintf(to, sizeof to, "%s%s", s_log_dir, name);
         xhw_replace_file(from, to);
     }
     LeaveCriticalSection(&s_log_cs);

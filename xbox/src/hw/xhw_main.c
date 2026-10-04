@@ -147,6 +147,34 @@ static void log_previous_exit(void) {
     xhw_logf("[BOOT] previous exit: %s", got ? buf : "(empty record)");
 }
 
+/* Saves, settings.ini and screenshots all go to the save folder; a console
+ * where none of them appear (a full E:, a folder that can't be made) logs
+ * why, and boot.log is then next to default.xbe (xhw_log_open_file). */
+static void log_save_folder(void) {
+    ULARGE_INTEGER free_b, total_b;
+    unsigned err = xhw_log_fallback();
+    if (GetDiskFreeSpaceExA("E:\\", &free_b, &total_b, NULL))
+        xhw_logf("[BOOT] E: %u MB free of %u MB", (unsigned)(free_b.QuadPart >> 20),
+                 (unsigned)(total_b.QuadPart >> 20));
+    else
+        xhw_logf("[BOOT] E: free space unknown (error %u)", (unsigned)GetLastError());
+    if (!err) {   /* boot.log is there: can a new file be made and written next to it? */
+        HANDLE h = CreateFileA(XHW_UDATA_DIR "probe.tmp", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+                               NULL);
+        DWORD w = 0, attr = GetFileAttributesA(XHW_UDATA_DIR "settings.ini");
+        int ok = h != INVALID_HANDLE_VALUE && WriteFile(h, "ok\r\n", 4, &w, NULL) && w == 4;
+        unsigned e = ok ? 0 : (unsigned)GetLastError();
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        DeleteFileA(XHW_UDATA_DIR "probe.tmp");
+        xhw_logf("[BOOT] save folder write test: %s (error %u); settings.ini attributes %08x", ok ? "ok" : "FAILED", e,
+                 (unsigned)attr);
+        return;
+    }
+    xhw_logf("[BOOT] can't write " XHW_UDATA_ROOT " (error %u): this log is D:\\boot.log; saves, "
+             "settings.ini and screenshots won't be kept", err);
+    xhw_notice("Can't write to E:\\UDATA\\4d580001 (E: full?).", "Saves, settings and screenshots won't be kept.");
+}
+
 static void main_body(void* arg) {
     char disc[MAX_PATH];
     (void)arg;
@@ -157,6 +185,7 @@ static void main_body(void* arg) {
     CreateDirectoryA("E:\\UDATA", NULL);
     CreateDirectoryA(XHW_UDATA_ROOT, NULL);
     xhw_log_open_file();
+    log_save_folder();
     read_image_range();
     xhw_logf("[BOOT] image %08x-%08x %.*s", xhw_image_base, xhw_image_end, (int)XeImageFileName[0].Length,
              XeImageFileName[0].Buffer);

@@ -114,7 +114,8 @@ void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {
     unsigned stride = ((unsigned)w * 3 + 3) & ~3u, size = 54 + stride * (unsigned)h;
     DWORD done;
     HANDLE f;
-    int x, y;
+    int x, y, ok;
+    DWORD err = 0;
     char folder[40];
     if (w > 1280 || w <= 0 || h <= 0) return;
     /* a console round's chained builds (env MX_NEXT_XBE) name theirs after
@@ -125,7 +126,8 @@ void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {
         snprintf(path, sizeof path, XHW_UDATA_DIR "shot%02u.bmp", s_n % 100);
     f = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (f == INVALID_HANDLE_VALUE) {
-        xhw_logf("[SHOT] could not create %s", path);
+        xhw_logf("[SHOT] could not create %s (error %u)", path, (unsigned)GetLastError());
+        xhw_notice("Screenshot not saved: can't write to E:.", "Is E: full? See boot.log.");
         return;
     }
     xhw_watchdog_busy(1);
@@ -136,9 +138,10 @@ void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {
     memcpy(hdr + 18, &w, 4);
     memcpy(hdr + 22, &h, 4);
     hdr[26] = 1; hdr[28] = 24;
-    WriteFile(f, hdr, sizeof hdr, &done, NULL);
+    ok = WriteFile(f, hdr, sizeof hdr, &done, NULL) && done == sizeof hdr;
+    if (!ok) err = GetLastError();
     memset(row, 0, sizeof row);
-    for (y = h - 1; y >= 0; y--) {
+    for (y = h - 1; y >= 0 && ok; y--) {
         const unsigned char* src = (const unsigned char*)fb + (size_t)y * (size_t)pitch;
         for (x = 0; x < w; x++) {
             unsigned char* d = row + x * 3;
@@ -154,10 +157,16 @@ void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {
                 d[2] = (unsigned char)(v >> 16);
             }
         }
-        WriteFile(f, row, stride, &done, NULL);
+        if (!(ok = WriteFile(f, row, stride, &done, NULL) && done == stride)) err = GetLastError();
     }
     CloseHandle(f);
     xhw_watchdog_busy(0);
+    if (!ok) {   /* E: full: no half picture left behind */
+        DeleteFileA(path);
+        xhw_logf("[SHOT] could not write %s (error %u)", path, (unsigned)err);
+        xhw_notice("Screenshot not saved: E: is full.", "Free some space on E: and try again.");
+        return;
+    }
     xhw_logf("[SHOT] wrote %s", path);
     s_n++;
 }

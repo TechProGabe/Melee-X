@@ -165,6 +165,8 @@ Hold **L + R + Back + Black** on any controller to quit to the dashboard.
 
 Logs go to `E:\UDATA\4d580001\`: `boot.log` always, `boot_prev.log` from the launch before that, plus `crash.log` or `hang.log` if it went wrong. Attach those (and a photo if the screen showed an error) when you open an issue. If something looks wrong rather than crashing, turn on BACK screenshots in the settings menu and press Back when you see it.
 
+Settings, saves and screenshots all live on E:. If E: is full, Melee-X tells you on screen, keeps your last save as it was and writes `boot.log` next to `default.xbe` instead. Free some space on E: and launch again.
+
 ## Building it yourself
 
 The short version: nxdk and LLVM 21, built either in Docker or natively on Windows with MSYS2.
