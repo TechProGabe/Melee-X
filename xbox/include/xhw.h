@@ -210,6 +210,7 @@ void xhw_led_scene(void);                     /* a scene change: back to the SMC
 void xhw_led_ko(int port, int stocks_left);   /* stocks_left -1: not a stock match */
 void xhw_led_timer(int seconds_left);         /* a timed match's countdown, once a second */
 void xhw_led_match_end(int outcome);          /* GAME!/TIME!; 7 no contest */
+void xhw_autopad_tick(uint32_t tick);         /* simhash.c: the match's tick, for an autopad TSHOT */
 
 /* ---- system ---- */
 void xhw_quit_to_dashboard(void) __attribute__((noreturn));

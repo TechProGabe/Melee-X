@@ -41,7 +41,8 @@ void xsdk_sim_tick(void) {
         const char* e = getenv("MX_SIMH_VERBOSE");   /* autopad env: every tick, each fighter's fields */
         s_verbose = e && *e == '1';
     }
-    if (++s_tick % (s_verbose ? 1 : 60)) return;
+    xhw_autopad_tick(++s_tick);   /* an autopad script's TSHOT */
+    if (s_tick % (s_verbose ? 1 : 60)) return;
     seed = *HSD_RandSeedPtr;
     h = fnv(h, &seed, sizeof seed);
     for (; cur; cur = cur->next) {

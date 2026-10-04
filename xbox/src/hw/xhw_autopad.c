@@ -14,6 +14,9 @@
  *     CL CR CU CD                                         right stick (C-stick)
  *     SHOT                                                [FBDUMP] of the next frame
  * Example: "600 A" presses A at frame 600; "900 SHOT" takes a screenshot.
+ * "600 TSHOT" takes one at the match's tick 600 instead (counted as [SIMH]
+ * counts, test builds): with env MX_LOCKSTEP=1 the same moment in every
+ * run, however long the loading took (a console's disk varies).
  *
  * "env NAME=VALUE" lines set what getenv() returns, which reaches melee-pc's
  * test hooks: MELEE_BOOT_SCENE=vs, MELEE_DEBUG_VS_STAGE=<StKind>,
@@ -41,7 +44,7 @@ typedef struct {
     unsigned frame, len;
     uint32_t buttons;
     int16_t lx, ly, rx, ry;
-    uint8_t lt, rt, shot, shot_done;
+    uint8_t lt, rt, shot, shot_done;   /* shot 2: TSHOT, frame is a match tick */
 } Event;
 
 #define MAX_EVENTS 512
@@ -72,6 +75,7 @@ static int parse_token(Event* e, const char* t) {
     else if (!strcmp(t, "CU")) e->ry = 32767;
     else if (!strcmp(t, "CD")) e->ry = -32767;
     else if (!strcmp(t, "SHOT")) e->shot = 1;
+    else if (!strcmp(t, "TSHOT")) e->shot = 2;
     else return 0;
     return 1;
 }
@@ -150,6 +154,9 @@ void xhw_autopad_load(void) {
     xhw_logf("[AUTOPAD] %d events", s_nev);
 }
 
+static volatile uint32_t s_match_tick;   /* xhw_autopad_tick: ticks since the match's first */
+void xhw_autopad_tick(uint32_t tick) { s_match_tick = tick; }
+
 static DWORD s_match_end;   /* GetTickCount at the match's end, 0 before */
 
 void xhw_autopad_match_end(void) {
@@ -171,10 +178,14 @@ void xhw_autopad_apply(int port, xhw_pad* out) {
     for (i = 0; i < s_nev; i++) {
         Event* e = &s_ev[i];
         if (e->shot) {
-            if (!e->shot_done && f >= e->frame) {
+            if (!e->shot_done && (e->shot == 2 ? s_match_tick : f) >= e->frame) {
                 e->shot_done = 1;
-                xhw_logf("[AUTOPAD] SHOT at frame %u", f);
-                xgx_fbdump_next();
+                if (e->shot == 2) xhw_logf("[AUTOPAD] SHOT at match tick %u (frame %u)", (unsigned)s_match_tick, f);
+                else xhw_logf("[AUTOPAD] SHOT at frame %u", f);
+                if (xhw_running_in_xemu())
+                    xgx_fbdump_next();   /* [FBDUMP] over COM1 */
+                else
+                    xgx_shot_next();   /* the console has no COM1: a BMP (xhw_fbdump.c) */
             }
             continue;
         }
@@ -195,4 +206,5 @@ void xhw_autopad_apply(int port, xhw_pad* out) {
     (void)out;
 }
 void xhw_autopad_match_end(void) {}
+void xhw_autopad_tick(uint32_t tick) { (void)tick; }
 #endif

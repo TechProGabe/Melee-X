@@ -41,6 +41,7 @@ void xhw_autopad_apply(int port, struct xhw_pad* out);
 void xhw_autopad_match_end(void);   /* env MX_NEXT_XBE: the next build of a console round, 12 s on */
 /* xhw_main.c: launch another XBE by its F:\ or E:\ path (a console round's next build) */
 void xhw_launch_xbe(const char* dos_path) __attribute__((noreturn));
+int xhw_image_folder(char* out, int size);   /* xhw_main.c: the launched XBE's folder name */
 
 /* xhw_splash.c: "TechProGabe Presents..." title card */
 void xhw_splash_show(void);

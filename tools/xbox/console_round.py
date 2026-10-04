@@ -36,6 +36,9 @@ FOD = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_DEBUG
        'env MELEE_DEBUG_VS_TIME=120', 'env MELEE_SEED=1']
 FODLONG = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_DEBUG_VS=cpu4',
            'env MELEE_DEBUG_VS_TIME=300', 'env MELEE_SEED=1']
+FODSHOT = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_DEBUG_VS=cpu4',
+           'env MELEE_DEBUG_VS_TIME=30', 'env MELEE_SEED=1', 'env MX_LOCKSTEP=1',
+           '200 TSHOT', '500 TSHOT', '800 TSHOT', '1200 TSHOT']
 FD = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=32', 'env MELEE_DEBUG_VS_CHARS=2,8',
       'env MELEE_DEBUG_VS_TIME=60', 'env MELEE_SEED=1']
 # folder, build, scenario, switches: in the order they run. Rounds 2 and 3
@@ -75,6 +78,17 @@ CHAINS[3] = [
     ('Melee-X-r3h', 'probe', 'fodlong', {'MX_ABLATE': '0,2,3,8,9'}),
     ('Melee-X', 'base', 'fod', {}),
 ]
+# round 4: the final build (PGO retrained on the gate's code) and the tile
+# regions (docs/renderer.md "Tile regions"): MX_TILE 0 (pbkit's setup), 8
+# (no Z compression), 1 (Z16 compression format), 2 / 4 (the colour tile
+# enabled as base|1 / base|3), 3 and 5 (both). A warm-up run first (the
+# first build of a chain runs ~4% slow); then lockstep shots of 0, 3, 5 and
+# 8, which must be byte for byte the same.
+CHAINS[4] = [('Melee-X-r4a', 'final', 'fod', {})] + [
+    (f'Melee-X-r4{chr(98 + i)}', 'final', 'fod', {'MX_TILE': str(t)}) for i, t in enumerate((0, 8, 1, 2, 4, 3, 5))
+] + [
+    (f'Melee-X-r4{chr(105 + i)}', 'final', 'fodshot', {'MX_TILE': str(t)}) for i, t in enumerate((0, 3, 5, 8))
+]
 CHAIN = []   # main(): CHAINS[N]
 
 
@@ -82,7 +96,7 @@ def script(i):
     folder, build, scen, sw = CHAIN[i]
     lines = [f'# docs/fps-plan.md round {ROUND}, run {i + 1} of {len(CHAIN)}: {build}, {scen}, '
              + (' '.join(f'{k}={v}' for k, v in sw.items()) or 'no switches')]
-    lines += {'fod': FOD, 'fodlong': FODLONG, 'fd': FD}[scen]
+    lines += {'fod': FOD, 'fodlong': FODLONG, 'fd': FD, 'fodshot': FODSHOT}[scen]
     lines += [f'env {k}={v}' for k, v in sw.items()]
     if i + 1 < len(CHAIN):
         lines.append(f'env MX_NEXT_XBE=F:\\Applications\\{CHAIN[i + 1][0]}\\default.xbe')
@@ -117,6 +131,10 @@ def upload():
         name = name.rsplit('/', 1)[-1]
         if name.startswith('boot') and name.endswith('.log'):
             f.delete(f'{UDATA}/{name}')
+    for name in f.nlst():   # the shots of earlier rounds would read as this one's
+        name = name.rsplit('/', 1)[-1]
+        if name.startswith('shot_') and name.endswith('.bmp'):
+            f.delete(f'{UDATA}/{name}')
     for folder, _, _, _ in CHAIN:
         d = f'{APPS}/{folder}'
         try:
@@ -150,6 +168,13 @@ def watch():
             f = connect()
             f.cwd(UDATA)   # each chained build's log is boot_<folder>.log, the last one boot.log
             names = [n.rsplit('/', 1)[-1] for n in f.nlst()]
+            shots = LOGS / 'shots'   # autopad SHOTs: shot_<folder>_NN.bmp
+            for name in [n for n in names if n.startswith('shot_') and n.endswith('.bmp')]:
+                if not (shots / name).exists():
+                    shots.mkdir(exist_ok=True)
+                    with open(shots / name, 'wb') as o:
+                        f.retrbinary(f'RETR {UDATA}/{name}', o.write)
+                    print(f'{time.strftime("%H:%M:%S")} saved shots/{name}', flush=True)
             for name in [n for n in names if n.startswith('boot') and n.endswith('.log')]:
                 buf = io.BytesIO()
                 try:
@@ -157,7 +182,7 @@ def watch():
                 except ftplib.error_perm:
                     continue
                 text = buf.getvalue().decode('utf-8', 'replace')
-                if '[GAME] end banner done' not in text:
+                if '[GAME] match ends' not in text:
                     continue
                 run = run_name(text)
                 out = LOGS / f'{run}.log'
