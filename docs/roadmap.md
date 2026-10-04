@@ -116,6 +116,30 @@ Fix order after RC2 (2026-10-02), details in the entries below:
    tell the player on screen once, non-fatally: "Sound hardware is stuck
    after a crash. Turn the Xbox off and on to get sound back." Test
    builds also log it as one `[AUDIO] stuck since boot` line.
+   **Not only after a crash** (user, 2026-10-04, console A, build on it
+   then probably v51). The sequence, from the user: a match was running
+   with sound; the user turned the Xbox off with the power button
+   mid-match, turned it on, left it in the UnleashX dashboard for a while
+   (FTP), then launched Melee-X: silent from the first buffer, and
+   relaunching Melee-X didn't help; another power-off, dashboard, launch
+   had sound again. So the stuck state followed a power cycle with only
+   the dashboard in between: it is not (only) Melee-X leaving the AC97
+   running. Candidates, to be told apart by logging the AC97 and APU
+   registers at boot before the driver touches them: the dashboard's own
+   audio (DirectSound drives the MCPX APU and the AC97 link) left in a
+   state that the AC97 init's cold resets don't undo, which the
+   driver would fix by stopping the APU and both AC97 bus masters before
+   its first buffer; or a power cycle that isn't one (the SMC's soft
+   power). The silent boot's log (`boot_prev.log` in
+   `C:/xemu/hw/logs-audio-20261004-1153`, same image as the boot after
+   it) has the crash signature exactly: `AC97 polled` with global status
+   00300100, then `AC97 stuck: civ 0 lvi 6 sr 00/00` from the first
+   buffer, 8 restarts and 10 cold resets in the first ~40 s; the boot
+   after the power-off (`boot.log`) is clean (one `AC97 polled`, no
+   `stuck`). The log of the boot before the silent one is gone (each boot
+   keeps one previous log), so how that boot ended is not on record: the
+   next test build should keep the previous exit path (crash, quit to
+   dashboard, reset combo, settings restart) in the save folder.
 10. The simulation isn't deterministic on the console (docs/fps-plan.md
    round 3): Fountain 4-CPU, seed 1, runs of one build part at tick
    4440-4500 into three outcomes (the random seed first), the same three in

@@ -581,14 +581,15 @@ of synced input, up to five a present. Time-sync skips and advances are
 off by default (they assume the pin); lockstep's own back-pressure keeps
 two consoles together, and their clocks differ by parts per million.
 
-**D13. The internet entries are removed from the menu** (the user,
-2026-10-04). Direct Connect, Ranked, Unranked and Profile are not shown on
-the Xbox; the ONLINE submenu becomes LAN PLAY alone (or the main menu's
-ONLINE entry leads straight to the LAN lobby, whichever is the smaller
-`PORT:` edit in `mnonline.c`/`mnmain.c`; phase 3 picks and records it).
-Until phase 3 lands, the ONLINE entry on `dev` leads nowhere (the
-`PORT:` bail, F1); hiding it before then is an offline menu change, so it
-is the user's call (open question 3). Only LAN PLAY enters `GM_ONLINE`.
+**D13. On the VS. Mode menu, ONLINE is replaced by LAN PLAY** (the user,
+2026-10-04). The entry's label becomes "LAN PLAY" (`mnonline.c:30-33`
+answers "ONLINE" today) and selecting it enters the LAN lobby at once
+(`enterOnline(ONLINE_KIND_LAN)`) instead of opening the ONLINE submenu
+(`mnmain.c:2627-2629`): Direct Connect, Ranked, Unranked and Profile are
+never shown on the Xbox, and nothing else enters `GM_ONLINE`. Both are
+`PORT:` edits in phase 3. Until phase 3 lands, the ONLINE entry on `dev`
+leads nowhere (the `PORT:` bail, F1); hiding it before then is an offline
+menu change, so it is the user's call (open question 3).
 
 **D14. Network conduct: what the console sends on someone's LAN, and the
 standards it keeps** (the user, 2026-10-04: "airtight", no harm to the
@@ -1037,8 +1038,8 @@ Work:
 2. Game side, `PORT:` edits: the lobby bail narrowed to the non-LAN kinds
    (`gmonlinemode.c:816-825`), the lobby's status line from the Xbox's
    network state where upstream speaks of mDNS and Direct Connect
-   (`gmonlinemode.c:752-768`), the four internet entries removed from the
-   menu (D13, `mnonline.c:67-94`), `MELEE_BOOT_SCENE=lan` (`gmboot.c`). For D5: the
+   (`gmonlinemode.c:752-768`), ONLINE replaced by LAN PLAY on the VS. Mode
+   menu (D13, `mnonline.c:30-33`, `mnmain.c:2627-2629`), `MELEE_BOOT_SCENE=lan` (`gmboot.c`). For D5: the
    CSS's human doors from the session's port map (`onEnterLobby`'s fixed
    two, `gmonlinemode.c:173-178`, set again at session start), the lobby
    row with each peer's player count, the HUD line with port sets
@@ -1060,7 +1061,7 @@ Work:
 
 Files: `xbox/src/sdk/net_lan.c` (new), `net_xbox.c`, `stubs.c`,
 `settings.c`, `xsdk_settings.h`, `src/melee/gm/gmonlinemode.c`,
-`src/melee/mn/mnonline.c`, `src/melee/gm/gmboot.c`,
+`src/melee/mn/mnonline.c`, `src/melee/mn/mnmain.c`, `src/melee/gm/gmboot.c`,
 `xbox/src/hw/xhw_autopad.c`, `tests/xbox/test_lan_record.c`,
 `tools/xbox/test_lan_record.py`, `tools/xbox/lan_diff.py`,
 `src/melee/if/ifnet.c`, `scenarios/lanflow-a`, `lanflow-b`, `lan22-a`,
