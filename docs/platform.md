@@ -341,6 +341,20 @@ LED; the `[LED]` lines are the test.
    AC-link (`[AUDIO] AC97 cold reset (n)` with the global control and
    status registers).
 5. Under xemu (detected by CPUID) an MCPX APU voice is used instead.
+6. Before its first buffer the driver logs the AC97 and the APU as found
+   and brings them to idle, whatever ran before (our own engine after a
+   crash, the dashboard's DirectSound): the AC97's PCI memory and
+   bus-master enables on, both bus masters (PCM, S/PDIF) halted, the APU's
+   interrupts, setup engine and DSPs stopped (AC97 path), then the cold
+   reset as before and the codec powered up if it reports parts powered
+   down. An engine that still finishes no buffer from the boot on (after
+   one recovery cold reset) is given up: one `[AUDIO] stuck since boot`
+   line, no more cold resets (each froze the game for about a second), the
+   mixer drained in real time so the game runs on silent, and a 10 s
+   notice at the top of the picture: "Sound hardware is stuck. Turn the
+   Xbox off and on to get sound back." (`xhw_notice`, drawn like the
+   settings menu's hint). Each boot also logs how the one before ended
+   (`lastexit.txt`, docs/testing.md).
 
 ## CARD (`card.c`)
 

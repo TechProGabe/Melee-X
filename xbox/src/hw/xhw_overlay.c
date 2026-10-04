@@ -76,12 +76,15 @@ void xhw_overlay_draw(void* fb, int w, int h, int bpp, int pitch, const xgx_over
         fill(&s, x0 + b, y0 + b, bw - 2 * b, bh - 2 * b, 0x0C1428);
         for (r = 0; r < o->rows; r++) text(&s, o->text[r], x0 + pad, y0 + pad + r * lh, z, o->rgb[r]);
     } else {
-        /* one line, centred near the top (inside the TV-safe area; the
-         * title screen's copyright lines fill the bottom) */
-        int n = (int)strlen(o->text[0]), tw = n * 8 * z, x = (w - tw) / 2, y = h / 12;
-        if (n) {
-            fill(&s, x - 6 * z, y - 3 * z, tw + 12 * z, 22 * z, 0x000000);
-            text(&s, o->text[0], x, y, z, o->rgb[0]);
+        /* lines centred near the top (inside the TV-safe area; the title
+         * screen's copyright lines fill the bottom): the menu's hint, or a
+         * notice (nv2a.c xhw_notice) */
+        for (r = 0; r < o->rows; r++) {
+            int n = (int)strlen(o->text[r]), tw = n * 8 * z, x = (w - tw) / 2, y = h / 12 + r * 22 * z;
+            if (n) {
+                fill(&s, x - 6 * z, y - 3 * z, tw + 12 * z, 22 * z, 0x000000);
+                text(&s, o->text[r], x, y, z, o->rgb[r]);
+            }
         }
     }
     __asm__ volatile("sfence" ::: "memory");

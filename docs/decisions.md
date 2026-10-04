@@ -361,6 +361,42 @@ the pump to exit, then stops and resets both bus masters; v48 on the
 console kept its sound through restarts. A crash still leaves the engine
 running: after a GPU-stall freeze, power the console off for sound.
 
+**The audio hardware is brought to idle at boot, and a stuck engine is
+given up (roadmap item 9, 2026-10-04).** Console A booted silent after a
+power-off, the dashboard and a launch, not only after crashes: the engine
+ran (`sr 00`) with CIV on 0 from the first buffer, and neither restarts nor
+ten cold resets in 40 s helped; each recovery froze the game for about a
+second. Whatever ran before an XBE can leave the AC97 and the APU running
+or half set up (DirectSound runs the APU's DSPs, which write their output
+FIFOs to memory for the AC97's bus masters: xboxdevwiki "APU", xemu
+`hw/xbox/mcpx/apu`), and a quick reboot into the next XBE resets neither.
+So the boot now logs both as found (`[AUDIO] found`: the AC97's PCI
+command word, global registers and both bus masters, CIV and PICB twice
+5 ms apart; the APU's interrupt, front-end and setup-engine registers, its
+sample counter, the DSP resets and output FIFO positions; the codec's
+power-down, rate, volume and vendor registers), then before the cold reset
+turns on the AC97's PCI memory and bus-master enables if they are off,
+halts both bus masters (DCH, 20 ms at most), stops the APU's interrupts,
+setup engine (`SECTL` 0) and both DSPs (`GPRST`/`EPRST` 0, which also stops
+their DMA into memory that is ours now; AC97 path only, the xemu APU voice
+keeps the APU), and after it powers the codec up if register 0x26 reports
+the DAC, mixer, Vref or AC-link off (`[AUDIO] idle`). Which of these, if
+any, is what sticks is not known yet: the next silent boot's `found` lines
+tell. If the engine still finishes no buffer from the boot on, after one
+recovery cold reset the driver gives up instead of looping: one `[AUDIO]
+stuck since boot` line, the engine stopped, the pump takes the ring's
+samples in real time so the mixer and the game's voices run on as with
+sound, and a 10 s notice at the top of the picture ("Sound hardware is
+stuck. Turn the Xbox off and on to get sound back.", `xhw_notice` in
+`nv2a.c`, drawn like the settings menu's hint, which it replaces while up).
+An engine that has played and stops later keeps the old recovery. Each
+boot also logs how the one before ended (`lastexit.txt` in the save
+folder: written on every way out that runs code, crash and hang report
+included; none means switched off, reset or killed). A healthy boot's
+audio is unchanged (same mixer, rate, buffers and start); its log gains the
+`found`/`idle` lines. `-DXHW_AUDIO_TEST` (testing.md) leaves the engine
+running across a relaunch or fakes a stuck one, for xemu.
+
 **Vanilla gameplay.** melee-pc's UCF, free camera, frozen stadium,
 unlock-all, netplay, Slippi and launcher are off or not built.
 
