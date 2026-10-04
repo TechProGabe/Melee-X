@@ -97,6 +97,7 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `res` | results screen with a winner: Fox (port 1) walks off Final Destination in a 15 s match, Mario wins (portrait EFB copies) |
 | `tie` | results screen with all four CPUs tied for 1st after an 8 s Final Destination match: the cards' portraits (Debug VS only; `fn_80179854` deviation) |
 | `clear` | Classic stage 1 won at once (`MELEE_INSTANT_WIN`): the Stage Clear screen's sepia freeze frame |
+| `cntalk` | Adventure Corneria's Star Fox cutscene from boot (`MELEE_BOOT_SCENE=cutscene`, `MELEE_BOOT_CUTSCENE=5`): the comm window's lines, shots on Slippy and Falco talking |
 | `toy` | Classic's last stage won at once, Game Clear, START: the trophy fall (`gmregtyfall.c`, scene 15 of mode 21; a second START goes on to the credits) |
 | `fd2` | Final Destination, 2 CPUs (Fox, Mario), 60 s: the frame-rate plan's light case |
 | `relaunch` | AC97 across relaunches: a match, then the XBE relaunches itself at frame 1500, again and again (`-DXHW_AUDIO_APU=0`, `-DXHW_AUDIO_TEST`; testing.md "Audio at boot") |

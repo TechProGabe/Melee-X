@@ -37,7 +37,7 @@ static struct loadData load_data;
 static struct leaveData leave_data;
 
 #ifdef TARGET_PC
-/* MELEE_BOOT_SCENE=<title|vs|classic|training|unranked|direct|ranked>: skip the whole menu walk and
+/* MELEE_BOOT_SCENE=<title|vs|classic|training|cutscene|unranked|direct|ranked>: skip the whole menu walk and
  * boot into one scene with a fixed setup. Menu navigation here can only be
  * driven by synthetic input, which misses keypresses often enough that an
  * automated run cannot rely on it (see tools/smoke_test.py).
@@ -64,6 +64,11 @@ u8 pc_boot_scene(void)
             scene = GM_CLASSIC;
         } else if (strcmp(want, "training") == 0) {
             scene = GM_TRAINING;
+        } else if (strcmp(want, "cutscene") == 0) {
+            /* PORT: the debug cutscene mode; MELEE_BOOT_CUTSCENE=<state id>
+             * picks the cutscene (gm_Mode_DebugCutscene_States, 5 = the
+             * Adventure Corneria Star Fox scene), see runGameMode. */
+            scene = GM_DEBUG_CUTSCENE;
         } else if (strcmp(want, "unranked") == 0) {
             scene = GM_ONLINE;
             gmOnline_SetKind(ONLINE_KIND_UNRANKED);
@@ -75,7 +80,8 @@ u8 pc_boot_scene(void)
             gmOnline_SetKind(ONLINE_KIND_RANKED);
         } else {
             OSReport("MELEE_BOOT_SCENE: unknown scene '%s'; valid values are "
-                     "title, vs, classic, training, unranked, direct, ranked\n",
+                     "title, vs, classic, training, cutscene, unranked, direct, "
+                     "ranked\n",
                      want);
         }
     }

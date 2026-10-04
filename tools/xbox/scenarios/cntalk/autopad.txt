@@ -1,0 +1,9 @@
+# Adventure Corneria's Star Fox cutscene (Vi0601) straight from boot: the
+# comm window's three lines (Fox, Slippy, Falco) with text, voice and talking
+# faces. The lines run near retraces 60-250 in xemu.
+env MELEE_BOOT_SCENE=cutscene
+env MELEE_BOOT_CUTSCENE=5
+env MELEE_SEED=1
+100 SHOT
+160 SHOT
+220 SHOT

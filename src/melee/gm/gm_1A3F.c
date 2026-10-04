@@ -23,6 +23,9 @@
 #include <sysdolphin/baselib/devcom.h>
 #include <sysdolphin/baselib/sislib.h>
 #include <sysdolphin/baselib/video.h>
+#ifdef TARGET_PC
+#include <stdlib.h>
+#endif
 
 struct routingInfo {
     u8 curr_mode;     ///< ::GameModeKind
@@ -361,6 +364,16 @@ u8 runGameMode(u8 mode_kind)
     state_machine.routing.curr_state_id = 0;
     state_machine.routing.prev_state_id = 0;
     state_machine.routing.next_state_id = 0;
+#ifdef TARGET_PC
+    /* PORT: MELEE_BOOT_SCENE=cutscene starts the debug cutscene mode at the
+     * state MELEE_BOOT_CUTSCENE names (test hook, gmboot.c). */
+    if (mode_kind == GM_DEBUG_CUTSCENE && pc_boot_scene() == GM_DEBUG_CUTSCENE &&
+        getenv("MELEE_BOOT_CUTSCENE") != NULL)
+    {
+        state_machine.routing.curr_state_id =
+            (u8) strtoul(getenv("MELEE_BOOT_CUTSCENE"), NULL, 0);
+    }
+#endif
     lbDvd_80018F58(mode->preloaded);
     if (mode->on_load != NULL) {
         mode->on_load();
