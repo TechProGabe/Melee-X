@@ -121,6 +121,11 @@ Fix order after RC2 (2026-10-02), details in the entries below:
    own clock, asynchronous loads). Harmless to play; it rules out replays
    and hardware [SIMH] gates. To do: log HSD_Randi's callers around tick
    4440-4500 on the console and find the branch.
+   Related or not: in round 6 (fps-plan.md) one lockstep shot of 15 had
+   one 32-bit word (2 pixels) dark on Fountain's rim at tick 500, with
+   [SIMH] and the other shots the same; never seen in xemu or the rounds
+   before. To do: repeat the 720p lockstep shot run a few times and see
+   whether a speck comes back, and where.
 
 - Fixed on dev: the v1 release hung on the intro movie (GitHub #5, #6,
   reddit), at any video mode. `xgx_present` called pbkit's `pb_finished`
