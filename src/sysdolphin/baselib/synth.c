@@ -32,10 +32,29 @@ static int pc_dbg_sfx_stats(void)
                                            float mix_main, float mix_auxA,
                                            float mix_auxB);
 
+#ifdef TARGET_PC
+/* PORT: the span HSD_AudioMalloc has handed out, so a sound-effect chain
+ * link outside it (a header freed and reused under the chain) is caught
+ * instead of followed (pc_sfx_entry_ok). */
+static uintptr_t pc_audio_lo = ~(uintptr_t) 0, pc_audio_hi;
+#endif
+
 void* HSD_AudioMalloc(size_t size)
 {
     void* p = OSAllocFromHeap(HSD_Synth_804D6018, size);
     HSD_ASSERTREPORT(0x29U, p, "audio heap overflow.\n");
+#ifdef TARGET_PC
+    if (p != NULL) {
+        BOOL intr = OSDisableInterrupts();
+        if ((uintptr_t) p < pc_audio_lo) {
+            pc_audio_lo = (uintptr_t) p;
+        }
+        if ((uintptr_t) p + size > pc_audio_hi) {
+            pc_audio_hi = (uintptr_t) p + size;
+        }
+        OSRestoreInterrupts(intr);
+    }
+#endif
     return p;
 }
 
@@ -347,7 +366,17 @@ static void HSD_SynthSFXGroupDataUnlink(struct SfxLoadStreamNode* bank)
 void HSD_SynthSFXUnloadBank(int bank_id)
 {
     struct SfxLoadStreamNode** head;
+#ifdef TARGET_PC
+    BOOL intr;
+#endif
     HSD_SynthSFXStopRange(bank_id);
+#ifdef TARGET_PC
+    /* PORT: the bank lists and the hash are also changed by the load
+     * completions (HSD_SynthSFXSampleLoadCallback), which run on the DVD/ARQ
+     * worker threads under the interrupt lock; on the GameCube they were
+     * interrupts and couldn't land in the middle of this. */
+    intr = OSDisableInterrupts();
+#endif
     head = &HSD_Synth_804C2AE0[bank_id];
     while (*head != NULL) {
         struct SfxLoadStreamNode* cur;
@@ -357,7 +386,32 @@ void HSD_SynthSFXUnloadBank(int bank_id)
         HSD_AudioFree(cur);
     }
     hsd_SynthSFXBank[bank_id] = hsd_SynthSFXBankHead[bank_id];
+#ifdef TARGET_PC
+    OSRestoreInterrupts(intr);
+#endif
 }
+
+#ifdef TARGET_PC
+/* PORT: a hash entry has to lie inside the audio heap's allocations; the
+ * v52 tester crash followed a link of 0xFFFFFFFF out of a header that had
+ * been freed and reused. The sound is skipped and the first few are
+ * logged instead (the chain itself is left alone: the walk stops there). */
+static int pc_sfx_entry_ok(const struct foo* e, int sfx_id)
+{
+    static int reports;
+    if (((uintptr_t) e & 3) == 0 && (uintptr_t) e >= pc_audio_lo &&
+        (uintptr_t) e + sizeof(struct foo) <= pc_audio_hi)
+    {
+        return 1;
+    }
+    if (reports < 8) {
+        reports++;
+        OSReport("[WARN] sfx %d: bucket %d chain broken at %p: sound skipped\n",
+                 sfx_id, sfx_id & 0x1F, (const void*) e);
+    }
+    return 0;
+}
+#endif
 
 void HSD_SynthSFXDataUnlink(int sfx_id)
 {
@@ -365,6 +419,11 @@ void HSD_SynthSFXDataUnlink(int sfx_id)
     struct foo* cur = hsd_SynthSFXDataHash[sfx_id & 0x1F];
 
     while (cur != NULL) {
+#ifdef TARGET_PC
+        if (!pc_sfx_entry_ok(cur, sfx_id)) {
+            return;
+        }
+#endif
         if (cur->unk4 == sfx_id) {
             if (prev == NULL) {
                 hsd_SynthSFXDataHash[sfx_id & 0x1F] =
@@ -384,6 +443,10 @@ void HSD_SynthSFXGroupDataRemove(int sfx_id)
     struct SfxLoadStreamNode* cur;
     struct SfxLoadStreamNode** pcur;
     int i;
+#ifdef TARGET_PC
+    /* PORT: under the interrupt lock, as HSD_SynthSFXUnloadBank */
+    BOOL intr = OSDisableInterrupts();
+#endif
 
     for (i = 0; i < 0x20; i++) {
         pcur = &HSD_Synth_804C2AE0[i];
@@ -393,11 +456,17 @@ void HSD_SynthSFXGroupDataRemove(int sfx_id)
                 HSD_SynthSFXGroupDataUnlink(cur);
                 *pcur = cur->x0;
                 HSD_AudioFree(cur);
+#ifdef TARGET_PC
+                OSRestoreInterrupts(intr);
+#endif
                 return;
             }
             pcur = &cur->x0;
         }
     }
+#ifdef TARGET_PC
+    OSRestoreInterrupts(intr);
+#endif
 }
 
 static void HSD_SynthSFXGroupDataReaddressCallback(void* result, uintptr_t length,
@@ -597,6 +666,11 @@ int HSD_Synth_80389334(int sfx_id, u8 vol, u8 vol2, u8 pan, int priority,
     sfx_entry = hsd_SynthSFXDataHash[sfx_id & 0x1F];
 
     while (sfx_entry != NULL) {
+#ifdef TARGET_PC
+        if (!pc_sfx_entry_ok(sfx_entry, sfx_id)) {
+            break;   /* PORT: a broken chain: no sound (pc_sfx_entry_ok) */
+        }
+#endif
         if (sfx_entry->unk4 == sfx_id) {
             voice_idx = 0;
             while (voice_idx < sfx_entry->unk8) {

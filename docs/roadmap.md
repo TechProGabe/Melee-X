@@ -140,6 +140,11 @@ Other open:
 
 ### Fixed
 
+- Audio-thread crash after many VS matches (tester, v52, 128 MB, 480i:
+  `HSD_SynthSFXPlayWithGroup` reading address 3, a sound-effect hash link
+  into a freed SSM header): OSAlloc locked, synth.c's unload paths under
+  the interrupt lock, chain links checked (v53, decisions.md; awaiting a
+  long console session to confirm).
 - v1 hang on the intro movie (GitHub #5, #6): `xgx_present` called
   `pb_finished` with the frame's tail open; test builds' FPS counter hid it.
 - Mid-match GPU stalls after an EFB copy (`LIMIT_COLOR`/`LIMIT_ZETA`, v1-v45):

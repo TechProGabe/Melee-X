@@ -128,6 +128,21 @@ typedef struct HeapDesc {
 volatile OSHeapHandle __OSCurrHeap = -1;
 static HeapDesc* s_heaps;
 static int s_num_heaps;
+
+/* The cell lists are shared by threads the GameCube didn't have: the audio
+ * heap is allocated from in DVD/ARQ completions (worker threads) and freed
+ * from on the game thread (synth.c's bank unload), where a GameCube
+ * interrupt couldn't land mid-update. A free cut by an allocation left two
+ * SSM headers overlapping and the sound-effect hash pointing into another
+ * one's data (tester crash, v52: HSD_SynthSFXPlayWithGroup reading 3).
+ * Its own lock, not the interrupt lock: restoring that delivers alarms,
+ * which an allocation shouldn't do. Nothing inside takes another lock. */
+static xhw_mutex* s_heap_lock;
+static void heap_lock(void) {
+    if (!s_heap_lock) s_heap_lock = xhw_mutex_create();
+    xhw_mutex_lock(s_heap_lock);
+}
+static void heap_unlock(void) { xhw_mutex_unlock(s_heap_lock); }
 static void* s_alloc_start;
 static void* s_alloc_end;
 
@@ -177,6 +192,7 @@ static Cell* dl_insert(Cell* list, Cell* cell) {
 void* OSInitAlloc(void* start, void* end, int max_heaps) {
     int i;
     u32 bytes = (u32)(max_heaps * (int)sizeof(HeapDesc));
+    if (!s_heap_lock) s_heap_lock = xhw_mutex_create();
     s_heaps = (HeapDesc*)start;
     s_num_heaps = max_heaps;
     for (i = 0; i < max_heaps; i++) {
@@ -215,9 +231,11 @@ void OSAddToHeap(OSHeapHandle heap, void* start, void* end) {
     HeapDesc* hd = &s_heaps[heap];
     Cell* cell = (Cell*)ROUNDUP(start, 32);
     end = (void*)TRUNC(end, 32);
+    heap_lock();
     cell->size = (long)((u8*)end - (u8*)cell);
     hd->size += cell->size;
     hd->free = dl_insert(hd->free, cell);
+    heap_unlock();
 }
 
 OSHeapHandle OSSetCurrentHeap(OSHeapHandle heap) {
@@ -233,9 +251,11 @@ void* OSAllocFromHeap(OSHeapHandle heap, u32 size) {
     if (heap < 0 || heap >= s_num_heaps || s_heaps[heap].size < 0) return NULL;
     hd = &s_heaps[heap];
     need = (long)ROUNDUP(size + HEADERSIZE, 32);
+    heap_lock();
     for (cell = hd->free; cell; cell = cell->next)
         if (cell->size >= need) break;
     if (!cell) {
+        heap_unlock();
         xhw_logf("[OS] OSAllocFromHeap(%d, %u) failed", heap, size);
         return NULL;
     }
@@ -253,6 +273,7 @@ void* OSAllocFromHeap(OSHeapHandle heap, u32 size) {
         else hd->free = rest;
     }
     hd->allocated = dl_add_front(hd->allocated, cell);
+    heap_unlock();
     return (u8*)cell + HEADERSIZE;
 }
 
@@ -262,8 +283,10 @@ void OSFreeToHeap(OSHeapHandle heap, void* ptr) {
     if (!ptr || heap < 0 || heap >= s_num_heaps || s_heaps[heap].size < 0) return;
     hd = &s_heaps[heap];
     cell = (Cell*)((u8*)ptr - HEADERSIZE);
+    heap_lock();
     hd->allocated = dl_extract(hd->allocated, cell);
     hd->free = dl_insert(hd->free, cell);
+    heap_unlock();
 }
 
 void* OSAllocFixed(void* rstart, void* rend) {
@@ -276,7 +299,9 @@ s32 OSCheckHeap(OSHeapHandle heap) {
     long total = 0;
     Cell* c;
     if (heap < 0 || heap >= s_num_heaps || s_heaps[heap].size < 0) return -1;
+    heap_lock();
     for (c = s_heaps[heap].free; c; c = c->next) total += c->size - HEADERSIZE;
+    heap_unlock();
     return (s32)total;
 }
 
