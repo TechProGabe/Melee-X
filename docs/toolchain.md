@@ -51,17 +51,20 @@ order and the maps match.
 Releases are built on GitHub, not locally: run the `build` workflow by hand
 (Actions, "Run workflow") with a tag in `release` (e.g. `v1`). It builds a
 plain XBE (no `XBOX_CFLAGS`, so no BACK screenshots and the frame-rate
-counter off by default: `XHW_TEST_BUILD`, `docs/testing.md`), adds the
+counter off by default: `XHW_TEST_BUILD`, `docs/testing.md`) with ThinLTO
+and PGO (`XBOX_LTO=1 XBOX_PGO=xbox/melee.profdata`, below), adds the
 dashboard icon, runs the host tests, then `package_release.py <tag>` and
 `gh release create <tag>` with `.github/release-notes.md` as the notes. The
 build's link map is in the run's `default.xbe` artifact (kept 14 days):
 copy it to `tools/xbox/maps/melee_x.<tag>.map` to symbolize crash reports
 from that release.
 
-`package_release.py` refuses a build made with `XBOX_CFLAGS`. The zip holds
+`package_release.py` refuses a build made with `XBOX_CFLAGS`, or without
+ThinLTO and the committed profile. The zip holds
 `Melee-X/default.xbe`, `default.tbn`, `tools/make-xiso` (packs a burnable
 DVD image with xdvdfs or extract-xiso, README "Option 2"), `README.md` and
-`LICENSE.md`. It also runs locally after a plain local build.
+`LICENSE.md`. It also runs locally after a local build with those two
+knobs (`XBOX_LTO=1 XBOX_PGO=xbox/melee.profdata tools/xbox/msys/build.sh`).
 
 ## Game code
 

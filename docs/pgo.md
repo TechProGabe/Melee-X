@@ -84,8 +84,10 @@ image's `.lprfd` (function records) and `.lprfn` (names) sections and its
 
 ## Release builds
 
-The GitHub `build` workflow builds with whatever `XBOX_LTO`/`XBOX_PGO`
-it sets (`docs/toolchain.md` "Release"); the profile is in the checkout,
-so nothing has to be downloaded. A release made with PGO should say in
+The GitHub `build` workflow builds with `XBOX_LTO=1
+XBOX_PGO=xbox/melee.profdata` (`docs/toolchain.md` "Release") and
+`package_release.py` refuses anything else; the profile is in the
+checkout, so nothing has to be downloaded. A local build stays plain
+unless it is given the two knobs. A release made with PGO should say in
 `xbox/melee.profdata.txt` which commit trained it, and its `[SIMH]` and
 screenshots gate like any other build.

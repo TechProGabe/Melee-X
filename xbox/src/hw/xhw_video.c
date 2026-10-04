@@ -9,6 +9,8 @@
  * framebuffers plus depth don't fit next to the game in 64 MB
  * (OpenCrossing-Xbox's measurement). */
 #include <hal/video.h>
+#include <stdlib.h>
+#include <string.h>
 #include <windows.h>
 #include <xboxkrnl/xboxkrnl.h>
 
@@ -71,6 +73,18 @@ static void set_mode_480(void) {
 void xhw_video_boot(void) {
     xhw_splash_release();   /* XVideoSetMode frees the splash's framebuffer */
     s_mode.widescreen = xhw_video_widescreen_set();
+#if defined(XHW_AUTOPAD) && XHW_AUTOPAD
+    {   /* test builds: "env MX_VIDEO=480" / "=480i" / "=720" from the autopad
+         * script, over settings.ini, so a console round can run another
+         * mode without changing the user's settings (docs/testing.md) */
+        const char* e = getenv("MX_VIDEO");
+        if (e) {
+            s_pref_720p = strcmp(e, "720") == 0;
+            s_pref_480p = strcmp(e, "480i") != 0;
+            xhw_logf("[VIDEO] MX_VIDEO=%s", e);
+        }
+    }
+#endif
     if (s_pref_720p && xhw_video_720p_allowed() && xhw_mem_free_kb() >= 32 * 1024 &&
         XVideoSetMode(1280, 720, 16, REFRESH_DEFAULT)) {
         s_mode.width = 1280;
