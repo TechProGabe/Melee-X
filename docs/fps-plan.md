@@ -93,6 +93,17 @@ Release build, 15 runs: 39.77 / 39.97 fps (sim 4.9, render 9.5-9.7, wait
 off. `MX_TRIM`, `MX_COPY_FIX=7` nothing. One 2-pixel speck at tick 500 in
 one run: open.
 
+### Console round 7 (v53, to run)
+
+720p depth: Z24S8 (`MX_Z24` 1, v53's default) against Z16 (0), Fountain
+twice each after a warm-up, Z24S8 without Z compression (`MX_TILE` 12),
+Stadium both ways, FD 1v1, then Stadium lockstep shots (the arrowheads
+whole with 1) and Fountain's against r6l. Expected: Z24S8 doubles the
+depth bytes a fragment before compression, against a GPU busy at ~90% of
+frame starts with fill ≥ 9-10 ms: 0 to -8% at 720p (0 if Z compression,
+now flagged right for the format, takes most of it); FD should hold 60.
+The result decides `XGX_Z24_16BPP`'s default (roadmap item 11).
+
 ## Status
 
 Instructions are xemu `-icount`, draw / tick, Fountain; fps console.

@@ -55,7 +55,7 @@ here than on x86-64:
 | XBE image (game ~5.8 MB + platform) | ~7.5 MB |
 | MEM1 (game heaps) | 24 MB reserved as on the GameCube, committed on demand |
 | ARAM (preload cache, sound banks) | 16 MB reserved, committed on demand |
-| NV2A: 720p R5G6B5 x3 + Z16 | 7.4 MB |
+| NV2A: 720p R5G6B5 x3 + Z24S8 | 9.1 MB (7.4 with Z16, `-DXGX_Z24_16BPP=0`) |
 | NV2A: texture pool | 6 MB at 720p, 8 MB at 480 |
 | pushbuffer (1 MB) + vertex ring (1.5 MB) | 2.5 MB |
 | NV2A: display-list vertex cache | 4 MB (down to 2 MB if short) |
@@ -73,7 +73,8 @@ Melee can touch more than the Xbox has (40 MB of MEM1 and ARAM against
 from the disc image are decommitted and read back from the image when
 needed (`ar.c`, docs/decisions.md). On the console a match commits ~24 MB
 of MEM1+ARAM (another ~11 MB of ARAM left on the disc), leaving ~7-9 MB
-free, steady from match to match.
+free, steady from match to match (6.8 MB at 720p with Z16 depth; Z24S8
+since v53 takes 1.8 MB of that, so ~5 MB: to confirm on the console).
 
 Textures are stored in formats the NV2A samples as is, whenever the size
 is a power of two:
@@ -93,8 +94,8 @@ decoder.
 
 ## Video
 
-- 480i/480p: 640x480x32. 720p: 1280x720, R5G6B5 + Z16 (32-bit colour at
-  720p does not fit, OpenCrossing's measurement).
+- 480i/480p: 640x480x32. 720p: 1280x720, R5G6B5 + Z24S8 (32-bit colour at
+  720p does not fit, OpenCrossing's measurement; Z16 until v53).
 - 16:9 at 720p (and optionally at 480p for widescreen TVs) uses melee-pc's
   hor+ widescreen: the camera projection is widened, HUD elements anchor to
   the screen edges, full-screen overlays opt out with `PC_COBJ_FILL_FRAME`.

@@ -182,14 +182,29 @@ units. Anything else draws direct; `-DXGX_NO_INDIRECT=1` turns it off.
 
 **720p: EFB copies on the GPU, Z16 depth remapped.** 16-bit EFB copies are
 drawn by the GPU into R5G6B5 textures (the CPU readback cost ~60 ms of a
-133 ms frame); they sample alpha 1, which Melee doesn't rely on. R5G6B5
-forces Z16 depth, and Melee's 0.1..16384 camera then z-fights near the
-fighters. Z24S8 needs 32-bit colour (~7 MB more), float Z16 needs reversed
-depth everywhere and xemu can't check it; so one affine remap of GX's depth
-per frame, (g - g0) / (1 - g0), from the frame's projections (`build_proj`,
-`-DXGX_Z16_DEPTH_RATIO`, `renderer.md` "Depth"), one mapping for every
-camera since the game depth-tests the timer's camera against the stage's.
-480 is unchanged; `-DXHW_VIDEO_480_BPP=16` brings the 16-bit path to xemu.
+133 ms frame); they sample alpha 1, which Melee doesn't rely on. Until
+v53 R5G6B5 came with Z16 depth (thought to be forced: NV1x/NV2x PC drivers
+want matching widths), and Melee's 0.1..16384 camera then z-fights near the
+fighters; float Z16 needs reversed depth everywhere and xemu can't check
+it; so one affine remap of GX's depth per frame, (g - g0) / (1 - g0), from
+the frame's projections (`build_proj`, `-DXGX_Z16_DEPTH_RATIO`,
+`renderer.md` "Depth"), one mapping for every camera since the game
+depth-tests the timer's camera against the stage's. 480 is unchanged;
+`-DXHW_VIDEO_480_BPP=16` brings the 16-bit path to xemu.
+
+**720p depth is Z24S8 with the R5G6B5 colour (v53).** The remapped Z16
+still couldn't hold decals 0.25 units in front of their surface (Pokémon
+Stadium's red arrowheads and platform marks broke up: a step there is
+~0.5-0.7 units; a remap ratio of 512 didn't fix it either). The NV2A takes
+mixed widths (nxdk_pgraph_tests run A8R8G8B8 + Z16 on hardware throughout;
+stock pbkit pairs R5G6B5 with Z24S8), so 720p keeps 16-bit colour and
+takes 24-bit depth: +1.8 MB contiguous (not +7 MB for 32-bit colour), the
+GameCube's precision, and the 480 picture (16-bit 480 shots match the
+32-bit build's within 16-bit rounding, 9 scenarios). The copy fix's
+pitch re-send (`XGX_COPY_FIX` 4) had to take the depth buffer's own
+pitch (`zeta_pitch`). The remap stays for Z16. The fps
+cost (twice the depth bytes before Z compression) is unmeasured on the
+console: `-DXGX_Z24_16BPP=0` / `env MX_Z24=0` is v52's path for the A/B.
 
 **The colour tile is on (`XGX_TILE` 4, 2026-10-03).** pbkit puts the
 framebuffers in tile 0 without its enable bit; enabled, it measured +11% at

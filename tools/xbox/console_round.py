@@ -53,6 +53,13 @@ STALL = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_DEB
          'env MELEE_DEBUG_VS_TIME=240', 'env MELEE_SEED=1']
 FD = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=32', 'env MELEE_DEBUG_VS_CHARS=2,8',
       'env MELEE_DEBUG_VS_TIME=60', 'env MELEE_SEED=1']
+# Pokémon Stadium, 4 CPUs: the frame rate, and lockstep shots of the
+# screen's red arrowheads (roadmap item 11, renderer.md "Depth")
+PS = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=3', 'env MELEE_DEBUG_VS=cpu4',
+      'env MELEE_DEBUG_VS_TIME=120', 'env MELEE_SEED=1']
+PSSHOT = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=3', 'env MELEE_DEBUG_VS=cpu4',
+          'env MELEE_DEBUG_VS_TIME=40', 'env MELEE_SEED=1', 'env MX_LOCKSTEP=1',
+          '600 TSHOT', '1200 TSHOT', '1800 TSHOT']
 # folder, build, scenario, switches: in the order they run. Rounds 2 and 3
 # end on dev's baseline in Melee-X itself, which can't chain: it stays on
 # its results. A round whose last folder is its own ends at the dashboard
@@ -139,6 +146,26 @@ CHAINS[6] = [
     ('Melee-X-r6n', 'final', 'menu', {}),
     ('Melee-X-r6o', 'final', 'stall', {'MX_COPY_FIX': '7', 'MX_COPY_STRESS': '40'}),
 ]
+# round 7 (v53): 720p depth, Z24S8 (MX_Z24 1, the new default) against v52's
+# Z16 (0), twice each after a warm-up, on Fountain and Pokémon Stadium; Z24S8
+# without Z compression (MX_TILE 12 = 4 + 8) prices the compression; FD 1v1
+# must hold 60. Then lockstep Stadium shots (the red arrowheads on the
+# screen's frame, ticks 600/1200/1800: whole with 1, slivers with 0) and
+# Fountain's (against round 6's r6l).
+CHAINS[7] = [
+    ('Melee-X-r7a', 'final', 'fod', {}),   # warm-up
+    ('Melee-X-r7b', 'final', 'fod', {'MX_Z24': '0'}),
+    ('Melee-X-r7c', 'final', 'fod', {'MX_Z24': '1'}),
+    ('Melee-X-r7d', 'final', 'fod', {'MX_Z24': '0'}),
+    ('Melee-X-r7e', 'final', 'fod', {'MX_Z24': '1'}),
+    ('Melee-X-r7f', 'final', 'fod', {'MX_Z24': '1', 'MX_TILE': '12'}),
+    ('Melee-X-r7g', 'final', 'ps', {'MX_Z24': '0'}),
+    ('Melee-X-r7h', 'final', 'ps', {'MX_Z24': '1'}),
+    ('Melee-X-r7i', 'final', 'fd', {'MX_Z24': '1'}),
+    ('Melee-X-r7j', 'final', 'psshot', {'MX_Z24': '0'}),
+    ('Melee-X-r7k', 'final', 'psshot', {'MX_Z24': '1'}),
+    ('Melee-X-r7l', 'final', 'fodshot', {'MX_Z24': '1'}),
+]
 CHAIN = []   # main(): CHAINS[N]
 
 
@@ -147,7 +174,7 @@ def script(i):
     lines = [f'# docs/fps-plan.md round {ROUND}, run {i + 1} of {len(CHAIN)}: {build}, {scen}, '
              + (' '.join(f'{k}={v}' for k, v in sw.items()) or 'no switches')]
     lines += {'fod': FOD, 'fodlong': FODLONG, 'fd': FD, 'fodshot': FODSHOT, 'menu': MENU,
-              'stall': STALL}[scen]
+              'stall': STALL, 'ps': PS, 'psshot': PSSHOT}[scen]
     lines += [f'env {k}={v}' for k, v in sw.items()]
     if i + 1 < len(CHAIN):
         lines.append(f'env MX_NEXT_XBE=F:\\Applications\\{CHAIN[i + 1][0]}\\default.xbe')

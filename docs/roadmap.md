@@ -139,11 +139,20 @@ Fix order (2026-10-04):
     callers around those ticks. Maybe related: one 2-pixel speck in one
     720p lockstep shot of 15 (round 6); repeat that run.
 11. **Stadium red lights and platform marks break up at 720p** (v51,
-    `C:\xemu\hw\logs-stadium-tex`). Z16 depth precision, not a texture bug:
-    the lights sit 0.25 units over the frame, a Z16 step there is ~0.5-0.7
-    units (GameCube ~0.07-0.1); 480 (Z24) is right. No fix yet. Options,
-    none small: a per-frame near plane from what was drawn, reversed float
-    Z16 (console only), or Z24S8 with 32-bit colour at 720p (+7 MB).
+    `C:\xemu\hw\logs-stadium-tex`). Z16 depth precision: the lights sit
+    0.25 units over the frame, a Z16 step there is ~0.5-0.7 units. Fixed
+    for v53, awaiting the console: 720p keeps R5G6B5 colour and takes
+    Z24S8 depth (`XGX_Z24_16BPP`, `env MX_Z24=0` for v52's Z16; +1.8 MB;
+    renderer.md "Depth", decisions.md). In xemu, at real 720p (EEPROM
+    with 720p, testing.md "720p in xemu") and at 16-bit 480, Stadium's
+    arrowheads are whole, and 16-bit Z24S8 shots match the 32-bit build's
+    on Stadium, Rainbow Cruise, Fountain, Corneria, Temple, FD, Green
+    Greens, Stage Clear and the Classic Team Kirby card (0 pixels over 24
+    levels; Z16 differs by 30-400 a shot). The same work fixed the copy
+    fix's pitch re-send for depth wider than colour. To do on the console:
+    round 7 (`console_round.py 7`, fps-plan.md) for the fps cost and the
+    shots; free memory in a match should be ~5 MB at 720p (`[BEAT]`). A
+    ratio of 512 on the Z16 remap (zero cost) did not fix the lights.
 12. **v3 player (Reddit; 128 MB, CPU upgrade):** settings.ini not
     regenerated, no BACK .bmp, widescreen setting no effect. E: has >1 GB
     free, so not a full disk. A v52 test zip with diagnostics went to him
@@ -154,8 +163,13 @@ Fix order (2026-10-04):
 
 Other open:
 
-- Rainbow Cruise ship flicker (v48, 720p, looks like shadows): try
-  `-DXGX_COPY_FIX=0` first, then the shadow-map copy/clear order.
+- Rainbow Cruise ship flicker (v48, 720p, looks like shadows): likely
+  Z16 depth (item 11). In xemu at 720p with Z16, pale slivers of a far
+  layer show through the hill behind the ship's prow and the deck rail's
+  edge rows change (~550-1100 pixels a shot, 3 lockstep shots); with
+  v53's Z24S8 they are gone and the 16-bit shots match the 32-bit
+  build's. Confirm on the console; if it still flickers, try
+  `-DXGX_COPY_FIX=0`, then the shadow-map copy/clear order.
 - Front LED vs modchips (Kronos; needed a Cerbios recovery): off by
   default; before turning it on again, find what the chip does with SMC
   LED registers 0x07/0x08.
@@ -163,8 +177,14 @@ Other open:
 - Fox costs ~10 fps vs a mixed 4-player match (v43-era): twice Mario's
   PObjs, more material switches; reflection skip since v43. Status unknown
   since the frame-rate work.
-- 720p visual faults of v38 (no shots): the `-DOCX_Z16_TILE_FLAGS` A/B
-  against them is open (no fps difference, fps-plan.md round 4).
+- 720p visual faults of v38 (no shots): probably Z16 too. A 16-bit sweep
+  in xemu (Fountain, Corneria, Temple, FD, Green Greens, 4 CPUs,
+  lockstep) found Z16-only z-fighting on every stage, small: pillar
+  bases and floor edges on Temple (~300 pixels a shot), fighters'
+  self-intersections (Link's belt and shield on Fountain), Corneria and
+  FD 30-60 pixels; no decal or shadow broke whole. All gone with v53's
+  Z24S8 (shots equal to the 32-bit build's). Close once the console
+  shows no other 720p-only fault.
 - GPU stall after an EFB copy, if it comes back: PGRAPH 0x400800-0x40080C
   and the last copy's target are logged at the first fault;
   `scenarios/stall`, `MX_COPY_STRESS`.

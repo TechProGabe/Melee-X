@@ -105,6 +105,16 @@ the PNGs). The frame-rate counter is hidden. Use it to gate a change that
 shouldn't alter the picture; time without it. On the console use `N TSHOT`
 (tick-based) since loading times vary.
 
+### 720p in xemu
+
+xemu runs 1280x720 when its EEPROM's video flags allow 720p (the AV pack
+is xemu's default HDTV): `tools/xbox/eeprom_video.py <copy of eeprom.bin>`
+sets 480p, 720p and widescreen and fixes the section's checksum; point a
+copy of xemu.toml's `eeprom_path` at it (a slot's own EEPROM) and add
+`env MX_VIDEO=720` to the script. `[VIDEO] 1280x720 16-bit` in the log;
+shots are 1280x720 16-bit. Slower than `-DXHW_VIDEO_480_BPP=16`, which
+runs the same renderer paths at 640x480.
+
 ### Performance runs in xemu
 
 The standard run is `tools/xbox/scenarios/gl` (other scenarios:
@@ -197,7 +207,9 @@ baseline in `Melee-X`) returns to the dashboard. `watch` waits for the
 dashboard's FTP and pulls into `$MX_HW/logs-rN`, `report` tabulates fps,
 buckets and GPU waits per run, `shots` groups byte-identical shots (with
 `MX_LOCKSTEP=1` and `TSHOT`), `clean` removes the folders. The first run of
-a chain is ~4% slow: make it a warm-up.
+a chain is ~4% slow: make it a warm-up. Round 7 (not run yet) prices v53's
+Z24S8 depth at 720p: `MX_Z24` 0/1 on Fountain and Stadium, Z24S8 without Z
+compression, FD, and Stadium's arrowhead shots (`fps-plan.md`).
 
 ## Measuring on the console
 
@@ -390,7 +402,7 @@ script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
 | `-DXHW_AUDIO_TEST=<bits>` | xemu audio tests (with `-DXHW_AUDIO_APU=0`, `scenarios/relaunch`): 1 leaves the AC97 engine running into the next boot at a relaunch; 2 reads CIV as 0 for good (an engine stuck from boot: the give-up path). Never on a console build |
 | `-DXHW_NO_SPLASH`, `-DXHW_SPLASH_MS=<n>`, `-DXHW_SPLASH_DUMP` | boot title card off; its hold time; stream it as `[FBDUMP]` |
 | `-DXHW_FBDUMP_EVERY=<n>` | screenshot every n presented frames |
-| `-DXHW_VIDEO_480_BPP=16` | 640x480 at 16 bits (R5G6B5, Z16, 720p's pool sizes): the 720p path at a size xemu can show. Test only: shots are 16-bit |
+| `-DXHW_VIDEO_480_BPP=16` | 640x480 at 16 bits (R5G6B5, 720p's depth format and pool sizes): the 720p path at a size xemu can show. Test only: shots are 16-bit. Real 720p in xemu: `env MX_VIDEO=720` with an EEPROM whose video flags allow 720p ("720p in xemu") |
 | `-DXSDK_FPS_DEFAULT=<0/1>` | the counter's default when `settings.ini` has no `fps` line (default `XHW_TEST_BUILD`) |
 | `-DXSDK_SETTINGS_RESET` | test builds: delete `settings.ini` at boot, then copy `D:\settings.ini` over it if staged (`MX_STAGE_EXTRA`) |
 | `-DXSDK_ARAM_VERIFY=1` | compare every ARAM copy left on the disc (`ar.c`) with the image; `[AR] verify:` |
@@ -400,7 +412,8 @@ script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
 | `-DXGX_COPY_STRESS=<n>` | repeat each self-clearing EFB copy n more times into a scratch texture (picture unchanged): makes copy GPU faults frequent. Test builds read `env MX_COPY_STRESS=`; `scenarios/stall` |
 | `-DXGX_TILE=<bits>` | re-program pbkit's tile regions (`renderer.md` "Tile regions"): 1 Z16 depth compresses as Z16, 2 tile 0 enable bit `base \| 1`, 4 `base \| 3` (wins over 2), 8 no Z compression; default 4, 0 pbkit's. With tile 0 on the CPU reaches the framebuffers through the aperture (`[NV2A] tiled framebuffers ... aperture`). Picture must not change. Test builds read `env MX_TILE=`. Console only (xemu ignores tiles) |
 | `-DOCX_Z16_TILE_FLAGS=<flags>` | pbkit's Z16 depth tile flags (`patch_pbkit.py`); default `0x84000001`; A/B `0x80000001` (no 32-bit flag), `0x00000001` (uncompressed). Console only |
-| `-DXGX_Z16_DEPTH_RATIO=<n>` | Z16 depth as if the extreme camera's near plane were at far / n (default 4096; `renderer.md` "Depth"); 0: GX's depth as is |
+| `-DXGX_Z24_16BPP=<0/1>` | 16-bit colour (720p) with Z24S8 depth (1, default since v53: +1.8 MB at 720p) or Z16 (0, v52's; `renderer.md` "Depth"). `[NV2A] up: ... depth Z24S8`. Test builds read `env MX_Z24=` |
+| `-DXGX_Z16_DEPTH_RATIO=<n>` | Z16 depth as if the extreme camera's near plane were at far / n (default 4096; `renderer.md` "Depth"); 0: GX's depth as is. Only with Z16 depth. Test builds read `env MX_Z16_RATIO=` |
 | `-DXGX_DEPTH_CULL=1` | cull pixels outside the clip depth range instead of clamping (pre-v15) |
 | `-DXGX_OVERLAP=0` | `xgx_present` waits for the GPU before the flip (up to v32) instead of at the next frame's first GPU use |
 | `-DXGX_PB_KICK=<words>` | pushbuffer words per kick (default 8192) |
@@ -423,7 +436,7 @@ script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
 | `env MX_VIDEO=480\|480i\|720` | video mode over settings.ini's (`[VIDEO] MX_VIDEO=`); 720 still needs the dashboard to allow it |
 | `env MELEE_DEBUG_CASTLE_BILL=<frames>` | Peach's Castle: a Bullet Bill that many frames after the last, `[CASTLE]` lines per step of its state machine (`spawn`, `part2`, `animend`, `free`; `STUCK` if one never ends); `scenarios/castle` |
 | `env MX_FILL_E=1` | fill E: at boot (`E:\mx_fillN.bin`) to test the full-disk paths (failed saves and shots with notices, `[BOOT] can't write`, log on `D:\`). Use a copy of xemu's HDD; without the line the files are deleted |
-| `env MX_COPY_FIX`, `MX_COPY_STRESS`, `MX_TILE`, `MX_ABLATE` | run-time overrides of the switches above |
+| `env MX_COPY_FIX`, `MX_COPY_STRESS`, `MX_TILE`, `MX_ABLATE`, `MX_Z24`, `MX_Z16_RATIO` | run-time overrides of the switches above |
 | `N SHOT` | (script) screenshot at frame N: `[FBDUMP]` in xemu, `shotNN.bmp` on the console |
 | `N TSHOT` | (script) screenshot at the match's tick N (as `[SIMH]` counts): the same moment on every run with `MX_LOCKSTEP=1` |
 | `N NEXT` | (script) launch `MX_NEXT_XBE` at frame N (runs without a match); logs `[AUTOPAD] NEXT` |

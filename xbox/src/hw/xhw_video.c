@@ -5,9 +5,9 @@
  * widescreen. 720p is the default where the dashboard allows it on this AV
  * pack (settings.ini `720p = 1`; BACK held at boot gives 480i, boot.c):
  * 1280x720, always 16:9, at
- * 16-bit colour with a Z16 depth buffer, since three 1280x720x32
- * framebuffers plus depth don't fit next to the game in 64 MB
- * (OpenCrossing-Xbox's measurement). */
+ * 16-bit colour, since three 1280x720x32 framebuffers plus depth don't fit
+ * next to the game in 64 MB (OpenCrossing-Xbox's measurement); depth is
+ * Z24S8 (nv2a.c XGX_Z24_16BPP; Z16 until v53). */
 #include <hal/video.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,8 +49,9 @@ void xhw_video_set_pref_720p(int on) { s_pref_720p = on; }
 void xhw_video_set_pref_480p(int on) { s_pref_480p = on; }
 
 /* Test switch: -DXHW_VIDEO_480_BPP=16 runs 480 the way 720p runs (R5G6B5
- * colour, Z16 depth, 720p's pool sizes), so xemu, which has no 720p, can
- * run the 16-bit path. */
+ * colour, 720p's depth format and pool sizes), so xemu can run the 16-bit
+ * path at 640x480 (720p in xemu needs an EEPROM that allows it,
+ * docs/testing.md). */
 #ifndef XHW_VIDEO_480_BPP
 #define XHW_VIDEO_480_BPP 32
 #endif

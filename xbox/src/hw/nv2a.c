@@ -64,9 +64,28 @@ enum { GX_ITF_8 = 0, GX_ITM_OFF = 0, GX_ITM_2 = 3, GX_ITW_OFF = 0, GX_ITBA_OFF =
  * Output geometry
  * ====================================================================== */
 static int s_fbw = 640, s_fbh = 480, s_bpp = 32;
-static float s_zmax = 16777215.0f;
-static float s_zg0;             /* Z16 depth remap of this frame (build_proj); 0: none */
+static float s_zmax = 16777215.0f;   /* depth buffer's top value: Z24S8, or 65535 with Z16 */
+
+/* 16-bit colour (720p, -DXHW_VIDEO_480_BPP=16) with Z24S8 depth instead of
+ * Z16 (docs/renderer.md "Depth"): Z16 can't separate Pokémon Stadium's red
+ * lights, 0.25 units in front of the frame (a Z16 step there is ~0.5-0.7
+ * units even with the remap below). The NV2A takes colour and depth formats
+ * of different widths (nxdk_pgraph_tests runs A8R8G8B8 with Z16 on the
+ * hardware; stock pbkit pairs R5G6B5 with Z24S8). 1.8 MB more contiguous
+ * memory at 720p; if pb_init can't get it, Z16 again. 0: Z16 at 16 bits,
+ * as before v53. Test builds: "env MX_Z24=0|1". */
+#ifndef XGX_Z24_16BPP
+#define XGX_Z24_16BPP 1
+#endif
+static int s_z24_16 = XGX_Z24_16BPP;
+static float s_zg0;           /* Z16 depth remap of this frame (build_proj); 0: none */
 static float s_zg0_next = 2.0f;  /* the smallest g0 a projection built this frame asked for; 1: none, 2: no build */
+
+/* the screen depth buffer's pitch, as pb_init lays it out (width x 2 or 4
+ * bytes): not the colour's when the widths differ (Z24S8 at 16 bits) */
+static uint32_t zeta_pitch(void) {
+    return pb_back_buffer_width() * (pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? 2u : 4u);
+}
 
 /* GX depth (0..1) as the depth buffer stores it, in depth-buffer units */
 static float z_store(float g) {
@@ -1699,6 +1718,7 @@ static void build_fog(const XgxState* st) {
 #ifndef XGX_Z16_DEPTH_RATIO
 #define XGX_Z16_DEPTH_RATIO 4096.0f
 #endif
+static float s_z16_ratio = XGX_Z16_DEPTH_RATIO;   /* test builds: "env MX_Z16_RATIO=n" */
 
 static void build_proj(const XgxState* st) {
     const float(*p)[4] = st->proj;
@@ -1709,9 +1729,9 @@ static void build_proj(const XgxState* st) {
     int c;
     /* GX perspective: p22 = -n/(f-n), p23 = -fn/(f-n), w = -z. Clip z/w at
      * eye distance f/K is (K-1) p22, depth there vf + (vf - vn) (K-1) p22 */
-    if (s_zmax < 65536.0f && XGX_Z16_DEPTH_RATIO > 1.0f && !st->proj_ortho && p[3][2] == -1.0f &&
-        p[3][3] == 0.0f && p[2][2] < 0.0f && -p[2][2] * (XGX_Z16_DEPTH_RATIO - 1.0f) < 1.0f)
-        g0 = vf + (vf - vn) * (XGX_Z16_DEPTH_RATIO - 1.0f) * p[2][2];
+    if (s_zmax < 65536.0f && s_z16_ratio > 1.0f && !st->proj_ortho && p[3][2] == -1.0f &&
+        p[3][3] == 0.0f && p[2][2] < 0.0f && -p[2][2] * (s_z16_ratio - 1.0f) < 1.0f)
+        g0 = vf + (vf - vn) * (s_z16_ratio - 1.0f) * p[2][2];
     if (g0 <= 0.0f) g0 = 1.0f;
     if (g0 < s_zg0_next || s_zg0_next > 1.0f) s_zg0_next = g0;
     /* GX clip z/w runs -1 (near) .. 0 (far); depth = z/w * (far - near) + far */
@@ -3134,9 +3154,10 @@ static void read_rect(const int32_t src[4], uint32_t dw, uint32_t dh, uint32_t* 
  * Afterwards the back buffer is the target again
  * and xgx_draw re-sends every state group. The target has the back buffer's
  * format: A8R8G8B8 with Z24S8 surfaces, or R5G6B5 with Z16 at 16 bits
- * (720p), as the NV2A wants colour and depth surfaces of the same width
- * even with depth off. An R5G6B5 copy samples alpha 1: the I/R copies HSD
- * makes (shadow maps) are read for colour only, alpha comes from APREV
+ * (720p): the zeta side as wide as the colour, since it points at the
+ * target's own memory with depth off (below), whatever the screen's depth
+ * (Z24S8 at 720p too since v53, XGX_Z24_16BPP). An R5G6B5 copy samples
+ * alpha 1: the I/R copies HSD makes (shadow maps) are read for colour only, alpha comes from APREV
  * (tobj.c, TObjSetupTevModulateShadow). At 720p this was the CPU readback,
  * ~60 ms a match frame on the console (v38). */
 enum { CR_ZERO = 0, CR_C0 = 1, CR_T0 = 8, CR_R0 = 12 };
@@ -3344,10 +3365,15 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
         uint32_t* p = pb_begin();
         p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
         if (s_copy_fix & 4) {   /* and once more after that: the DMA objects, pitch and offsets
-                                 * (colour and depth pitch are equal: frame setup matches them) */
+                                 * (pb_init's pitches, as the retarget sent them) */
             p = pb_push1(p, NV097_SET_CONTEXT_DMA_COLOR, 9);
             p = pb_push1(p, NV097_SET_CONTEXT_DMA_ZETA, 10);
-            p = pb_push1(p, NV097_SET_SURFACE_PITCH, pb_back_buffer_pitch() | pb_back_buffer_pitch() << 16);
+            /* depth's own pitch: Z24S8 with 16-bit colour (720p) is twice the
+             * colour's. With the colour's, depth was addressed at half its
+             * pitch after every copy: the copy's depth clear and the draws
+             * after it hit the wrong rows (striped black silhouettes over
+             * Fountain's sky, striped Kirbys on the Classic team card). */
+            p = pb_push1(p, NV097_SET_SURFACE_PITCH, pb_back_buffer_pitch() | zeta_pitch() << 16);
             p = pb_push1(p, NV097_SET_SURFACE_COLOR_OFFSET, 0);
             p = pb_push1(p, NV097_SET_SURFACE_ZETA_OFFSET, 0);
             p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
@@ -3583,7 +3609,8 @@ void xgx_read_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, uint8_t*
  * xemu's register header call bit 0 the region's enable and bit 1 a bank
  * offset, which would leave the framebuffers untiled; pbkit's (from the
  * XDK) would have bit 1 always on. Tile 1's compression word gets the
- * Z24S8 format bit (0x04000000) also for the Z16 buffer at 720p. Both are
+ * Z24S8 format bit (0x04000000) also for a Z16 buffer (720p's until v53,
+ * -DXGX_Z24_16BPP=0; 720p's Z24S8 buffer matches it). Both are
  * layout only: a tile region is the memory controller's address mapping,
  * the same for every client, and Z compression stores a block only when
  * its depths come back exactly, so the picture can't change. Bits of
@@ -3621,7 +3648,7 @@ static void tile_write(uint32_t pfb, uint32_t pgraph, uint32_t rdi, uint32_t v) 
 }
 
 static void tiles_setup(void) {
-    uint32_t i, zpitch = pb_back_buffer_width() * (pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? 2 : 4);
+    uint32_t i, zpitch = zeta_pitch();
     int fb_ok = VIDEOREG(NV_PFB_TILE + 8) == pb_back_buffer_pitch(), z_ok = VIDEOREG(NV_PFB_TILE + 16 + 8) == zpitch;
     char line[900];
     int n;
@@ -3725,12 +3752,25 @@ int xgx_init(void) {
     s_vp = (VpEntry*)calloc(VP_CACHE, sizeof(VpEntry));
     vpm_init(&s_vpm);
     s_rc = (RcEntry*)calloc(RC_CACHE, sizeof(RcEntry));
+#if defined(XHW_AUTOPAD) && XHW_AUTOPAD
+    {   /* test builds: "env MX_Z24=0|1", "env MX_Z16_RATIO=n" (console A/B) */
+        const char* e = getenv("MX_Z24");
+        if (e) s_z24_16 = (int)strtol(e, NULL, 0);
+        e = getenv("MX_Z16_RATIO");
+        if (e) s_z16_ratio = (float)strtol(e, NULL, 0);
+    }
+#endif
     for (;;) {
         vm = xhw_video();
         if (vm->bpp == 16) {
             pb_set_color_format(NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5, false);
-            pb_DepthFmt = NV097_SET_SURFACE_FORMAT_ZETA_Z16;   /* NV2x: match colour and depth widths */
-            s_zmax = 65535.0f;
+            if (s_z24_16) {   /* XGX_Z24_16BPP: 16-bit colour, 24-bit depth */
+                pb_DepthFmt = NV097_SET_SURFACE_FORMAT_ZETA_Z24S8;
+                s_zmax = 16777215.0f;
+            } else {
+                pb_DepthFmt = NV097_SET_SURFACE_FORMAT_ZETA_Z16;
+                s_zmax = 65535.0f;
+            }
             tex_pool_bytes = TEX_POOL_720;
             vb_pool_bytes = VB_POOL_720;
         } else {
@@ -3753,6 +3793,10 @@ int xgx_init(void) {
             pb_kill();
         }
         xhw_logf("[NV2A] %dx%d start failed (pb_init %d)", vm->width, vm->height, err);
+        if (vm->bpp == 16 && s_z24_16) {   /* 1.8 MB less at 720p: Z16 before giving up 720p */
+            s_z24_16 = 0;
+            continue;
+        }
         /* 480 is the fallback, also at 16 bits (-DXHW_VIDEO_480_BPP=16) */
         if (vm->height == 480) xhw_fatal("Graphics init failed", "The NV2A could not be started.");
         xhw_video_fallback_480();
@@ -3773,8 +3817,11 @@ int xgx_init(void) {
     set_row(VPC_K, 0, 1, 0.5f, 2);
     frame_open();
     setup_state();
-    xhw_logf("[NV2A] up: %dx%d %d-bit, %s, tex pool %u KB", s_fbw, s_fbh, s_bpp,
-             vm->widescreen ? "16:9" : "4:3", s_tp.bytes / 1024);
+    xhw_logf("[NV2A] up: %dx%d %d-bit, %s, tex pool %u KB, depth %s", s_fbw, s_fbh, s_bpp,
+             vm->widescreen ? "16:9" : "4:3", s_tp.bytes / 1024,
+             pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? "Z16" : "Z24S8");
+    if (pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16 && s_z16_ratio != XGX_Z16_DEPTH_RATIO)
+        xhw_logf("[NV2A] Z16 depth ratio %d", (int)s_z16_ratio);
     {   /* physical layout: a GPU or DMA write past a buffer lands in whatever
          * sits next to it (the 480p hang overwrote the pushbuffer) */
         unsigned l[8];
