@@ -11,7 +11,7 @@ This isn't an emulator. The [doldecomp](https://github.com/doldecomp/melee) proj
 - 720p when your dashboard has it turned on. It's sharp and holds up well now, though busy stages still dip below 60. Hold **Back** while Melee-X starts if your TV ever shows nothing, and you'll get 480i
 - A settings menu right on the title screen: press **Back** there (more below)
 - Hold L + R + Back + Black to quit back to the dashboard
-- The Xbox's front light joins in: it flashes in a player's colour when they lose a stock, counts down the last seconds of a timed match and goes wild on GAME!
+- The Xbox's front light can join in (turn it on in the settings menu): it flashes in a player's colour when they lose a stock, counts down the last seconds of a timed match and goes wild on GAME!
 - Saves use the GameCube `.gci` format, so your Dolphin or memory card save works here and the other way around
 
 You need your own copy of the game. Nothing from Nintendo ships with this.
@@ -83,7 +83,7 @@ Build the ISO from Option 2, then load it in [xemu](https://xemu.app) with Machi
 
 ## Saves
 
-Saves always go to the hard drive, even when you play from a disc. They live in `E:\UDATA\4d580001\card_a\` as normal GameCube `.gci` files.
+Saves always go to the hard drive, even when you play from a disc. They live in `E:\UDATA\4d580001\card_a\` as normal GameCube `.gci` files. Each save is written to a `.tmp` file first and only then swapped in, so a save that fails (a full E:, say) leaves your previous one untouched.
 
 To bring over a save from Dolphin or a real memory card:
 
@@ -113,9 +113,9 @@ Press **Back** on the title screen ("Press Start") and the settings menu opens. 
 | option | what it does |
 |---|---|
 | Video output | 480i, 480p or 720p. Takes effect after a restart |
-| Widescreen (16:9) | 16:9 at 480i/480p when the dashboard is set to widescreen. After a restart |
-| Frame-rate counter | shows the fps in the top left corner, right away |
-| BACK screenshots | when on, pressing Back saves a screenshot (`shotNN.bmp`) next to your settings. Handy for bug reports |
+| Widescreen (16:9) | 16:9 at 480i/480p. On by default, but it also needs widescreen set in your dashboard (the menu tells you if it isn't). 720p is always 16:9. After a restart |
+| Frame-rate counter | shows the fps in the top left corner, right away. Off by default |
+| BACK screenshots | when on, pressing Back saves a screenshot to `E:\UDATA\4d580001\shotNN.bmp`. Off by default. Handy for bug reports |
 | Front LED effects | the front light flashes on KOs, in the last seconds and on GAME!. Off by default. If something else controls your front LED, such as a Kronos modchip, it's best to leave this off |
 | Use 128 MB RAM | only for consoles upgraded to 128 MB. On a stock 64 MB Xbox it's locked off, so you can't break anything |
 | Rumble | off, or 25% to 100% |
@@ -126,16 +126,16 @@ Anything that needs a restart gets a `*` next to it. Button remapping isn't in t
 
 ## Settings file
 
-Everything the menu changes lives in `E:\UDATA\4d580001\settings.ini`, and you can edit it over FTP too. Melee-X writes it the first time it boots. Delete it if you ever want to go back to the defaults.
+Everything the menu changes lives in `E:\UDATA\4d580001\settings.ini`, and you can edit it over FTP too. That's the only settings file Melee-X reads: a `settings.ini` next to `default.xbe` is ignored. Melee-X writes it the first time it boots. Delete it if you ever want to go back to the defaults.
 
 | section | setting | what it does |
 |---|---|---|
 | `[video]` | `720p` | 1 (the default) uses 720p when your dashboard has it turned on (needs component cables); otherwise you get 480p or 480i. 0 sticks to 480 |
 | | `progressive` | 0 forces 480i even when your dashboard allows 480p |
-| | `widescreen` | 1 draws 16:9 at 480i/480p when the dashboard is set to widescreen |
+| | `widescreen` | 1 (the default) draws 16:9 at 480i/480p, as long as the dashboard is set to widescreen too |
 | | `fps` | 1 shows a frame counter in the top left corner (off by default) |
 | `[system]` | `ram128` | 1 lets a console upgraded to 128 MB use all of it. Off by default: Melee-X then runs in the first 64 MB, the setup it was tested on. Ignored on a 64 MB console |
-| | `screenshots` | 1 makes Back save a screenshot (`shotNN.bmp` in the same folder) |
+| | `screenshots` | 1 makes Back save a screenshot (`shotNN.bmp` in the same folder). Off by default |
 | | `led_effects` | 1 lets matches play with the front light; 0 (the default) leaves it to the Xbox. Older files' `led` line is ignored |
 | `[input]` | `rumble` | rumble strength in percent, 0 turns it off |
 | `[port1]` to `[port4]` | `stick_deadzone`, `cstick_deadzone` | stick dead zones in percent |
@@ -165,7 +165,9 @@ Hold **L + R + Back + Black** on any controller to quit to the dashboard.
 
 Logs go to `E:\UDATA\4d580001\`: `boot.log` always, `boot_prev.log` from the launch before that, plus `crash.log` or `hang.log` if it went wrong. Attach those (and a photo if the screen showed an error) when you open an issue. If something looks wrong rather than crashing, turn on BACK screenshots in the settings menu and press Back when you see it.
 
-Settings, saves and screenshots all live on E:. If E: is full, Melee-X tells you on screen, keeps your last save as it was and writes `boot.log` next to `default.xbe` instead. Free some space on E: and launch again.
+**Nothing gets saved?** Settings, saves and screenshots all live on E:. If Melee-X can't write there (usually because E: is full), it says so on screen when it starts, and the title screen shows `Can't write to E: (full?): nothing will be saved` instead of the settings hint. Your last save stays as it was, and `boot.log` goes next to `default.xbe` instead. Free some space on E: and launch again.
+
+**No sound?** After a crash or a power cycle the Xbox's sound hardware can get stuck. Melee-X then shows "Sound hardware is stuck. Turn the Xbox off and on to get sound back." for 10 seconds and plays on without sound. Do what it says: switch the console off and on (a restart from the dashboard isn't enough).
 
 ## Building it yourself
 

@@ -70,7 +70,7 @@ knobs (`XBOX_LTO=1 XBOX_PGO=xbox/melee.profdata tools/xbox/msys/build.sh`).
 
 ```sh
 tools/lower/test_lower.py                     # oracle: lowered == GCC scalar_storage_order
-tools/xbox/compile_game.py                    # all 1008 units -> build-xbox/game/**.obj
+tools/xbox/compile_game.py                    # all units -> build-xbox/game/**.obj
 tools/xbox/compile_game.py --source src/melee/ft/ftlib.c
 XBOX_KEEP_TEMPS=1 tools/xbox/compile_game.py --source ...   # keep .i / .lowered.c
 ```
@@ -87,6 +87,9 @@ Each unit goes through four steps (`compile_game.py`):
    but implicit function declarations are errors, in the game and in the
    SDK layer alike. An undeclared float function returns `int`, so its
    result would be read from EAX instead of st(0).
+
+System headers are nxdk's pdclib. `xbox/include/game/` fills what pdclib
+lacks (`<sys/types.h>`, `M_PI`, `va_list` in aurora's `os.h`).
 
 ### The game triple
 
@@ -149,41 +152,20 @@ are renamed as above, and the native objects are linked as usual, so the
 order file still applies. lld-link's own ThinLTO would emit the mingw
 section names again. The platform code (nxdk's triple) and nxdk's
 libraries stay native. Imports are limited to functions of 10 instructions
-or less (`XBOX_LTO_INDEX` overrides): LLVM's default 100 grew `.text` by
-1.3 MB; 30 by 632 KB for -7% render and -4% simulation instructions; 10 by
-46 KB for -3.5..-3.9% and -1.6..-2.3%. `[SIMH]` stays equal with both;
-code size is what the console's code cache pays for, so round 2 decides. The game thread's x87 control
-word is `027f` (53-bit precision) on xemu and the console, so inlining
-does not move a double's rounding.
+or less (`-import-instr-limit=10`; `XBOX_LTO_INDEX` replaces it): higher
+limits grew `.text` by 0.6-1.3 MB, which the console's code cache pays for.
+The game thread's x87 control word is `027f` (53-bit precision) on xemu
+and the console, so inlining does not move a double's rounding.
 
 ### PGO (`XBOX_PGO`)
 
 `XBOX_PGO=gen` builds an instrumented image (`-fprofile-generate`, value
-profiling off; objects in `game-pgogen`). It has no compiler-rt:
-`xbox/src/hw/xhw_pgo.c` defines `__llvm_profile_runtime` and writes the
-counter section (`.lprfc`) to the log as `[PGOC]` lines at every scene's
-exit and the match's end. `tools/xbox/pgo_raw.py` builds a raw profile from
-the last dump and the linked image (`build-xbox/melee_x.exe`, whose
-`.lprfd`/`.lprfn` sections hold the rest), and `llvm-profdata merge` makes
-the `.profdata`:
-
-```sh
-XBOX_PGO=gen XBOX_CFLAGS=-DXHW_AUTOPAD=1 tools/xbox/msys/build.sh
-# xemu runs of gl, fodperf, ps, corn, fd2 (-icount: the counts don't depend on speed)
-python3 tools/xbox/pgo_raw.py --exe build-xbox/melee_x.exe --map build-xbox/melee_x.map run.log -o run.profraw
-llvm-profdata merge -o melee.profdata *.profraw
-XBOX_PGO=melee.profdata tools/xbox/msys/build.sh      # path relative to the checkout
-```
-
-Static functions are named by their file's name alone
-(`-static-func-full-module-prefix=false`), since the lowered sources'
-paths differ between the two builds' object folders. Branch counts are the
-same on the console, whose own profile only differs in where time goes.
-The committed profile, what it needs and how to regenerate it in one
-command (`tools/xbox/pgo_train.sh`): `docs/pgo.md`.
-
-System headers are nxdk's pdclib. `xbox/include/game/` fills what pdclib
-lacks (`<sys/types.h>`, `M_PI`, `va_list` in aurora's `os.h`).
+profiling off; objects in `game-pgogen`) that dumps its counters to the log
+as `[PGOC]` lines; `XBOX_PGO=<file>.profdata` (a path relative to the
+checkout) compiles the game and sdk code with that profile. Releases use
+the committed `xbox/melee.profdata`. What it holds, what must match between
+training and use, and how to regenerate it (`tools/xbox/pgo_train.sh`):
+`docs/pgo.md`.
 
 ## Platform code
 
@@ -197,6 +179,7 @@ expose only scalars and pointers to the rest.
 The workflow runs only when started by hand (`workflow_dispatch`); test
 builds for the console run locally. `.github/workflows/build.yml` runs
 `tools/xbox/setup.sh` (LLVM and nxdk are cached, keyed on that script),
-builds `default.xbe`, adds the dashboard icon and runs the host tests. The
+builds `default.xbe` with ThinLTO and the committed profile, adds the
+dashboard icon and runs the host tests. The
 XBE and its link map are uploaded as the `default.xbe` artifact; with a
 `release` tag it also publishes the release (above).

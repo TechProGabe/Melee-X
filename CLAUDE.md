@@ -57,13 +57,19 @@ Standard smoke/perf run: `XBOX_CFLAGS=-DXHW_AUTOPAD=1` build, `MX_STAGE_EXTRA=to
 read `[PERF]`/`[NV2A]`/`[DLC]` and compare the shots with the last good run
 (docs/testing.md "Performance runs in xemu"). The performance plan is in docs/roadmap.md.
 
-Hardware: FTP at the console's IP (`MX_FTP_HOST`, `xbox`/`xbox`), deploy to `/F/Applications/Melee-X/`
-(`default.xbe` and `default.tbn`, the dashboard icon, next to the disc image; `TitleImage.xbx` and `TitleMeta.xbx` to `/E/UDATA/4d580001/` for UnleashX's icon cache), logs in `/E/UDATA/4d580001/` (`boot.log`, `shotNN.bmp`,
-`crash.log`, `hang.log`): `tools/xbox/console.py stage|deploy|pull vNN`. Keep each deployed build's `melee_x.map` in `~/xemu/hw/` (`MX_HW`) so
+Hardware: two test consoles on the LAN, FTP `xbox`/`xbox` (`MX_FTP_HOST`). **red** = 192.168.158.113,
+game in `/F/Applications/Melee-X/`: `tools/xbox/console.py stage|deploy|pull vNN` works. **gold** =
+192.168.158.125, softmod, no F:, game in `/E/Applications/Melee-X/`: `console.py deploy` targets F:, so
+deploy gold by FTP to that folder (`pull` works). The FTP server is UnleashX's: LIST ignores a path
+argument (CWD first), and the 220 banner shows each drive's free space. Deploy = `default.xbe` and
+`default.tbn` (the dashboard icon) next to the disc image; `TitleImage.xbx` and `TitleMeta.xbx` to
+`/E/UDATA/4d580001/` for UnleashX's icon cache. Logs in `/E/UDATA/4d580001/` (`boot.log`, `boot_prev.log`,
+`lastexit.txt`, `shotNN.bmp`, `crash.log`, `hang.log`; `boot.log` goes next to `default.xbe` when E: can't
+be written). Keep each deployed build's `melee_x.map` in `~/xemu/hw/` (`MX_HW`) so
 `tools/xbox/sym.py` and `tools/xbox/prof_report.py` can symbolize its logs. Each boot deletes the previous
-boot's logs and `deploy` deletes them too: pull first. BACK screenshots and the counter are test-build only
-(`-DXHW_PROF=1`/`-DXHW_AUTOPAD=1`); a plain build is a release. Many A/B runs in one launch:
-`tools/xbox/console_round.py` (docs/testing.md "Console rounds").
+boot's logs (`boot.log` becomes `boot_prev.log`) and `deploy` deletes them too: pull first. BACK screenshots
+and the counter default on only in test builds (`-DXHW_PROF=1`/`-DXHW_AUTOPAD=1`); a plain build is a
+release. Many A/B runs in one launch: `tools/xbox/console_round.py` (docs/testing.md "Console rounds").
 
 ## Rules
 

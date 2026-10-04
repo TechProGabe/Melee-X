@@ -6,75 +6,60 @@ notes don't travel between machines, so what they held is here. Read
 
 ## Where it stands
 
-Updated 2026-10-04 (Windows PC, the frame-rate work).
+Updated 2026-10-04 (Windows PC, v52).
 
-- **Latest release: v3** (`.github/release-notes.md`). Releases are now
-  built with ThinLTO + PGO (`docs/toolchain.md` "Release", `docs/pgo.md`).
-- **On the consoles: v52** (2026-10-04), a test build (`-DXHW_PROF=1`,
-  `XBOX_LTO=1 XBOX_PGO=xbox/melee.profdata`) of `dev` with the Stadium
-  screen-copy fix, the AC97 boot fix and the full/unwritable E: handling
-  (decisions.md). Two consoles on the LAN, FTP at 192.168.158.113 and
-  192.168.158.125 (the user's "red" and "gold"). Stage and map:
-  `C:\xemu\hw\stage-v52`, `C:\xemu\hw\melee_x.v52.map`. The same build,
-  zipped with a tester README, went to a Reddit player whose settings.ini,
-  BACK shots and widescreen didn't work on v3 (E: has free space; his
-  boot.log's `[BOOT] save folder write test` and `[VIDEO] dashboard` lines
-  should say why). The xemu gate for it: `C:\xemu\rc52` (lockstep shots,
-  Stadium, Stage Clear, relaunch audio, `MX_FILL_E` runs). PGO profile not
-  retrained since gx_tex.c changed.
-- **Frame-rate work: done** (2026-10-03/04, `docs/fps-plan.md` "Outcome"):
-  Fountain of Dreams 4-CPU at 720p 32.0 -> 39.9 fps with the same picture
-  and simulation; ThinLTO + PGO +13%, the colour framebuffer's tile region
-  +11%, the rest from CPU work. Six console rounds, run as chains of test
-  builds (`tools/xbox/console_round.py`, `docs/testing.md` "Console
-  rounds"). Retrain the PGO profile after game or sdk changes.
-- **Open:** `docs/roadmap.md` "Known issues" and its numbered items (9:
-  silent after a crash until a power-off; 10: the simulation isn't
-  deterministic on the console).
+- **Latest release: v3** (`.github/release-notes.md`), built on GitHub with
+  ThinLTO + PGO (`docs/toolchain.md` "Release").
+- **On both consoles: v52**, `dev` at ef52994 (local, not pushed): a test
+  build (`-DXHW_PROF=1`, LTO + PGO), stage `C:\xemu\hw\stage-v52`, map
+  `melee_x.v52.map`. It adds the Stadium big-screen copy fix (roadmap
+  item 3), the AC97 boot fix (item 9) and the full/unwritable E: handling
+  to the frame-rate work. xemu gate passed (`C:\xemu\rc52`, roadmap "Where
+  it stands"). Red's first session was clean (`C:\xemu\hw\logs52-red-1`).
+  Next: gold's session, burn-in on both, the user's audio repro (power off
+  mid-match, dashboard, launch), PGO retrain (gx_tex.c changed).
+- **Consoles**: red 192.168.158.113 and gold 192.168.158.125 (CLAUDE.md,
+  `docs/testing.md`). Pull logs before every relaunch or deploy.
+- **Reddit tester** (v3; 128 MB + CPU upgrade; settings.ini not
+  regenerated, no BACK .bmp, widescreen does nothing; E: has over 1 GB
+  free): got v52 as `Melee-X-v52-test.zip` with a README
+  (`C:\xemu\hw\reddit-v52`). Waiting for his boot.log: read `[BOOT] save
+  folder write test` and `[VIDEO] dashboard`.
+- **Open:** `docs/roadmap.md` "Known issues".
 - **Merge gate** (user's rule): every subagent branch gets the main
   session's code review plus before/after shots before it goes on `dev`:
-  lockstep shots (`env MX_LOCKSTEP=1`, `TSHOT`) byte for byte where the
-  picture must not change, `[SIMH]` equal where the simulation must not
-  (`docs/testing.md` "Comparing builds by screenshot"), and the scenes it
-  touches.
-- **Releases build on GitHub** (user's rule): the `build` workflow with a
-  `release` tag builds, tests, packages and publishes (`docs/toolchain.md`
-  "Release"). The repo stays private until the user says to make it public.
-  Never commit or push without the user's go-ahead; `dev` is the working
-  branch, `main` is releases only.
-- **LAN play:** planned in `docs/lan-plan.md` (two Xboxes, one or two
-  players each, phases 0A-5); 0A and 0B started and paused (below).
+  lockstep shots byte for byte where the picture must not change, `[SIMH]`
+  equal where the simulation must not (`docs/testing.md` "Comparing builds
+  by screenshot"), and the scenes it touches.
+- **Git** (user's rule): never commit or push without the go-ahead; `dev`
+  is the working branch, `main` is releases only. The repo is public.
 
-## Paused work (2026-10-04, pick up here)
+## Paused work: LAN phases 0A and 0B
 
-`fix-ac97-boot` and `fix-stadium-tex` are finished and merged (v52,
-above; their `HANDOFF-*.md` notes are in git history, the console test is
-next). The LAN branches are still paused.
-
-Four agent branches were stopped mid-work at the user's request (usage).
-Each has one local WIP commit on top of `dev` (not pushed) and a
-`HANDOFF-*.md` at its root with what was verified, what is left and the
-next steps; read that first, then finish the gate and merge through the
-merge gate above. The worktrees are under `.claude/worktrees/` (untracked);
-`git worktree list` shows them, and the branches survive if a worktree is
-removed. Agent scratch folders are in `C:\xemu` (`run-0a`, `base-0a`,
-`b`, `run-tex`, `run-audio`); no xemu instance or `C:\xemu\xemu.lock.*`
-slot is left. Up to two xemu instances may run at once (user, 2026-10-04):
-agents take a slot with `mkdir C:/xemu/xemu.lock.1` (or `.2`), use their
-own `MX_RUN`, and kill only their own instances by PID.
+The user is skipping LAN for now (`docs/lan-plan.md`). Each branch has one
+WIP commit on the `dev` of 2026-10-04 (on origin too; rebase onto v52
+first) and a `HANDOFF-*.md` with what's verified and next; worktrees under
+`.claude/worktrees/`, scratch in `C:\xemu` (`run-0a`, `base-0a`, `b`).
 
 | branch | commit | what | state |
 |---|---|---|---|
-| `fix-ac97-boot` | f79352e | roadmap item 9: silent boot. Logs the AC97 and APU state as found at boot (`[AUDIO] found`, `idle`), idles both bus masters and the APU before the first buffer, gives up after one failed recovery (`[AUDIO] stuck since boot`, a 10 s notice, no more cold-reset freezes), records how the last boot ended (`lastexit.txt`, `[BOOT] previous exit`); `-DXHW_AUDIO_TEST`, scenario `relaunch` | builds; not run in xemu or on the console. Next: the xemu runs in `HANDOFF-audio.md` (builds in `C:\xemu\run-audio\builds`), a console test build in `C:\xemu\hw\stage-audio`, the user reproduces (power off mid-match, dashboard, launch), roadmap item 9 |
-| `fix-stadium-tex` | e227b7f | Pokémon Stadium on the console (v51, 720p; shots in `C:\xemu\hw\logs-stadium-tex`): the red lights and platform marks break up because of 16-bit depth at 720p (roadmap item 11 on the branch: lights 0.25 units over the frame, ~0.5-0.7 units a depth step; 32-bit depth is clean in xemu), no fix yet; the faint screen static is the game's own texture (intended); a one-frame garbage screen after ~10 s on other views is roadmap item 3, and the diff (`gx_tex.c`: screen copies kept, bound only at their copy size, dropped at a scene change, longer grace) targets it | `test_tex_cache.py` passes; not verified in xemu. Next: the long Stadium run, `scenarios/clear` (Stage Clear), Stadium shots against `base16`, the other host tests, a console A/B; PGO retrain later |
-| `lan-0a-probes` | 08c7598 | LAN plan phase 0A: RNG trace (`random.c` `PORT:`, `simhash.c`), `MX_JITTER`, `[NETM]`, `simh_diff.py`, round 7 (staged in `C:\xemu\hw\stage-r7`), scenarios `det`, `v1-*` | G0 on gl passes ([SIMH] 62/62, +0.4% instructions, lockstep shots 4/4); fodperf -4.4% (rerun, likely host load); `det` under `-icount` parts at tick 4447 (item 10 reproduces in xemu, lan-plan.md F6); left: jitter runs, final G0, dev control, lan-plan.md, the S1 hand-over |
-| `lan-0b-net` | 3e91404 | LAN plan phase 0B: `xhw_net.c` with D14 enforced below every caller, `xhw_netprobe.c`, `xemu_pair.sh`, `xemu_tap.py`, `net_audit.py`, `eeprom_mac.py`, `lan_probe.py`, `lan_logd.py`, `console2.py`, host tests `test_net_ring`, `test_net_gov`, `test_net_audit` | host tests pass; image +248 KB (autopad build); xemu NAT: DHCP 10.0.2.15 after 10-12 s, PC beacon heard, rtt 0 replies (open decision in lan-plan.md); left: pair, tap, flood, relaunch, new side of G0 (base runs in `C:\xemu\b\g0`), lan-plan.md, the S1 folder |
+| `lan-0a-probes` | 08c7598 | phase 0A: RNG trace, `MX_JITTER`, `[NETM]`, `simh_diff.py`, round 7 (`C:\xemu\hw\stage-r7`), scenarios `det`, `v1-*` | G0 on gl passes; `det` under `-icount` parts at tick 4447 (item 10 in xemu); left: jitter runs, final G0, the S1 hand-over |
+| `lan-0b-net` | 3e91404 | phase 0B: `xhw_net.c` (D14 below every caller), probes, pair/tap tools, host tests `test_net_*` | host tests pass; +248 KB; xemu NAT DHCP works, rtt 0 replies (open decision); left: pair, tap, flood, relaunch, G0 |
 
-Host tests that fail on this PC for setup reasons, not code (seen by the
-agents): `test_lower.py` (fails the same on `dev`), `test_vp_encoder.py`
-(no `nv2a_vsh` module in this Python), `vp_policy --check` (prints ok, then
-a Windows temp-file error). Python here: `C:/msys64/mingw64/bin/python3.exe`
-(the `python3` on PATH is the Store stub).
+Two xemu instances may run at once: take `mkdir C:/xemu/xemu.lock.1` (or
+`.2`), use your own `MX_RUN`, kill only your own PID (runners that
+`taskkill` every xemu are single-slot only).
+
+## Pitfalls on this PC
+
+- Host tests failing for setup reasons only: `test_lower.py`,
+  `test_vp_encoder.py` (no `nv2a_vsh`), `vp_policy --check` (temp-file
+  error). Python: `C:/msys64/mingw64/bin/python3.exe` (`python3` on PATH is
+  the Store stub).
+- Game-side code (`src/`, `xbox/src/sdk`) builds with `-Wno-everything`:
+  give new sdk code a separate `-Wall` syntax pass.
+- The Bash tool eats backslashes in heredocs and Git Bash `sed -i` drops
+  CRs: write scripts and edits with a file tool.
 
 ## Windows setup
 
@@ -83,12 +68,9 @@ The native MSYS2 build, nxdk and xemu on Windows are in
 `C:\xdev\nxdk`, xemu in `C:\xemu\`, per-build stage folders, maps and logs
 in `C:\xemu\hw` (`MX_HW=/c/xemu/hw`).
 
-- **Console**: `MX_FTP_HOST=<the Xbox's IP> MX_HW=/c/xemu/hw
-  tools/xbox/console.py stage|deploy|pull vNN`. `stage` copies the build
-  and writes `<map>.statics` (static functions, for the profiler); `pull`
-  fetches `boot*.log`, `trace.log`, `crash.log`, `hang.log` and the shots
-  into `logsNN`. `deploy` deletes the console's old logs and shots, so pull
-  first. FTP is served by the dashboard, so it's down while the game runs.
+- **Console**: `MX_FTP_HOST=<ip> MX_HW=/c/xemu/hw tools/xbox/console.py
+  stage|deploy|pull vNN` (CLAUDE.md "Hardware"). `pull` writes `logsNN`:
+  rename it per console (`logs52-red-1`) before pulling the other one.
 - **xemu** needs a memory card for anything past the title: an autopad
   build seeds `card_a` from `D:\card_a\*.gci` on the disc (stage the user's
   100% save with `MX_STAGE_EXTRA`); the save itself stays out of the repo.
@@ -137,19 +119,19 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
   `-DXHW_TEST_BUILD=1`). A console round that needs shots or a profile gets
   `XBOX_CFLAGS=-DXHW_PROF=1`; a release candidate is a plain build.
 - **Pull logs before the next launch**: every boot deletes `boot*.log`, so
-  a session that was restarted keeps only its last boot's log (the v36
-  playtest's first half is gone). Ask the user to pull, or pull yourself,
+  a session that was restarted keeps only its last boot's log and
+  `boot_prev.log`. Ask the user to pull, or pull yourself,
   before they launch again.
 - **Bundle hardware tests**: one console round per batch of fixes; the
   user plays and presses BACK (test builds) for screenshots. Deploy test
   builds whenever the user says the Xbox is on. Ask for BACK shots rather
   than descriptions.
-- **One emulator at a time.** Several xemu instances starve the CPU and the
-  slow loads trip the watchdog's "frames stopped" (not hangs). Call a hang
-  only when `[BEAT]`'s retrace count stops for minutes. xemu also locks up
-  now and then on its own; rerun before suspecting the build.
-- **Never capture the user's desktop**; look at frames only through
-  `[FBDUMP]` screenshots (autopad `SHOT`).
+- **At most two xemu instances** (lock slots above). More starve the CPU
+  and slow loads trip the watchdog's "frames stopped" (not hangs). Call a
+  hang only when `[BEAT]`'s retrace count stops for minutes. xemu also
+  locks up now and then on its own; rerun before suspecting the build.
+  xemu's 16-bit Stadium frames differ by a few pixels run to run: compare
+  against a second base run before blaming a change.
 - **Perf work**: pick changes that help the console. xemu's profile is
   skewed (it runs SSE through softfloat, so float code looks hot) and its
   GPU is slow; trust `[PERF]`/`[PROF]` from the console. Profiler and
@@ -175,17 +157,12 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
   `MELEE_DEBUG_VS_INVISIBLE=<hex>`,
   `MELEE_DEBUG_KIRBY_HAT=<FighterKind>`, `XGX_SKIP=<a>-<b>` (trace builds).
   Shot timing differs between builds.
-- **Console**: FTP at the console's IP (`MX_FTP_HOST`), `xbox`/`xbox`,
-  reachable only from the dashboard. The dashboard is UnleashX, which
-  caches icons by title ID under `E:\UDATA\<id>\TitleImage.xbx`: a wrong
-  icon is a stale cache (old nxdk builds used `ffff0002`, which belongs to
-  every nxdk title; Melee-X is `4d580001`). The console's save is the
-  user's 100% save, a Dolphin `.gci` kept off the repo. Its copy on the
-  console logs `[CARD] save data looks mixed` (older builds rewrote some
-  fields little-endian); reimport the Dolphin original if counters or play
-  time look wrong. Never restore the corrupted copies in `card-*` backups.
-- **Dolphin reference** (unfinished): an isolated user dir with a Gecko code
-  forcing the attract stage; blocked at the memory card prompt; next idea
-  was a real save in `GC/USA/Card A`.
-- Mac-only leftovers not copied: per-build maps v1-v31 and logs (summaries
-  are in the roadmap).
+- **Console icons and saves**: UnleashX caches icons by title ID under
+  `E:\UDATA\<id>\TitleImage.xbx`: a wrong icon is a stale cache (old nxdk
+  builds used `ffff0002`; Melee-X is `4d580001`). Red's save is the user's
+  100% save (a Dolphin `.gci`, off the repo); it logs `[CARD] save data
+  looks mixed` (older builds wrote some fields little-endian): reimport the
+  Dolphin original if counters look wrong, never the `card-*` backups.
+- **Dolphin reference** (unfinished): a Gecko code forcing the attract
+  stage, blocked at the memory card prompt; next idea: a real save in
+  `GC/USA/Card A`.

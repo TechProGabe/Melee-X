@@ -21,7 +21,7 @@ bytes of the disc, the DOL, textures, sounds or saves are in it; the
 `.gci` save and the disc image the training runs need stay outside the
 repository (`MX_CARD`, `MX_ISO`), as `CLAUDE.md` requires. The counts
 are measurements of our own build running, like the numbers in
-`docs/fps-plan.md`. (Checked 2026-10-03; the user approved committing it.)
+`docs/fps-plan.md`. (The user approved committing it.)
 
 ## Why a stale profile is safe
 
@@ -80,14 +80,15 @@ the match's end (cumulative since boot). `pgo_raw.py` rebuilds a raw
 profile (version 10, 32-bit) from the last complete dump plus the linked
 image's `.lprfd` (function records) and `.lprfn` (names) sections and its
 `__llvm_profile_raw_version` word, which the link keeps with
-`-include:` for this.
+`-include:` for this. By hand, per run: `pgo_raw.py --exe
+build-xbox/melee_x.exe --map build-xbox/melee_x.map run.log -o
+run.profraw`, then `llvm-profdata merge -o melee.profdata *.profraw`.
 
 ## Release builds
 
-The GitHub `build` workflow builds with `XBOX_LTO=1
-XBOX_PGO=xbox/melee.profdata` (`docs/toolchain.md` "Release") and
+The GitHub `build` workflow always builds with `XBOX_LTO=1
+XBOX_PGO=xbox/melee.profdata` (`docs/toolchain.md` "Release"), and
 `package_release.py` refuses anything else; the profile is in the
-checkout, so nothing has to be downloaded. A local build stays plain
-unless it is given the two knobs. A release made with PGO should say in
-`xbox/melee.profdata.txt` which commit trained it, and its `[SIMH]` and
-screenshots gate like any other build.
+checkout, so nothing is downloaded. A local build stays plain unless it is
+given the two knobs. Its `[SIMH]` and screenshots gate like any other
+build.
