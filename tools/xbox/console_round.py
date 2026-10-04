@@ -6,6 +6,7 @@ chained so one launch runs them all. N is the round (CHAINS below).
   tools/xbox/console_round.py N upload         # FTP every folder (MX_FTP_HOST)
   tools/xbox/console_round.py N watch          # save each run's log (at the dashboard)
   tools/xbox/console_round.py N report         # fps and ms a frame per bucket, per run
+  tools/xbox/console_round.py N shots          # the runs' screenshots, the same bytes grouped
   tools/xbox/console_round.py N clean          # take the scripts and the rN folders off
 
 Each folder F:\\Applications\\Melee-X-rN?\\ holds a test build (-DXHW_AUTOPAD=1)
@@ -17,7 +18,9 @@ previous boot's log (boot_prev.log) and the game serves no FTP, so a build
 that launches the next one first renames its log to boot_<folder>.log;
 `watch` pulls them whenever the console is at the dashboard.
 Staged files go to $MX_HW/stage-rN, logs to $MX_HW/logs-rN."""
+import collections
 import ftplib
+import hashlib
 import io
 import os
 import re
@@ -44,6 +47,10 @@ FODSHOT = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_D
 # with the menu open, so settings.ini isn't written
 MENU = ['env MELEE_BOOT_SCENE=title', 'env MELEE_NO_ATTRACT=1', 'env MX_LOCKSTEP=1',
         '1200 SHOT', '1230 BACK', '1290 SHOT', '1350 NEXT']
+# scenarios/stall, timed: Fountain with each clearing EFB copy repeated
+# MX_COPY_STRESS times (the GPU stall after a copy, nv2a.c XGX_COPY_FIX)
+STALL = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_DEBUG_VS=cpu4',
+         'env MELEE_DEBUG_VS_TIME=240', 'env MELEE_SEED=1']
 FD = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=32', 'env MELEE_DEBUG_VS_CHARS=2,8',
       'env MELEE_DEBUG_VS_TIME=60', 'env MELEE_SEED=1']
 # folder, build, scenario, switches: in the order they run. Rounds 2 and 3
@@ -107,6 +114,31 @@ CHAINS[5] = [
     ('Melee-X-r5d', 'final', 'fodshot', {'MX_TILE': '4'}),
     ('Melee-X-r5e', 'final', 'fod', {'MX_TILE': '4'}),
 ]
+# round 6, the final one: the build releases will be (LTO + PGO, the colour
+# tile on) at 720p twice and on Final Destination; the merged clear
+# (MX_COPY_FIX 7) and the state trims (MX_TRIM 15, docs/renderer.md "State
+# trims") alone and together; 480p with the tile on and off; lockstep shots
+# that must match byte for byte (480p tile off against on, 720p defaults
+# against both switches); the settings menu; and the merged clear under the
+# copy stress (the GPU stall it sits next to, scenarios/stall), last.
+SWITCHES = {'MX_COPY_FIX': '7', 'MX_TRIM': '15'}
+CHAINS[6] = [
+    ('Melee-X-r6a', 'final', 'fod', {}),   # warm-up
+    ('Melee-X-r6b', 'final', 'fod', {}),
+    ('Melee-X-r6c', 'final', 'fod', {'MX_COPY_FIX': '7'}),
+    ('Melee-X-r6d', 'final', 'fod', {'MX_TRIM': '15'}),
+    ('Melee-X-r6e', 'final', 'fod', SWITCHES),
+    ('Melee-X-r6f', 'final', 'fod', {}),
+    ('Melee-X-r6g', 'final', 'fd', {}),
+    ('Melee-X-r6h', 'final', 'fod', {'MX_VIDEO': '480'}),
+    ('Melee-X-r6i', 'final', 'fod', {'MX_VIDEO': '480', 'MX_TILE': '0'}),
+    ('Melee-X-r6j', 'final', 'fodshot', {'MX_VIDEO': '480', 'MX_TILE': '0'}),
+    ('Melee-X-r6k', 'final', 'fodshot', {'MX_VIDEO': '480'}),
+    ('Melee-X-r6l', 'final', 'fodshot', {}),
+    ('Melee-X-r6m', 'final', 'fodshot', SWITCHES),
+    ('Melee-X-r6n', 'final', 'menu', {}),
+    ('Melee-X-r6o', 'final', 'stall', {'MX_COPY_FIX': '7', 'MX_COPY_STRESS': '40'}),
+]
 CHAIN = []   # main(): CHAINS[N]
 
 
@@ -114,7 +146,8 @@ def script(i):
     folder, build, scen, sw = CHAIN[i]
     lines = [f'# docs/fps-plan.md round {ROUND}, run {i + 1} of {len(CHAIN)}: {build}, {scen}, '
              + (' '.join(f'{k}={v}' for k, v in sw.items()) or 'no switches')]
-    lines += {'fod': FOD, 'fodlong': FODLONG, 'fd': FD, 'fodshot': FODSHOT, 'menu': MENU}[scen]
+    lines += {'fod': FOD, 'fodlong': FODLONG, 'fd': FD, 'fodshot': FODSHOT, 'menu': MENU,
+              'stall': STALL}[scen]
     lines += [f'env {k}={v}' for k, v in sw.items()]
     if i + 1 < len(CHAIN):
         lines.append(f'env MX_NEXT_XBE=F:\\Applications\\{CHAIN[i + 1][0]}\\default.xbe')
@@ -288,6 +321,26 @@ def report():
           'flip: ms a frame waiting for the flip (C3)')
 
 
+def shots():
+    """The runs' screenshots by index (shot_<folder>_NN.bmp), runs with the
+    same bytes grouped: lockstep runs that must show the same picture."""
+    by = collections.defaultdict(lambda: collections.defaultdict(list))
+    for p in sorted((LOGS / 'shots').glob('shot_*.bmp')):
+        m = re.match(r'shot_(.+)_(\d+)\.bmp$', p.name)
+        if m:
+            by[(scen_of(m[1]), int(m[2]))][hashlib.md5(p.read_bytes()).hexdigest()[:10]].append(m[1][-3:])
+    for (scen, n), groups in sorted(by.items()):
+        print(f'{scen:8s} shot {n:02d}: ' + ' | '.join(f'{h} {",".join(r)}' for h, r in groups.items()))
+
+
+def scen_of(folder):
+    """A run's scenario and video switch: only those runs' shots compare."""
+    for f, _, scen, sw in CHAIN:
+        if f == folder:
+            return scen + ('-' + sw['MX_VIDEO'] if 'MX_VIDEO' in sw else '')
+    return '?'
+
+
 def clean():
     f = connect()
     for folder, _, _, _ in CHAIN:
@@ -316,7 +369,7 @@ def main():
     cmd = sys.argv[2]
     if cmd == 'stage' and len(sys.argv) == 4:
         stage(sys.argv[3])
-    elif cmd in ('upload', 'watch', 'report', 'clean'):
+    elif cmd in ('upload', 'watch', 'report', 'shots', 'clean'):
         globals()[cmd]()
     else:
         sys.exit(__doc__)
