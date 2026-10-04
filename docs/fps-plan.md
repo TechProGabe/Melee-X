@@ -1,9 +1,30 @@
-# Frame-rate plan (2026-10-03, dev at d1786ec)
+# Frame-rate plan (2026-10-03, dev at d1786ec; executed 2026-10-03/04)
 
-For the session that executes it. Read `CLAUDE.md`, `docs/handoff.md`,
-`docs/testing.md` ("Measuring on the console", "Performance runs in xemu") and
-`docs/renderer.md` ("CPU cost of the back end") first. This replaces "Ideas
-left" in `docs/roadmap.md`. Keep the status table at the end current.
+Written as the plan for an executing session and kept as its record: the
+measurements, six console rounds, what went in and what was tried and
+removed. The status table at the end is the per-item summary.
+
+## Outcome
+
+Fountain of Dreams, 4 CPUs, 720p, the release build (console round 6):
+**39.9 fps, +25% on dev's 32.0** (21-22 before the v4x work), the same
+simulation (`[SIMH]` over the whole match in xemu) and the same picture
+(lockstep shots); Final Destination 1v1 holds 60; 480p +7% from the tile
+alone. What gave it:
+
+| change | gain (console, Fountain 720p) |
+|---|---|
+| ThinLTO + PGO (A3, A4), now how releases are built | +13% (rounds 2-3) |
+| the colour framebuffer's tile region enabled (`XGX_TILE` 4) | +11% (rounds 4-5) |
+| C4, C2, A1, A2, E (mixer), D (mplib), `PObjSetupMtx`, GX front-end lookups | the rest, within the two above's runs; xemu: sim -18% a tick, render -19% a draw |
+
+Tried and removed: B2 (4 MB pages), B3 (prefetch plans), B4 (deferred back
+end), the state trims; the merged clear (`MX_COPY_FIX=7`) stays off. Track
+F (picture trades) not built: the user takes none. Where it stands now: on
+Fountain at 720p the GPU is still busy at ~90% of frame starts (3.4 ms a
+frame waiting) and the CPU at ~22 ms a frame, so the next gains need both
+(fill without a picture change, and the render walk). Open: one 2-pixel
+speck in one round 6 shot (`roadmap.md` item 10).
 
 ## Goal
 
@@ -617,47 +638,15 @@ asks.
 
 ## Picking this up
 
-Nothing is implemented: this file, written on the Mac on 2026-10-03, is the
-whole of the work so far, and no code changed. The session that executes it
-starts from this prompt (any machine; `docs/handoff.md` has the Windows
-setup):
-
-```
-You are the fps executor for Melee-X, the native original-Xbox port of Melee.
-Goal: raise the console's frame rate in matches as far as it will go, with the
-same picture and the same simulation results.
-
-Read CLAUDE.md, docs/handoff.md, then docs/fps-plan.md and the docs it names.
-Follow the plan's Rules and Order. Do not re-plan.
-
-Setup: create your own worktree and branch `fps-exec` from `dev`. Never commit
-to, merge into or push dev or main. Commit each finished item on your own
-branch.
-
-Work, in order:
-1. Step 0 tools: icount report, whole-profile dump, draw and display-list
-   census, simulation hash. Record this machine's baselines in the plan's
-   Status table.
-2. Build the round 1 probe build (Step 1). Stage it with console.py, write the
-   scenario and a five-line run instruction for the user, then continue
-   without waiting for the console.
-3. Track A items A1 to A4 in order. Gate each in xemu: host tests, gl shots
-   against the baseline, equal simulation hashes, instructions per draw and
-   per tick before and after. Then C1, C2, C4.
-4. When the user hands you round 1 logs: fill in the measured stall shares,
-   choose B items by their conditions, prepare round 2 as one deploy.
-
-Stop and ask before: any change to the picture (track F), any change to
-simulation results (B1 as a default), committing a .profdata, going below
-5 MB free in a match, or continuing with LTO if the x87 control word is at
-64-bit precision.
-
-xemu: one instance. Check for a running one first and kill only your own,
-never every xemu. Never capture the desktop.
-
-Report per item: what changed, numbers before and after, risks, and what the
-console still has to confirm. Keep the plan's Status table current.
-```
+Executed 2026-10-03/04 on the Windows PC (`fps-exec`, merged into `dev`).
+The prompt it started from asked for: worktree and branch of its own, the
+plan's Rules and Order, a stop before any picture change, simulation change,
+`.profdata` commit, or going below 5 MB free in a match; one xemu at a time.
+What's left for a later session: the open speck (repeat the 720p lockstep
+shot run), roadmap item 10 (hardware nondeterminism), and new GPU fill or
+render-walk work measured the same way (a console round, `testing.md`
+"Console rounds"). Retrain the PGO profile after game or sdk changes
+(`pgo.md`).
 
 ## Status
 

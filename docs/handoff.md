@@ -6,42 +6,28 @@ notes don't travel between machines, so what they held is here. Read
 
 ## Where it stands
 
-Updated 2026-10-02 (Mac round, v39-v45).
+Updated 2026-10-04 (Windows PC, the frame-rate work).
 
-- **On the console: v45** = commit `52ccaff`, a plain (release) build, the
-  release candidate (RC2). Stage and map: `~/xemu/hw/stage-v45`,
-  `~/xemu/hw/melee_x.v45.map`. The tester copy is
-  `~/Downloads/Melee-X-RC2/` (+ `.zip`, with `README.txt`); it goes out only
-  after the console checks pass (user's rule: test on our hardware first).
-- **v45 over v43:** results winner portrait and 1P Stage Clear freeze frame
-  fixed; 720p z-fighting fixed (Z16 depth remap, `-DXGX_Z16_DEPTH_RATIO`);
-  Fountain of Dreams reflection skips fighters outside it (4x Fox much
-  faster); front LED effects (`led = 1`, menu row); 720p is the default
-  where the dashboard allows it, BACK held at boot gives 480i and saves
-  `720p = 0`, `progressive = 0`.
-- **Console results:** v43 ran 60 min on Fountain + 47 min on Peach's
-  Castle (480i) without the GPU stall, then a whole-system freeze at 113 min
-  uptime (no fault, no hang report; same as v39). v44 at 480 and 720p:
-  clean, LED works, winner portrait fixed, Fountain faster, 720p textures
-  right. v45 not checked yet: first boot in 720p, BACK-at-boot 480i, then a
-  60-min 720p burn-in (Fountain, 4 CPUs, items) - pull its logs.
-- **Frame-rate work (2026-10-03):** planned, nothing implemented and no code
-  changed. `docs/fps-plan.md` has the measurements (the console runs at
-  ~0.3-0.5 instructions per cycle, so stalls come before instruction
-  counts), the plan and, under "Picking this up", the prompt the executing
-  session starts from. Next: its step 0 (tools), then the probe build for
-  one console round.
-- **Open, in `docs/roadmap.md` "Known issues":** memory leak since v39
-  (~55 KB/min in 192 KB steps, `[BEAT]` free), long-uptime whole-system
-  freeze, Pokémon Stadium screen flicker (cause found; the first fix broke
-  Stage Clear), Peach's Castle Bullet Bill stuck + endless quake, Fire
-  Flower flame missing, Corneria Arwing cutscene silent, trophy lighting,
-  100-Man freeze (tester, v42; retest on RC2).
+- **Latest release: v3** (`.github/release-notes.md`). Releases are now
+  built with ThinLTO + PGO (`docs/toolchain.md` "Release", `docs/pgo.md`).
+- **On the console: v51**, a play build of `dev` after the frame-rate merge,
+  built as releases are (plain, `XBOX_LTO=1 XBOX_PGO=xbox/melee.profdata`).
+  Stage and map: `C:\xemu\hw\stage-v51`, `C:\xemu\hw\melee_x.v51.map`.
+- **Frame-rate work: done** (2026-10-03/04, `docs/fps-plan.md` "Outcome"):
+  Fountain of Dreams 4-CPU at 720p 32.0 -> 39.9 fps with the same picture
+  and simulation; ThinLTO + PGO +13%, the colour framebuffer's tile region
+  +11%, the rest from CPU work. Six console rounds, run as chains of test
+  builds (`tools/xbox/console_round.py`, `docs/testing.md` "Console
+  rounds"). Retrain the PGO profile after game or sdk changes.
+- **Open:** `docs/roadmap.md` "Known issues" and its numbered items (9:
+  silent after a crash until a power-off; 10: the simulation isn't
+  deterministic on the console).
 - **Merge gate** (user's rule): every subagent branch gets the main
-  session's code review plus before/after FBDUMP shots (gl vs the v43
-  baseline `~/xemu/mc/v43_00{1,2,3}.png`, and the scenes it touches) before
-  it goes on `dev`. Gate script and shot diff helper: see the session notes
-  in the agent memory; scenarios `res`, `clear`, `toy` are new.
+  session's code review plus before/after shots before it goes on `dev`:
+  lockstep shots (`env MX_LOCKSTEP=1`, `TSHOT`) byte for byte where the
+  picture must not change, `[SIMH]` equal where the simulation must not
+  (`docs/testing.md` "Comparing builds by screenshot"), and the scenes it
+  touches.
 - **Releases build on GitHub** (user's rule): the `build` workflow with a
   `release` tag builds, tests, packages and publishes (`docs/toolchain.md`
   "Release"). The repo stays private until the user says to make it public.

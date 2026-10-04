@@ -24,7 +24,8 @@ Read first: `docs/handoff.md` (current state, Windows setup, working notes),
 tools/xbox/docker/build.sh                        # -> build-xbox/xbe/default.xbe + build-xbox/melee_x.map
 XBOX_CFLAGS="-DXHW_PROF=1" tools/xbox/docker/build.sh   # extra platform flags (switch table: docs/testing.md)
 tools/xbox/msys/build.sh                          # Windows without Docker (MSYS2; docs/toolchain.md), same knobs
-# releases: GitHub Actions "build" workflow with a release tag (docs/toolchain.md "Release"), not local
+# releases: GitHub Actions "build" workflow with a release tag (docs/toolchain.md "Release"), not local;
+# they build with XBOX_LTO=1 XBOX_PGO=xbox/melee.profdata (docs/pgo.md: retrain after game/sdk changes)
 python3 tools/xbox/test_tex_convert.py            # host tests (tests/xbox/*.c)
 python3 tools/xbox/test_vp_encoder.py
 python3 tools/xbox/test_fog.py                    # GX fog math (nv2a_fog.c) vs GX's fog factor
@@ -32,6 +33,7 @@ python3 tools/xbox/test_rc.py                     # TEV -> combiners (nv2a_rc.c)
 python3 tools/xbox/test_card_endian.py            # card files: field tables vs GmSaveData, BE <-> native
 python3 tools/xbox/test_pool.py                   # nv2a.c texture/vertex pool allocator, random alloc/free
 python3 tools/xbox/test_anim_mtx.py               # fobj.c/mtx.c rewrites vs tests/xbox/anim_mtx_ref.c, bit for bit
+# also test_pobj_mtx, test_audio_mix, test_mplib, test_tex_cache, test_dl_cull (the CI list: .github/workflows/build.yml)
 python3 tools/lower/test_lower.py
 ```
 
@@ -60,7 +62,8 @@ Hardware: FTP at the console's IP (`MX_FTP_HOST`, `xbox`/`xbox`), deploy to `/F/
 `crash.log`, `hang.log`): `tools/xbox/console.py stage|deploy|pull vNN`. Keep each deployed build's `melee_x.map` in `~/xemu/hw/` (`MX_HW`) so
 `tools/xbox/sym.py` and `tools/xbox/prof_report.py` can symbolize its logs. Each boot deletes the previous
 boot's logs and `deploy` deletes them too: pull first. BACK screenshots and the counter are test-build only
-(`-DXHW_PROF=1`/`-DXHW_AUTOPAD=1`); a plain build is a release.
+(`-DXHW_PROF=1`/`-DXHW_AUTOPAD=1`); a plain build is a release. Many A/B runs in one launch:
+`tools/xbox/console_round.py` (docs/testing.md "Console rounds").
 
 ## Rules
 

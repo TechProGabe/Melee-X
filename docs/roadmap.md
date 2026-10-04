@@ -47,6 +47,9 @@
 
 ## Where it stands (2026-10-01, v36)
 
+(Frame rates since then: v3's release notes, and `docs/fps-plan.md`
+"Outcome" for the 2026-10-04 build, Fountain 4-CPU at 720p ~40 fps.)
+
 Fully playable on the console. Menus run at 60 fps; matches run 30-60
 fps depending on the stage and how busy it is, and the simulation keeps
 60 ticks a second (Melee runs extra ticks before a slow frame's render, so
@@ -396,8 +399,10 @@ Short; the details are in `renderer.md`, `platform.md` and `decisions.md`.
 
 ## Performance plan
 
-A match frame on the console is CPU-bound: the GPU waits are ~0 since v33.
-Melee renders once per frame and runs one simulation tick per pad poll
+Since the frame-rate work (2026-10-03/04, `docs/fps-plan.md` "Outcome":
+Fountain 4-CPU at 720p 32.0 -> 39.9 fps) a busy 720p match is limited by
+the CPU and the GPU about equally: the GPU is still busy at ~90% of frame
+starts (3.4 ms a frame waiting), the CPU spends ~22 ms. Melee renders once per frame and runs one simulation tick per pad poll
 since the last render (up to 5), so a cheaper tick pays twice (less time per
 tick, fewer ticks per render). Done, roughly by gain:
 
@@ -412,22 +417,26 @@ tick, fewer ticks per render). Done, roughly by gain:
   SSE, the fused envelope blend, no calls for idle animations, prefetches
   in the list walks (v34), the envelope-matrix memo (v35).
 
-The current plan, with the measurements behind it, is `docs/fps-plan.md`
-(2026-10-03). The older list:
+Then the frame-rate work (`docs/fps-plan.md`, its Status table per item):
+ThinLTO + PGO for releases, the colour framebuffer's tile region,
+function order, ARQ completion in line, the vertex-pool key, the audio
+mixer in SSE, exact line rejects in stage collision, `PObjSetupMtx`, GX
+front-end lookups.
 
-1. **Render pass** (~12 ms of a ~27 ms frame in v36): HSD's per-material
-   setup (`HSD_MObjSetup`, TEV/channel setters) and `PObjSetupMtx`. A
-   `-DXHW_PROF=1` round on the console first: `prof_report.py` with the
-   build's map and `.statics`.
-2. **Simulation**: stage collision (`mpLib_*`), `sinf`/`cosf` (memoize per
-   joint angle if a console count shows angles repeat), HSD animation.
-   Bit-identical only (`test_anim_mtx.py`).
-3. **Cache capacity**: more display-list slots or vertex pool (see above).
+Left, each to be measured in a console round (`docs/testing.md` "Console
+rounds"):
+
+1. **Render walk** (~9.6 ms a frame on Fountain at 720p): HSD's material
+   setup (`HSD_TExpSetupTev`, `HSD_TObjSetup`, `HSD_SetupChannelMode`;
+   their samples sit on the first reads of the material data, so a memo
+   doesn't remove them) and the scene walk (`HSD_DObjDisp`,
+   `HSD_JObjDispSub`).
+2. **GPU fill without a picture change**: the reflection pass (~4.4 ms of
+   the GPU's frame before the tile) and the shadow maps (~2.2 ms).
+3. **Simulation** (~4.9 ms a frame): `sinf`/`cosf`, HSD animation;
+   bit-identical only (`test_anim_mtx.py`).
 4. **Vertex-program loads**: capture `-DXGX_DEBUG_VPTRACE` on the console
-   and replay with `vp_policy.py`; let a program that writes more outputs
-   serve draws that read fewer.
-5. Smaller: `-ftrivial-auto-var-init-max-size` for large locals in hot code
-   (after checking which rely on the zeroing).
+   and replay with `vp_policy.py`.
 
 ## Future features
 
