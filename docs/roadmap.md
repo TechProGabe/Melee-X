@@ -29,7 +29,7 @@
 Fully playable on the console; the simulation keeps 60 ticks a second at
 any frame rate.
 
-v52 is `dev` ef52994 (local, not pushed), a test build (`-DXHW_PROF=1`,
+v52 is `dev` ef52994 (pushed), a test build (`-DXHW_PROF=1`,
 ThinLTO + PGO) on two consoles: red (192.168.158.113) and gold
 (192.168.158.125). Stage and map: `C:\xemu\hw\stage-v52`,
 `C:\xemu\hw\melee_x.v52.map`. It carries the frame-rate work (Fountain

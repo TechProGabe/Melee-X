@@ -10,7 +10,7 @@ Updated 2026-10-04 (Windows PC, v52).
 
 - **Latest release: v3** (`.github/release-notes.md`), built on GitHub with
   ThinLTO + PGO (`docs/toolchain.md` "Release").
-- **On both consoles: v52**, `dev` at ef52994 (local, not pushed): a test
+- **On both consoles: v52**, `dev` at ef52994 (pushed): a test
   build (`-DXHW_PROF=1`, LTO + PGO), stage `C:\xemu\hw\stage-v52`, map
   `melee_x.v52.map`. It adds the Stadium big-screen copy fix (roadmap
   item 3), the AC97 boot fix (item 9) and the full/unwritable E: handling
