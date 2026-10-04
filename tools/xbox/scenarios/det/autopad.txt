@@ -1,0 +1,10 @@
+# The determinism probe (docs/lan-plan.md phase 0A, roadmap item 10):
+# Fountain of Dreams, 4 CPUs, seed 1, 120 s, no shots. Two runs of one
+# build must log the same [SIMH] lines; on the console they part at tick
+# 4440-4500. Add env MX_RAND_TRACE=1 (and MX_RAND_DUMP=<a>-<b>) for the RNG
+# trace, env MX_JITTER=<seed> for timing jitter; tools/xbox/simh_diff.py.
+env MELEE_BOOT_SCENE=vs
+env MELEE_DEBUG_VS_STAGE=2
+env MELEE_DEBUG_VS=cpu4
+env MELEE_DEBUG_VS_TIME=120
+env MELEE_SEED=1

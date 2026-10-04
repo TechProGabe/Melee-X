@@ -89,6 +89,7 @@ void xsdk_frame_boundary(void) {
         xhw_perf_leave(pf);
     }
     next_ns += period;
+    xsdk_jitter(XSDK_JITTER_FRAME);   /* env MX_JITTER (test builds) */
 
     s_retrace++;
     xsdk_run_alarms();
@@ -102,13 +103,18 @@ void VIWaitForRetrace(void) { xsdk_frame_boundary(); }
 /* gmscene.c's frame loop (PORT: there) brackets its render pass with these,
  * so [PERF] tells simulation from rendering */
 static int s_render_prev = -1;
+static int s_in_render;   /* the RNG trace's "drawn during the render pass" (simhash.c) */
 
 void xsdk_perf_render_begin(int ticks) {
     xhw_perf_ticks((uint32_t)ticks);
     s_render_prev = xhw_perf_enter(XHW_PERF_RENDER);
+    s_in_render = 1;
 }
 
 void xsdk_perf_render_end(void) {
+    s_in_render = 0;
     if (s_render_prev >= 0) xhw_perf_leave(s_render_prev);
     s_render_prev = -1;
 }
+
+int xsdk_in_render(void) { return s_in_render; }

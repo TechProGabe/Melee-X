@@ -571,6 +571,87 @@ int xsdk_lockstep(void) {
 
 void xsdk_lockstep_advance(u32 ns) { s_lockstep_ns += ns; }
 
+/* env MX_JITTER=<seed> (test builds, docs/lan-plan.md phase 0A): a seeded
+ * delay of 0-2 ms at the frame boundary, in the mixer loop and in the DVD
+ * worker before a completion, each site with its own xorshift sequence. It
+ * moves what the console's timing moves (when a voice ends, when a read
+ * completes, how many ticks a render gets), so a real-time xemu run can show
+ * what only the console showed (roadmap item 10). */
+void xsdk_jitter(int site) {
+#if XHW_TEST_BUILD
+    static int seed = -1;
+    static uint32_t state[XSDK_JITTER_SITES];
+    uint32_t x, us;
+    uint64_t end;
+    if (seed <= 0) {
+        if (seed == 0) return;
+        {
+            const char* e = getenv("MX_JITTER");   /* read at boot: the script is loaded before any thread */
+            int s = e ? atoi(e) : 0;
+            if (s > 0) xhw_logf("[OS] jitter: seed %d, 0-2 ms at the frame boundary, mixer and DVD completions", s);
+            seed = s > 0 ? s : 0;
+        }
+        if (!seed) return;
+    }
+    if (site < 0 || site >= XSDK_JITTER_SITES) return;
+    x = state[site];
+    if (!x) x = (uint32_t)seed * 2654435761u ^ ((uint32_t)site + 1) * 40503u;
+    if (!x) x = 1;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    state[site] = x;
+    us = x % 2001;
+    if (us >= 1000) xhw_sleep_ms(us / 1000);
+    end = xhw_time_ns() + (uint64_t)(us % 1000) * 1000;
+    while (xhw_time_ns() < end) {}
+#else
+    (void)site;
+#endif
+}
+
+/* [NETM] (test builds; simhash.c calls it at a match's ticks 600 and 3600):
+ * what a snapshot of the game's heaps would have to copy (the cells in use
+ * of each OSAlloc heap, headers included), and 1 MB copied eight times
+ * between two cold buffers (xhw_sys.c): rollback's numbers,
+ * docs/lan-plan.md F5. Logging only; the copy costs a few tens of ms. */
+void xsdk_netm(unsigned tick) {
+#if XHW_TEST_BUILD
+    char line[600];
+    int len, i;
+    uint32_t live = 0, cells = 0, size = 0, mn, mean, mx;
+    BOOL intr = OSDisableInterrupts();
+    len = snprintf(line, sizeof line, "[NETM] tick %u: heap live/size KB (cells):", tick);
+    for (i = 0; i < s_num_heaps && len < (int)sizeof line - 40; i++) {
+        uint32_t b = 0, n = 0;
+        Cell* c;
+        if (s_heaps[i].size < 0) continue;
+        for (c = s_heaps[i].allocated; c; c = c->next) {
+            b += (uint32_t)c->size;
+            n++;
+        }
+        len += snprintf(line + len, sizeof line - len, " %d: %u/%u (%u)", i, (unsigned)(b / 1024),
+                        (unsigned)(s_heaps[i].size / 1024), (unsigned)n);
+        live += b;
+        cells += n;
+        size += (uint32_t)s_heaps[i].size;
+    }
+    OSRestoreInterrupts(intr);
+    snprintf(line + len, sizeof line - len, "; all %u of %u KB in %u cells", (unsigned)(live / 1024),
+             (unsigned)(size / 1024), (unsigned)cells);
+    xhw_log(line);
+    if (xhw_mem_copy_probe(1u << 20, 8, &mn, &mean, &mx))
+        xhw_logf("[NETM] tick %u: 1 MB copied 8 times between cold buffers: min %u us, mean %u us, max %u us "
+                 "(%u MB/s), free %u KB",
+                 tick, (unsigned)mn, (unsigned)mean, (unsigned)mx, mean ? (unsigned)(1000000u / mean) : 0u,
+                 (unsigned)xhw_mem_free_kb());
+    else
+        xhw_logf("[NETM] tick %u: no 2 MB for the copy test, free %u KB", tick, (unsigned)xhw_mem_free_kb());
+#else
+    (void)tick;
+#endif
+}
+
 OSTime OSGetTime(void) {
     uint64_t ns = xsdk_lockstep() ? s_lockstep_ns : xhw_time_ns() - s_ns_base;
     return s_time_base + (OSTime)(ns / 1000000000ull) * OS_TIMER_CLOCK +

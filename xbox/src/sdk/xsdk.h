@@ -15,6 +15,12 @@ void xsdk_card_dispatch(CARDCallback callback, s32 chan, s32 result);
 void xsdk_log_raw(const char* text);   /* log.c: no newline added */
 int xsdk_vsnprintf(char* out, size_t cap, const char* fmt, va_list ap);   /* log.c: vsnprintf with %f/%e/%g */
 int xsdk_snprintf(char* out, size_t cap, const char* fmt, ...);
+/* docs/lan-plan.md phase 0A, test builds (no-ops otherwise). env MX_JITTER=<seed>:
+ * a seeded 0-2 ms delay at each call, its own sequence per site */
+enum { XSDK_JITTER_MIXER, XSDK_JITTER_DVD, XSDK_JITTER_FRAME, XSDK_JITTER_SITES };
+void xsdk_jitter(int site);
+void xsdk_netm(unsigned tick);   /* [NETM]: live heap bytes, a timed 1 MB copy */
+int xsdk_in_render(void);        /* vi.c: 1 inside the frame loop's render pass */
 
 /* dvd.c */
 int xsdk_dvd_open(const char* path, char* why, size_t why_cap);

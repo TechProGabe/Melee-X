@@ -139,15 +139,42 @@ CHAINS[6] = [
     ('Melee-X-r6n', 'final', 'menu', {}),
     ('Melee-X-r6o', 'final', 'stall', {'MX_COPY_FIX': '7', 'MX_COPY_STRESS': '40'}),
 ]
+# round 7, console session S1 part 1 (docs/lan-plan.md phase 0A): one test
+# build (-DXHW_AUTOPAD=1). A warm-up; scenarios/det (Fountain, 4 CPUs, seed
+# 1, 120 s) six times with the RNG trace and the callers of ticks 4300-4700
+# dumped (roadmap item 10 parts at 4440-4500: simh_diff.py names the first
+# differing draw); the eight 1v1 scenarios (scenarios/v1-*) at 720p for
+# frames per second and ticks per render, three of them again at 480p; det
+# once at 480i (console B's mode, F9). [NETM] at ticks 600 and 3600 of each.
+# Afterwards: `report`, then
+#   tools/xbox/simh_diff.py $MX_HW/logs-r7/Melee-X-r7{b..g}.log --map <the build's map>
+TRACE = {'MX_RAND_TRACE': '1', 'MX_RAND_DUMP': '4300-4700'}
+V1 = ('fod', 'ps', 'ys', 'dl', 'bf', 'fd', 'corn', 'pc')
+CHAINS[7] = ([('Melee-X-r7a', 'lan0a', 'det', {'MX_VIDEO': '720'})]
+             + [(f'Melee-X-r7{chr(98 + i)}', 'lan0a', 'det', {**TRACE, 'MX_VIDEO': '720'}) for i in range(6)]
+             + [(f'Melee-X-r7{chr(104 + i)}', 'lan0a', f'v1-{s}', {'MX_VIDEO': '720'}) for i, s in enumerate(V1)]
+             + [(f'Melee-X-r7{chr(112 + i)}', 'lan0a', f'v1-{s}', {'MX_VIDEO': '480'})
+                for i, s in enumerate(('fod', 'ps', 'fd'))]
+             + [('Melee-X-r7s', 'lan0a', 'det', {**TRACE, 'MX_VIDEO': '480i'})])
 CHAIN = []   # main(): CHAINS[N]
+SCRIPTS = {'fod': FOD, 'fodlong': FODLONG, 'fd': FD, 'fodshot': FODSHOT, 'menu': MENU, 'stall': STALL}
+
+
+def scenario(scen):
+    """A scenario's lines: one above, or tools/xbox/scenarios/<scen>/autopad.txt
+    without its comments."""
+    if scen in SCRIPTS:
+        return SCRIPTS[scen]
+    text = (Path(__file__).resolve().parent / 'scenarios' / scen / 'autopad.txt').read_text()
+    return [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith('#')]
 
 
 def script(i):
     folder, build, scen, sw = CHAIN[i]
-    lines = [f'# docs/fps-plan.md round {ROUND}, run {i + 1} of {len(CHAIN)}: {build}, {scen}, '
+    plan = 'docs/lan-plan.md' if ROUND >= 7 else 'docs/fps-plan.md'
+    lines = [f'# {plan} round {ROUND}, run {i + 1} of {len(CHAIN)}: {build}, {scen}, '
              + (' '.join(f'{k}={v}' for k, v in sw.items()) or 'no switches')]
-    lines += {'fod': FOD, 'fodlong': FODLONG, 'fd': FD, 'fodshot': FODSHOT, 'menu': MENU,
-              'stall': STALL}[scen]
+    lines += scenario(scen)
     lines += [f'env {k}={v}' for k, v in sw.items()]
     if i + 1 < len(CHAIN):
         lines.append(f'env MX_NEXT_XBE=F:\\Applications\\{CHAIN[i + 1][0]}\\default.xbe')
@@ -319,6 +346,16 @@ def report():
               + (f' {gw[0]:5.0f} {gw[1]:5.2f} {gw[2]:5.2f}' if gw else ''))
     print('busy: frame starts (of 600) with the GPU still on the last frame; wait: ms a frame waiting there; '
           'flip: ms a frame waiting for the flip (C3)')
+    for folder, _, _, _ in CHAIN:   # [NETM] (round 7 on): live heap bytes and the 1 MB copy, per tick
+        p = LOGS / f'{folder}.log'
+        if not p.exists():
+            continue
+        text = p.read_text('utf-8', 'replace')
+        heap = dict(re.findall(r'\[NETM\] tick (\d+): heap .*?; (all \d+ of \d+ KB in \d+ cells)', text))
+        copy = dict(re.findall(r'\[NETM\] tick (\d+): 1 MB copied 8 times between cold buffers: (.*)', text))
+        if heap or copy:
+            print(f'{folder:12s} [NETM] ' + '; '.join(f'tick {t}: {heap.get(t, "-")}, copy {copy.get(t, "-")}'
+                                                      for t in sorted(set(heap) | set(copy), key=int)))
 
 
 def shots():

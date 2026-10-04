@@ -15,6 +15,9 @@
 #define RING_FRAMES 16384   /* xhw_audio.c's ring, in stereo frames */
 #define LEAD_FRAMES 1600    /* ~50 ms */
 
+enum { XSDK_JITTER_MIXER };   /* xsdk.h's site; that header brings the Dolphin SDK's */
+void xsdk_jitter(int site);
+
 struct SDL_AudioStream {
     SDL_AudioStreamCallback cb;
     void* user;
@@ -39,7 +42,9 @@ static void mixer(void* arg) {
     int ftz = 0;
 #endif
     while (__atomic_load_n(&s->run, __ATOMIC_ACQUIRE)) {
-        uint32_t q = queued_frames();
+        uint32_t q;
+        xsdk_jitter(XSDK_JITTER_MIXER);   /* env MX_JITTER (test builds): the mixer runs late */
+        q = queued_frames();
 #if defined(XHW_PMC) && XHW_PMC
         if (ftz != xhw_ablate(XHW_AB_FTZ)) xhw_set_ftz(ftz = !ftz);   /* the probe's window 1 */
         if (q < LEAD_FRAMES && xhw_ablate(XHW_AB_AUDIO)) {           /* window 6: silence, no mixing */

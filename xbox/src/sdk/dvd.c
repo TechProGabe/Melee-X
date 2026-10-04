@@ -254,6 +254,7 @@ static void worker(void* arg) {
         } else {
             res = img_read((u32)r.offset, r.addr, (u32)r.length) ? r.length : DVD_RESULT_FATAL_ERROR;
         }
+        xsdk_jitter(XSDK_JITTER_DVD);   /* env MX_JITTER (test builds): the read finishes later */
         {
             DVDCommandBlock* cb = r.fi ? &r.fi->cb : r.block;
             BOOL intr = OSDisableInterrupts();
