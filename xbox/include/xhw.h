@@ -216,6 +216,40 @@ void xhw_autopad_tick(uint32_t tick);         /* simhash.c: the match's tick, fo
 void xhw_quit_to_dashboard(void) __attribute__((noreturn));
 void xhw_reboot_self(void) __attribute__((noreturn));
 
+/* ---- network (xhw_net.c): nxdk's lwIP and NIC driver, started on demand ----
+ * Nothing runs until xhw_net_start: an offline boot never touches the NIC.
+ * Addresses are IPv4 in network byte order (a.b.c.d is a | b << 8 | ...),
+ * ports in host order. No lwIP type crosses this boundary. The layer keeps
+ * the network conduct rules (docs/lan-plan.md D11, D14; docs/platform.md
+ * "Network") whatever its caller does: IPv4 only, TTL 1, on-link peers
+ * only, at most 1200 bytes a datagram, broadcast only to
+ * 255.255.255.255:XHW_NET_DISCOVERY_PORT (two a second at most, under 200
+ * bytes), and a transmit ceiling per socket. */
+enum { XHW_NET_OFF, XHW_NET_NO_CABLE, XHW_NET_CONFIG, XHW_NET_UP, XHW_NET_FAILED,
+       XHW_NET_CONFLICT };           /* another host claims our address: none to use (lobby: "Address conflict") */
+int xhw_net_start(void);             /* lazy, returns at once (the state); a worker brings the link up */
+void xhw_net_pause(int on);          /* 1: NIC receive and transmit stopped (leaving the lobby), 0: on again */
+void xhw_net_shutdown(void);         /* every exit path, before XLaunchXBE: the NIC stopped and reset */
+int xhw_net_state(void);             /* XHW_NET_* */
+uint32_t xhw_net_ip(void);           /* 0 unless UP */
+uint32_t xhw_net_bcast(void);        /* the subnet's directed broadcast, 0 unless UP: recognised, never sent to */
+void xhw_net_ident(uint8_t mac[6], uint8_t serial[12]);   /* from the EEPROM; works with the NIC off */
+/* UDP: up to XHW_UDP_MAX sockets. Datagrams are copied into a ring per
+ * socket on lwIP's thread and taken out by recv; a full ring drops the new
+ * datagram (counted, [NET] udp ... dropped). Datagrams from our own
+ * address, 0.0.0.0, a broadcast or multicast source, port 0, or off the
+ * link never reach the ring. send refuses what the rules forbid and what
+ * the governor (250 datagrams and 256 KB a second, bursts of 32) holds
+ * back, both counted ([NET] tx ... lines). */
+#define XHW_UDP_MAX 4
+#define XHW_UDP_MAX_SEND 1200        /* D14 rule 7: nothing is ever fragmented */
+#define XHW_NET_DISCOVERY_PORT 41001 /* the one port broadcasts may go to (D14 rule 8) */
+int xhw_udp_open(uint16_t port);     /* handle, -1 (the stack isn't up yet, or no slot) */
+void xhw_udp_close(int h);
+int xhw_udp_send(int h, uint32_t ip, uint16_t port, const void* p, uint32_t n);   /* 1 sent, 0 not */
+int xhw_udp_recv(int h, void* p, uint32_t cap, uint32_t* ip, uint16_t* port);  /* bytes; -1: none */
+int xhw_udp_wait(int h, uint32_t ms);                                          /* 1: one is queued */
+
 #ifdef __cplusplus
 }
 #endif

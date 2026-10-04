@@ -18,6 +18,9 @@ tools/xbox/test_mplib.py         # stage collision's line rejects (mplib.c) vs t
 tools/xbox/test_pobj_mtx.py      # PObjSetupMtx (envelope memo, prefetches), SSE HSD_MtxInverseTranspose vs upstream
 tools/xbox/test_tex_cache.py     # gx_tex.c's texture cache and binds vs the file before the entry split: the same trace
 tools/xbox/test_dl_cull.py       # gx_dl_culled's box test with clip planes kept per projection vs planes per box
+tools/xbox/test_net_ring.py      # xhw_net.c's datagram ring: one writer, one reader, vs a model and in two threads, overruns
+tools/xbox/test_net_gov.py       # xhw_net.c's network conduct: the transmit governor, the broadcast window, the address filters vs a model
+tools/xbox/test_net_audit.py     # net_audit.py on hand-made captures: a clean one passes, one violation of each D14 rule is caught
 ```
 
 CI (`.github/workflows/build.yml`, started by hand; it also builds the
@@ -418,13 +421,94 @@ GObj that drew), and the display-list cache by owner, lists cached under a
 second key and the lists rebuilt most. `tools/xbox/census_report.py` sums
 them. The counts are the same on the console.
 
+## Network (LAN play groundwork, `docs/lan-plan.md` phase 0B)
+
+The network layer (`docs/platform.md` "Network") is started only by test
+builds' `env` switches until the LAN lobby exists. All of the PC-side tools
+bind one loopback or LAN address and refuse anything else; nothing here
+faces the internet.
+
+### Network probe in xemu (NAT)
+
+xemu's NAT back end gives the guest 10.0.2.15 by DHCP; the host is
+10.0.2.2. A copy of `C:\xemu\xemu.toml` (never the original) with
+
+```toml
+[net]
+enable = true
+backend = 'nat'
+
+[[net.nat.forward_ports]]
+host = 41011
+guest = 41001
+protocol = 'udp'
+```
+
+lets the PC's `tools/xbox/lan_probe.py` (default: `127.0.0.1:41002`,
+beacons to `127.0.0.1:41011`) be the probe's peer, and
+`tools/xbox/lan_logd.py` (default `127.0.0.1:41050`) take the log stream.
+Stage `scenarios/netprobe` (a 2-minute Final Destination match) plus
+`env MX_LOG_UDP=10.0.2.2:41050`, run `xemu_run.sh 260` with
+`MX_XEMU_ARGS="-config_path <the copy>"`, and read: `[NETP] link up after
+N ms`, `[NETP] dhcp 10.0.2.15 after N ms`, `[NETP] beacon from
+10.0.2.2:41002`, `[NETP] match running: pinging`, `[NETP] rtt 10.0.2.2...`
+and the `[BEAT]` lines after it; `lan_logd.py`'s `127.0.0.1.log` holds the
+same lines with the PC's times.
+
+### Two xemu instances
+
+`tools/xbox/xemu_pair.sh <scenario-a> <scenario-b> <secs> [stop-regex]`
+runs two instances (`MX_PAIR`, default `C:\xemu\b`: `run-a`, `run-b`,
+their own copies of the HDD image and EEPROM; B's EEPROM is made once by
+`tools/xbox/eeprom_mac.py` with a locally administered MAC). xemu's UDP
+back end joins them through `tools/xbox/xemu_tap.py`, which relays each
+Ethernet frame and writes `$MX_PAIR/pair.pcap`; no DHCP server is on that
+cable, so both take AutoIP addresses. The script starts exactly its two
+instances and the tap and stops only those. Then
+
+```sh
+python3 tools/xbox/net_audit.py C:/xemu/b/pair.pcap      # D14's rules, exit 1 on a violation
+```
+
+Two instances at once run each at roughly half speed on this PC; take no
+timing from a pair run. An offline boot in the pair (scenario A without
+`MX_NETPROBE`, e.g. `gg`) checks rule 1: `net_audit.py --silent <A's MAC>`
+must pass. `env MX_NETPROBE_FLOOD=1` on one side checks the governor:
+`[NET] tx governor dropped N` in its log, and `net_audit.py` (the ceiling,
+not `--normal`) clean.
+
+### Two consoles
+
+`tools/xbox/console2.py stage|deploy|pull|ls vNN [--only a|b]` is
+`console.py` for consoles A (`MX_FTP_HOST`) and B (`MX_FTP_HOST_B`;
+`MX_FTP_APP_B` if its XBE folder differs); logs go to `logsNN-a` and
+`logsNN-b`. Both run the same XBE (lan-plan D6). On the LAN the PC runs
+`lan_probe.py --bind <the PC's LAN address> --port 41001 --to
+255.255.255.255:41001 --ping` and `lan_logd.py --bind <the PC's LAN
+address> --out <folder>` (Windows may ask to let Python through its
+firewall), the consoles' scripts carry `env MX_LOG_UDP=<the PC's
+address>:41050`, and the user captures with Windows' own `pktmon` in an
+administrator prompt:
+
+```bat
+pktmon start --capture --comp nics --pkt-size 0 -f C:\xemu\hw\lan.etl
+rem ... the run ...
+pktmon stop
+pktmon etl2pcap C:\xemu\hw\lan.etl --out C:\xemu\hw\lan.pcapng
+```
+
+then `net_audit.py C:/xemu/hw/lan.pcapng` (pktmon sees the PC's own
+traffic, broadcasts, ARP, DHCP and the consoles' traffic to the PC, not
+console-to-console unicast on a switch; `net_audit.py` drops the copies
+pktmon logs of one packet).
+
 ## Logs
 
 Everything is written to `E:\UDATA\4d580001\` (the title ID is `4d580001`):
 
 | file | contents |
 |---|---|
-| `boot.log` | the log's first 4 MB; after that it goes on in `boot2.log` and `boot3.log` in turn, each restarted at 2 MB, so the newest 2-4 MB before a late hang survive (all three are deleted at boot). Every line is flushed to disk during the first 600 frames; after that urgent lines (`[SCENE]` `[GAME]` `[MEM]` `[CARD]` `[WDOG]` `[NV2A] GPU`/`flip` `[TEX] drop` `[FATAL]` `[CRASH]` `[BOOT]` `[WARN]`) at once and the rest within a second (the watchdog thread flushes what is pending every second). Tags: `[BOOT]` `[MEM]` `[OS]` `[DVD]` `[NV2A]` `[PAD]` `[AUDIO]` `[CARD]` `[SCENE]` `[GAME]` `[BEAT]` |
+| `boot.log` | the log's first 4 MB; after that it goes on in `boot2.log` and `boot3.log` in turn, each restarted at 2 MB, so the newest 2-4 MB before a late hang survive (all three are deleted at boot). Every line is flushed to disk during the first 600 frames; after that urgent lines (`[SCENE]` `[GAME]` `[MEM]` `[CARD]` `[WDOG]` `[NV2A] GPU`/`flip` `[TEX] drop` `[FATAL]` `[CRASH]` `[BOOT]` `[WARN]`) at once and the rest within a second (the watchdog thread flushes what is pending every second). Tags: `[BOOT]` `[MEM]` `[OS]` `[DVD]` `[NV2A]` `[PAD]` `[AUDIO]` `[CARD]` `[SCENE]` `[GAME]` `[BEAT]`; with the network started (test builds) `[NET]` `[NETP]` |
 | `trace.log` | the `[DRAW]` lines of a `-DXGX_DEBUG_TRACE` build (COM1 still gets them), restarted at 64 MB |
 | `hang.log` | written by the watchdog: the log tail and a dump of every thread (also appended to `boot.log`) |
 | `crash.log` | written on a CPU exception: the last log lines, the fault, registers, XBE addresses found on the stack |
@@ -598,6 +682,9 @@ report.
 | `XBOX_FORCE=1 tools/xbox/compile_game.py` | rebuild every game unit |
 | `XBOX_KEEP_TEMPS=1` | keep the `.i` / `.lowered.c` intermediates |
 | `XBOX_CFLAGS`, `XBOX_CMAKE_ARGS`, `XBOX_NINJA_ARGS` | passed through by `xbox/build.sh`; `XBOX_CFLAGS` sets the platform's C flags |
+| `env MX_NETPROBE=1` | (autopad script, test builds) the network probe at boot (`xhw_netprobe.c`, "Network" above): starts the network, logs link and address times, beacons on UDP 41001, pings the peers it hears 60 times a second for 60 s once a match runs (`[NETP]` lines); `scenarios/netprobe`. Without it (and without `MX_LOG_UDP`) the NIC is never started |
+| `env MX_NETPROBE_FLOOD=1` | (with `MX_NETPROBE=1`) the probe tries 2000 datagrams a second at the first peer it hears, for 10 s: the transmit governor's test (`[NET] tx governor dropped N`, `[NETP] flood: tried N, sent M`) |
+| `env MX_LOG_UDP=<ip>:<port>` | (autopad script, test builds) every log line also goes as a UDP datagram from port 41050 to that address once the network is up (`tools/xbox/lan_logd.py`; in xemu's NAT `10.0.2.2:41050`) |
 
 ## Straight into a match
 

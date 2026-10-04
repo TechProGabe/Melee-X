@@ -119,6 +119,10 @@ target_include_directories(mx_hw PRIVATE
 target_compile_definitions(mx_hw PRIVATE XBOX "USBH_USE_EXTERNAL_CONFIG=\"usbh_config_xbox.h\"")
 target_compile_options(mx_hw PRIVATE -O2 -march=pentium3 -ffunction-sections -Wall -Wno-unused-function
     "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/include/xbuiltin.h")
+# xhw_net.c alone sees nxdk's lwIP and NIC driver headers, the ones
+# libnxdk_net.lib was built with (docs/lan-plan.md D11)
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/hw/xhw_net.c PROPERTIES INCLUDE_DIRECTORIES
+    "${NXDK_DIR}/lib/net/lwip/src/include;${NXDK_DIR}/lib/net/nforceif/include;${NXDK_DIR}/lib/net/nvnetdrv")
 # the string routines must not be recognised as themselves (xhw_string.c)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/hw/xhw_string.c PROPERTIES
     COMPILE_OPTIONS "-fno-builtin;-ffreestanding" COMPILE_DEFINITIONS XBUILTIN_OFF)
@@ -134,6 +138,9 @@ target_link_libraries(melee_x
     mx_pbkit
     ${NXDK_DIR}/lib/libSDL2.lib
     ${NXDK_DIR}/lib/libzlib.lib
+    # lwIP 2.2.1 + nvnetdrv (docs/lan-plan.md D11): only what xhw_net.c
+    # reaches is linked, and none of it runs until the network is started
+    ${NXDK_DIR}/lib/libnxdk_net.lib
     ${NXDK_DIR}/lib/libnxdk_automount_d.lib)
 # The game objects come from outside CMake; the response file lists them.
 target_link_options(melee_x PRIVATE

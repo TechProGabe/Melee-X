@@ -482,6 +482,73 @@ kernel's own framebuffer (the crash, hang and error screens) is outside
 tile 0. Not yet run on the console at 480p, where tile 0's pitch (2560)
 also matches and the tile is on too.
 
+### Network layer (LAN plan phase 0B, 2026-10-04)
+
+`docs/lan-plan.md` D3, D11 and D14 as built (`xhw_net.c`,
+`docs/platform.md` "Network"). No imported code changed.
+
+- **nxdk's prebuilt `libnxdk_net.lib`, driven directly** (D11): no
+  `nxNetInit` (it blocks up to 10 s and has no AutoIP). A worker thread
+  does `tcpip_init`, `netifapi_netif_add(nvnetif_init)`, then the address;
+  lwIP's raw UDP API under `LOCK_TCPIP_CORE`; received datagrams copied on
+  lwIP's thread into a lock-free ring per socket (one writer, one reader;
+  `test_net_ring.py`). lwIP's thread gets priority +1 from inside a
+  `tcpip_init` callback (`sys_thread_new` ignores lwIP's). Only `xhw_net.c`
+  sees lwIP's headers.
+- **Started only on demand.** Nothing calls `xhw_net_start` but the test
+  builds' `env MX_NETPROBE`/`MX_LOG_UDP`, until the lobby does (phase 3); an
+  offline boot leaves the NIC untouched (D14 rule 1). `xhw_net_shutdown`
+  is in `xhw_quit_to_dashboard` and in the one function every `XLaunchXBE`
+  goes through (`launch` in `xhw_main.c`).
+- **Address** (D3, D14 rules 3-5): a manual address from the configuration
+  sector gets an ACD check of our own first (`acd_add`/`acd_start`; lwIP
+  checks only the addresses DHCP and AutoIP pick), and a conflict leaves
+  it unused until the next link up. Otherwise DHCP, and AutoIP when 4 s
+  after the link came up DHCP has no offer in hand: an offer still under
+  its ACD check (6-10 s in lwIP 2.2, RFC 5227's timing) counts as a lease
+  on its way, so the two don't race. Two lwIP 2.2.1 behaviours are worked
+  around: `autoip_stop` leaves the AutoIP ACD running, which then binds the
+  link-local address over a DHCP lease (seen in xemu: the first NAT run
+  went 10.0.2.15 -> 169.254.25.13), so the worker stops that ACD first, and
+  puts the lease's address back if it ever happens; and
+  `dhcp_supplied_address` looks only at DHCP's state, so "DHCP" also needs
+  the interface to hold the offered address. A link change the poll sees
+  goes to lwIP as well (`netif_set_link_up` does `dhcp_network_changed`,
+  INIT-REBOOT; a no-op when the driver's own callback already did it).
+- **Conflicts** (rule 3) are lwIP's ACD's to resolve (decline, re-pick,
+  defend once, RFC 5227 §2.4 b); the worker watches DHCP's back-off state,
+  AutoIP's try count and the ACD modules' `lastconflict`, logs `[NET]
+  address conflict (...)` and reports `XHW_NET_CONFLICT` for 10 s, with no
+  address handed out meanwhile.
+- **IPv4 only** (rule 6). Leaving IPv6 unconfigured is not enough with
+  this lwIP: on link up `nd6_restart_netif` arms router solicitations, and a
+  router advertisement then makes `nd6_input` send one (`nd6.c:604`), from
+  `::`, though the interface has no IPv6 address. The interface's input
+  function is ours (`net_input`, between the driver and `tcpip_input`) and
+  drops IPv6 and multicast frames before lwIP sees them; IPv6
+  autoconfiguration is off too.
+- **Conduct below the caller** (rules 7-10): TTL 1 on every socket;
+  `xhw_udp_send` refuses over 1200 bytes, no address, port 0, our own,
+  loopback, multicast, off-link or directed-broadcast destinations,
+  broadcasts other than to 255.255.255.255:41001 or of 200 bytes or more,
+  and a third broadcast within a second; then the governor (two token
+  buckets per socket: 250 datagrams and 262144 bytes a second, 32
+  datagrams' and 32 x 1200 bytes' burst). Received datagrams from our own
+  address, 0.0.0.0/8, a broadcast or multicast source, port 0 or off the
+  link are dropped on lwIP's thread before the ring. All are pure
+  functions (`conduct_rx`, `conduct_tx`, `gov_take`, `gov_bcast`) checked
+  against a model by `test_net_gov.py`; refusals are counted and logged
+  once a second per socket at most, never from lwIP's thread.
+- **Test tools.** `MX_LOG_UDP`'s socket is UDP 41050 on both ends (the
+  same-port rule; in the registry's free 40854-41110), paced to 200 lines
+  a second. `xemu_tap.py` relays the pair's UDP tunnels and writes a pcap;
+  `net_audit.py` checks D14 on any capture (`test_net_audit.py`: a clean
+  hand-made capture passes, one violation of each rule is caught). The
+  second xemu EEPROM gets a locally administered MAC (rule 2).
+- `xhw_autopad.c` gained `xhw_autopad_match_tick()` (the probe pings only
+  while a match runs); `xhw_sys.c` a log tee (`xhw_log_tee`, called under
+  the log lock).
+
 ## Edits to imported code
 
 Imported files are kept as they are upstream except for these edits, each

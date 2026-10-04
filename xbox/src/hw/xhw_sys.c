@@ -202,6 +202,18 @@ void xhw_log_sync(void) {
     LeaveCriticalSection(&s_log_cs);
 }
 
+/* env MX_LOG_UDP (test builds, xhw_net.c): each line also goes out as a
+ * datagram. Called under the log lock only, so the tee has one writer at a
+ * time. */
+void (*volatile xhw_log_tee)(const char* line, size_t n);
+
+static void log_tee(const char* s, size_t n) {
+    void (*tee)(const char*, size_t) = xhw_log_tee;
+    if (!tee) return;
+    while (n && (s[n - 1] == '\n' || s[n - 1] == '\r')) n--;
+    if (n) tee(s, n);
+}
+
 /* A line from a thread that must not block on the log lock (the watchdog):
  * waits up to ~0.5 s for it, then writes anyway. A thread stuck holding the
  * lock is exactly the case the report is for; an interleaved line is the
@@ -214,6 +226,7 @@ static int log_try(const char* line, int com1) {
     s_log_no_com1 = !com1;
     log_write_locked(line, n);
     if (n == 0 || line[n - 1] != '\n') log_write_locked("\n", 1);
+    if (locked) log_tee(line, n);
     s_log_no_com1 = 0;
     log_flush_locked();
     if (locked) LeaveCriticalSection(&s_log_cs);
@@ -249,6 +262,7 @@ static void log_write(const char* s, size_t n, int newline) {
     s_log_trace = n >= 6 && memcmp(s, "[DRAW]", 6) == 0;
     log_write_locked(s, n);
     if (newline && (n == 0 || s[n - 1] != '\n')) log_write_locked("\n", 1);
+    if (!s_log_trace) log_tee(s, n);
     s_log_trace = 0;
     LeaveCriticalSection(&s_log_cs);
 }

@@ -192,6 +192,14 @@ structs with the game (the Dolphin SDK implementation) are compiled with the
 game triple; files that talk to the kernel, pbkit or USB use nxdk's own and
 expose only scalars and pointers to the rest.
 
+The link takes nxdk's prebuilt `lib/libnxdk_net.lib` (lwIP 2.2.1 and the
+NIC driver, built by nxdk's own `make`, so every setup above has it) for
+`xbox/src/hw/xhw_net.c`, which alone gets lwIP's include folders
+(`lib/net/lwip/src/include`, `lib/net/nforceif/include`,
+`lib/net/nvnetdrv`: the ones the library was built with). The linker keeps
+only what `xhw_net.c` reaches (~250 KB). Rebuilding lwIP with options of
+our own is not planned (`docs/lan-plan.md` D11 says when it would be).
+
 ## CI
 
 The workflow runs only when started by hand (`workflow_dispatch`); test
