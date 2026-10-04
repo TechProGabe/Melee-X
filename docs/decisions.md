@@ -434,6 +434,20 @@ per frame boundary, plus 1 ms steps while the frame loop waits for a pad
 sample (otherwise that wait, which comes before the frame boundary, would
 never end). Test builds only, through the autopad script.
 
+**Tile regions are a switch until the console decides (`XGX_TILE`, `env
+MX_TILE=`).** Round 3 put the GPU's frame at ~30 ms on Fountain of Dreams
+at 720p, at least 9 ms of it fill, and the user takes no picture trades.
+Tile regions and Z compression change memory layout only. pbkit already
+puts the framebuffers in tile 0 and the depth buffer in compressed tile 1,
+but by envytools', nouveau's and xemu's register layout tile 0 lacks its
+enable bit, and the Z16 buffer's compression word says Z24S8
+(`renderer.md` "Tile regions"). Which is right on the NV2A is not
+documented anywhere at hand, and xemu ignores tiles, so `tiles_setup`
+re-programs them after `pb_init` from a bit mask (default 0, pbkit's
+setup) and logs all eight regions at boot; a console A/B of fps and shots
+picks the default. It supersedes the build-time `OCX_Z16_TILE_FLAGS`
+A/B for the format bit (bit 1), which never ran.
+
 ## Edits to imported code
 
 Imported files are kept as they are upstream except for these edits, each
