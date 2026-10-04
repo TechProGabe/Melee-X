@@ -349,6 +349,25 @@ switch and `scenarios/stall` stay for the next copy-related stall: an
 autopad test build reads its `env` lines, so variants are swapped over FTP
 (`docs/testing.md`) without a rebuild.
 
+**EFB copies outlive the idle release (after v51).** Textures unused for
+600 frames are released; EFB copies were too. Pokémon Stadium's big screen
+binds its copy's destination before the frame's copy, so back on the
+fight camera or the close-up after ~10 s of other views it got an upload
+of the destination's memory, which the GPU copy never writes: a frame of
+garbage (black in xemu) where the GameCube shows the copy still in
+memory. Copies now stay until evicted, replaced or a scene change finds
+them idle (Stage Clear's freeze frame, a copy in use, still crosses the
+scene change); an idle copy binds only as the size it was copied at, so
+memory reused for a texture of another size isn't hidden behind it. The
+first try (drop a copy when a sampled hash of its destination changed)
+broke the Stage Clear freeze frame, whose destination changes after the
+copy. A full pool evicts the least recently used entry, which an idle
+copy then was (xemu lost the screen's copy that way at a transformation):
+a destination copied to again (the screen, shadow maps) now counts as
+3600 frames younger instead of 60, so re-uploadable textures go first;
+the attract demo's copies, a new destination each frame, still go as
+before.
+
 **The AC97 is left idle before a relaunch (after v47).** The settings
 menu's Save and restart (and quitting to the dashboard) relaunch through
 `XLaunchXBE`. `xhw_audio_shutdown` cleared the run bit after a 10 ms sleep

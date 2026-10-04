@@ -90,10 +90,11 @@ Fix order after RC2 (2026-10-02), details in the entries below:
    log each minute, run 15-20 min in xemu, find what grows.
 2. Long-uptime whole-system freeze: check whether it follows the leak
    (free memory at the freeze, v39 had no leak and froze at ~82 min).
-3. Pokémon Stadium flicker on the fight-camera switch: keep EFB copies
-   past the idle release without the hash test (the first try,
-   `~/xemu/tools/stadium-copy-lifetime.patch`, broke Stage Clear);
-   check `scenarios/clear`, `ps2` (>40 s) and the texture pool.
+3. Pokémon Stadium flicker on the fight-camera switch: EFB copies are
+   kept past the idle release on `fix-stadium-tex` (decisions.md "EFB
+   copies outlive the idle release"); to check on the console: the
+   screen going back to the fight camera or the close-up mid-match,
+   `scenarios/clear`, and the texture pool.
 4. Peach's Castle Bullet Bill stuck + endless quake.
 5. Particles not drawn (all of them, not only the Fire Flower's); Adventure Corneria Arwing cutscene
    silent with Falco's face frozen; trophy transition lighting.
@@ -154,6 +155,25 @@ Fix order after RC2 (2026-10-02), details in the entries below:
    [SIMH] and the other shots the same; never seen in xemu or the rounds
    before. To do: repeat the 720p lockstep shot run a few times and see
    whether a speck comes back, and where.
+11. 720p (Z16) depth is coarser than the GameCube's (user, 2026-10-04,
+   v51 shots in `C:\xemu\hw\logs-stadium-tex`): Pokémon Stadium's red
+   lights on the big screen's frame show as slivers and the side
+   platforms' red stripes and yellow marks break up. The lights
+   (`GrPs.usd`, map gobj 1, joint 1, the first DObj: vertex-coloured
+   arrowheads) stand 0.25 units in front of the frame face, which is drawn
+   after them with LEQUAL. With the remap's near plane at far / 4096
+   (4 units, match camera 0.1..16384) a Z16 step is D^2 / 262144, ~0.5-0.7
+   units at the screen (D ~350-420); the GameCube's Z24 with near 0.1 has
+   ~0.07-0.1. Matching it needs the effective near at ~26 units
+   (`XGX_Z16_DEPTH_RATIO` 640), which the pause camera's close-ups and
+   anything nearer would lose. 480 (Z24) is right (xemu shots
+   `C:\xemu\run-tex\b32` vs `base16`). Ways out, none small: a per-frame
+   near plane from what was drawn (gx_dl_culled's view-space boxes, the
+   skinned joints' matrices, a margin; one frame late), reversed float Z16
+   (CONTROL0 Z format float: depth functions, clears and the Z-texture
+   mask flipped and encoded; xemu doesn't model it, console only), or
+   Z24S8 with 32-bit colour at 720p (+7 MB; the v51 log's free memory
+   fell to ~3.4 MB).
 
 - Fixed on dev: the v1 release hung on the intro movie (GitHub #5, #6,
   reddit), at any video mode. `xgx_present` called pbkit's `pb_finished`
