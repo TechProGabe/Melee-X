@@ -811,7 +811,13 @@ Dolphin:
   texture drawn this frame only goes when nothing older is left. EFB copies
   are evicted too (a stale one would otherwise pin the pool: the attract demo
   copies to a new address every frame), but among the older entries they
-  count as 60 frames younger, since they can't be rebuilt from memory. When
+  count as 60 frames younger, since they can't be rebuilt from memory. The
+  idle release (textures unused for 600 frames) skips EFB copies: Pokémon
+  Stadium's screen binds a copy's destination before that frame's copy,
+  and after ~10 s on other views got an upload of memory the copy never
+  wrote. An idle copy binds only as the size it was copied at and goes at
+  the next scene change, and a destination copied to again counts as 3600
+  frames younger for eviction (`decisions.md`). When
   nothing is left to evict the texture is dropped for that draw (drawn
   untextured, usually black) instead of waiting forever. Drops are counted
   in the `[TEX]` line, the first of each interval gets a `[TEX] drop:` line
