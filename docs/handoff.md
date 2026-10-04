@@ -46,9 +46,13 @@ first) and a `HANDOFF-*.md` with what's verified and next; worktrees under
 | `lan-0a-probes` | 08c7598 | phase 0A: RNG trace, `MX_JITTER`, `[NETM]`, `simh_diff.py`, round 7 (`C:\xemu\hw\stage-r7`), scenarios `det`, `v1-*` | G0 on gl passes; `det` under `-icount` parts at tick 4447 (item 10 in xemu); left: jitter runs, final G0, the S1 hand-over |
 | `lan-0b-net` | 3e91404 | phase 0B: `xhw_net.c` (D14 below every caller), probes, pair/tap tools, host tests `test_net_*` | host tests pass; +248 KB; xemu NAT DHCP works, rtt 0 replies (open decision); left: pair, tap, flood, relaunch, G0 |
 
-Two xemu instances may run at once: take `mkdir C:/xemu/xemu.lock.1` (or
-`.2`), use your own `MX_RUN`, kill only your own PID (runners that
-`taskkill` every xemu are single-slot only).
+Any number of xemu instances may run while the PC has headroom (user,
+2026-10-04): `slot=$(/c/xemu/slot.sh take)` waits for CPU < 85% and > 4 GB
+free RAM and takes `C:/xemu/xemu.lock.N`; `slot.sh give $slot` after. Run
+with `-config_path C:/xemu/slots/$slot/xemu.toml`: the slot's own HDD and
+EEPROM copies (two xemu can't open one qcow2; the second exits at once). Use
+your own `MX_RUN`, kill only your own PID (runners that `taskkill` every
+xemu are for a machine with no other runs).
 
 ## Pitfalls on this PC
 
@@ -126,8 +130,9 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
   user plays and presses BACK (test builds) for screenshots. Deploy test
   builds whenever the user says the Xbox is on. Ask for BACK shots rather
   than descriptions.
-- **At most two xemu instances** (lock slots above). More starve the CPU
-  and slow loads trip the watchdog's "frames stopped" (not hangs). Call a
+- **xemu under load** (slots above): a starved instance loads slowly and
+  trips the watchdog's "frames stopped" (not hangs), and its timing means
+  nothing for the console. Call a
   hang only when `[BEAT]`'s retrace count stops for minutes. xemu also
   locks up now and then on its own; rerun before suspecting the build.
   xemu's 16-bit Stadium frames differ by a few pixels run to run: compare
