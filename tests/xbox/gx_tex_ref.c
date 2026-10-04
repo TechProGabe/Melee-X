@@ -1,4 +1,9 @@
-/* gx_tex.c - GX texture objects, TLUTs, and the decoded-texture cache.
+/* gx_tex_ref.c - reference for tools/xbox/test_tex_cache.py: xbox/src/sdk/gx/gx_tex.c
+ * as it was before the cache entries were split hot/cold and the bind path
+ * lost its second bind_unchanged(), its memcmp calls and the eager
+ * GXGetTexBufferSize (8984547). Not built into the game.
+ *
+ * gx_tex.c - GX texture objects, TLUTs, and the decoded-texture cache.
  *
  * GameCube textures are tiled big-endian blocks in one of eleven formats.
  * They are converted once (to DXT1, AY8, A8Y8 or RGB565 when the NV2A can
