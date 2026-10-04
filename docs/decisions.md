@@ -403,7 +403,7 @@ Console round 1 (`docs/fps-plan.md` "Console round 1") picked three
 changes against the console's stalls, off by default and switched on per
 boot from the autopad script so round 2 measured them in one deploy
 (`docs/fps-plan.md` "Console round 2"); none changes what is simulated or
-drawn. Only B2 remains.
+drawn. None of them stayed.
 
 **The back end does not run deferred (B4, tried and removed).** A queue of
 draw records (the state groups each draw's dirty bits name) replayed in
@@ -413,16 +413,11 @@ back end off, made the walk 15% faster per draw). On the console it lost 6%
 (round 2, r2d): the copies into and out of the records cost 3 ms a frame
 and saved 0.7 ms of drawing.
 
-**MEM1 can sit on 4 MB pages (B2, `XSDK_MEM1_LARGE`, `env MX_MEM1_LARGE=6`).**
-The P3's data TLB covers 256 KB with 4 KB pages; MEM1's two ranges a 4-CPU
-match fills completely (0x10400000-0x10BFFFFF, round 1's `[MEM] lazy`) get
-one 4 MB page each: contiguous memory from the kernel written into the
-page directory through its self-map at `OSInit`, before anything there is
-committed. The kernel maps with 4 KB pages only and is never told: nothing
-in those ranges is committed or decommitted through it, file reads into
-them go through a bounce buffer (`xhw_file_read`), and the entries are
-removed before `XLaunchXBE`. The P6 cannot count DTLB misses, so only the
-console A/B decides.
+**MEM1 is not on 4 MB pages (B2, tried and removed).** The two 4 MB ranges
+a 4-CPU match fills, each on one 4 MB page written into the page directory
+through its self-map (the P3's data TLB covers 256 KB with 4 KB pages).
+Round 2 measured +1.7%, round 3 twice nothing (36.31 and 35.77 against
+36.18), and the kernel never knew of those pages: not worth the risk.
 
 **Animation walks are not prefetched by plan (B3, tried and removed).** A
 side table per tree root of the nodes the last walk visited and the

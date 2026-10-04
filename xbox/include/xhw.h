@@ -114,11 +114,6 @@ void xhw_lazy_log_map(void);   /* [MEM] lazy: committed chunks per 4 MB range */
 void xhw_lazy_set_fill(const void* base, void (*fill)(void* chunk));
 int xhw_lazy_is_committed(const void* p);
 void xhw_lazy_decommit(void* chunk);
-/* One 4 MB page for the 4 MB of a lazy region at va (4 MB aligned, nothing
- * committed there yet): committed from then on (docs/fps-plan.md B2). 1 if
- * done. xhw_lazy_large_release takes them out before leaving the game. */
-int xhw_lazy_large(uintptr_t va);
-void xhw_lazy_large_release(void);
 uint32_t xhw_mem_free_kb(void);
 /* 128 MB consoles: takes the RAM above 64 MB for good, so the game and the
  * kernel run in the low 64 MB as on a stock console (settings.ini
