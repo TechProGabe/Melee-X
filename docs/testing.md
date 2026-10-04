@@ -150,10 +150,10 @@ in xemu and on the console.
 Two test consoles on the LAN, FTP login `xbox`/`xbox`, address in
 `MX_FTP_HOST`:
 
-| console | address | game folder |
+| console | drives | game folder |
 |---|---|---|
-| red | 192.168.158.113 | `F:\Applications\Melee-X` (`console.py` and `console_round.py` work as is) |
-| gold | 192.168.158.125, softmod, no F: | `E:\Applications\Melee-X`: `console.py deploy` targets F:, so upload `default.xbe`/`default.tbn` by FTP to `/E/Applications/Melee-X/` (`pull` works) |
+| red | F: | `F:\Applications\Melee-X` (`console.py` and `console_round.py` work as is) |
+| gold | softmod, no F: | `E:\Applications\Melee-X`: `console.py deploy` targets F:, so upload `default.xbe`/`default.tbn` by FTP to `/E/Applications/Melee-X/` (`pull` works) |
 
 The FTP server is UnleashX's: `LIST` ignores a path argument (CWD first),
 and the 220 banner shows each drive's free space. Test builds without an

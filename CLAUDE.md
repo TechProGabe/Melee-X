@@ -57,9 +57,9 @@ Standard smoke/perf run: `XBOX_CFLAGS=-DXHW_AUTOPAD=1` build, `MX_STAGE_EXTRA=to
 read `[PERF]`/`[NV2A]`/`[DLC]` and compare the shots with the last good run
 (docs/testing.md "Performance runs in xemu"). The performance plan is in docs/roadmap.md.
 
-Hardware: two test consoles on the LAN, FTP `xbox`/`xbox` (`MX_FTP_HOST`). **red** = 192.168.158.113,
-game in `/F/Applications/Melee-X/`: `tools/xbox/console.py stage|deploy|pull vNN` works. **gold** =
-192.168.158.125, softmod, no F:, game in `/E/Applications/Melee-X/`: `console.py deploy` targets F:, so
+Hardware: two test consoles on the LAN, FTP `xbox`/`xbox` (`MX_FTP_HOST`; the addresses are kept off the repo). **red**,
+game in `/F/Applications/Melee-X/`: `tools/xbox/console.py stage|deploy|pull vNN` works. **gold**:
+softmod, no F:, game in `/E/Applications/Melee-X/`: `console.py deploy` targets F:, so
 deploy gold by FTP to that folder (`pull` works). The FTP server is UnleashX's: LIST ignores a path
 argument (CWD first), and the 220 banner shows each drive's free space. Deploy = `default.xbe` and
 `default.tbn` (the dashboard icon) next to the disc image; `TitleImage.xbx` and `TitleMeta.xbx` to
