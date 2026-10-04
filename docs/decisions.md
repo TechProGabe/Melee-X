@@ -86,11 +86,14 @@ is; a 64 KB chunk wholly on the disc is decommitted, ARAM -> MEM1 transfers
 read the image, and a CPU touch faults and refills the chunk
 (`xhw_lazy_set_fill`). Numbers: `architecture.md`.
 
-**128 MB consoles run in 64 MB by default.** The early mid-match GPU stalls
+**128 MB consoles always run in 64 MB.** The early mid-match GPU stalls
 came from a 128 MB console, and every test machine has 64 MB:
-`xhw_mem_hold_upper` takes the RAM above 64 MB at boot. `[system] ram128 =
-1` skips that, only where the kernel counts more than 64 MB. Untested in
-xemu (a stock BIOS reports 64 MB).
+`xhw_mem_hold_upper` takes the RAM above 64 MB at every boot, first thing
+in `xsdk_early`. Up to v52 `[system] ram128 = 1` skipped that; v53 drops
+the setting and its menu row (user's call, 2026-10-02): the game's 64 MB
+budget gains nothing from more RAM, and one memory layout is one less
+thing to rule out in a report. Old files' `ram128` lines are ignored and
+not written again. Untested in xemu (a stock BIOS reports 64 MB).
 
 **Our own memcpy, memmove, memset and memcmp** (`xhw_string.c`, 32 bits at
 a time; pdclib's byte loops were ~40% of a VS frame), and **disc image
@@ -231,7 +234,7 @@ title opens it (`menu.c`, `platform.md`). A page in Melee's Options menu
 would mean new model data and many imported-code edits; the title is one
 scene, so one `PORT:` hook freezes it while the menu is up. The text is CPU
 writes into the finished frame (`xhw_overlay.c`): no GPU state, the same at
-every mode. Video mode, widescreen and 128 MB changes wait for "Save and
+every mode. Video mode and widescreen changes wait for "Save and
 restart", which relaunches the XBE. `settings.ini` is written to a
 temporary file, read back and renamed over the old one.
 

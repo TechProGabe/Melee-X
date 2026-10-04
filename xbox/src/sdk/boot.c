@@ -29,6 +29,10 @@ static int safe_video_held(void) {
 /* before the video mode is chosen */
 void xsdk_early(void) {
     int safe = safe_video_held();
+    /* 128 MB consoles always run in 64 MB (no setting since v53,
+     * docs/decisions.md): held before the settings file's allocations */
+    uint32_t held = xhw_mem_hold_upper();
+    if (held) xhw_logf("[MEM] 128 MB console: running in 64 MB, %u KB above it held back", held);
     xsdk_settings_load();
     if (safe) {
         /* saved, so the next boot stays visible too; the menu turns them back on */
@@ -40,10 +44,6 @@ void xsdk_early(void) {
     }
     xhw_video_set_pref_720p(g_xsdk_settings.video_720p);
     xhw_video_set_pref_480p(g_xsdk_settings.progressive);
-    if (!g_xsdk_settings.ram128) {
-        uint32_t held = xhw_mem_hold_upper();
-        if (held) xhw_logf("[MEM] 128 MB console: running in 64 MB, %u KB above it held back (ram128 = 0)", held);
-    }
 }
 
 void xsdk_boot(const char* disc) {

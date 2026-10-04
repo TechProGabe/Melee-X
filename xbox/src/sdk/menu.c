@@ -17,10 +17,10 @@
  * controller still finds its way. The frame-rate counter, rumble and the
  * front LED apply at once (rumble with a short pulse at the new strength, the
  * LED with a short sweep when turned on), the dead zones and
- * trigger click as soon as the menu closes. Video output, widescreen and
- * the 128 MB setting are read at boot (the video mode, the NV2A's buffers
- * and the memory pools are set up then): they are saved and marked for a
- * restart, which "Save and restart" does at once. */
+ * trigger click as soon as the menu closes. Video output and widescreen
+ * are read at boot (the video mode and the NV2A's buffers are set up
+ * then): they are saved and marked for a restart, which "Save and
+ * restart" does at once. */
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -31,25 +31,25 @@
 #include "xsdk_settings.h"
 
 enum {
-    ROW_VIDEO, ROW_WIDE, ROW_FPS, ROW_SHOTS, ROW_LED, ROW_RAM, ROW_RUMBLE, ROW_PORT, ROW_STICK, ROW_CSTICK, ROW_TRIGGER,
+    ROW_VIDEO, ROW_WIDE, ROW_FPS, ROW_SHOTS, ROW_LED, ROW_RUMBLE, ROW_PORT, ROW_STICK, ROW_CSTICK, ROW_TRIGGER,
     ROW_RESTART, ROW_CLOSE, N_ROWS
 };
 static const char* const k_label[N_ROWS] = {
     "Video output", "Widescreen (16:9)", "Frame-rate counter", "BACK screenshots", "Front LED effects",
-    "Use 128 MB RAM", "Rumble", "Controller", "  Stick dead zone", "  C-stick dead zone", "  Trigger click",
+    "Rumble", "Controller", "  Stick dead zone", "  C-stick dead zone", "  Trigger click",
     "Save and restart", "Save and close",
 };
 
 #define DIRS (XHW_BTN_UP | XHW_BTN_DOWN | XHW_BTN_LEFT | XHW_BTN_RIGHT)
 #define STICK_DIR 16000      /* left stick as a d-pad: about half tilt */
-#define REPEAT_DELAY 18      /* held direction: first repeat, then every REPEAT_EVERY frames */
+#define REPEAT_DELAY 18      /* held direction: first repeat, then every REPEAT_EVERY retraces */
 #define REPEAT_EVERY 5
 #define MSG_FRAMES 240       /* the hint line's message after closing */
 #define RELEASE_FRAMES 60    /* after closing, input stays blocked until release, at most this long */
 
 static int s_open, s_sel, s_port;
 static uint32_t s_prev;      /* raw buttons last title frame, stick folded into the d-pad bits */
-static int s_hold;           /* frames the same direction has been held */
+static unsigned s_repeat_at; /* xsdk_frame_count() at which a held direction repeats next */
 static unsigned s_seen;      /* xsdk_frame_count() at the last title frame */
 static int s_release;        /* frames left to wait for the closing press to be let go */
 static int s_rumble;         /* frames left of the rumble preview */
@@ -57,7 +57,6 @@ static int s_msg_frames;
 static int s_unsaved;        /* closed without saving: s_at_open still holds what settings.ini has */
 static char s_msg[XGX_OVERLAY_COLS];
 static int s_dash_720p, s_dash_480p, s_dash_wide;   /* the dashboard's video settings */
-static int s_has_128;        /* RAM above 64 MB: the 128 MB row can be turned on */
 static xsdk_settings s_at_open;
 static xgx_overlay s_ovl;
 
@@ -75,8 +74,7 @@ static int step(int v, int dir, int inc, int lo, int hi, int wrap) {
 
 static int restart_needed(void) {
     const xsdk_settings *g = &g_xsdk_settings, *b = &g_xsdk_settings_boot;
-    return g->video_720p != b->video_720p || g->progressive != b->progressive || g->widescreen != b->widescreen ||
-           g->ram128 != b->ram128;
+    return g->video_720p != b->video_720p || g->progressive != b->progressive || g->widescreen != b->widescreen;
 }
 
 static int video_index(const xsdk_settings* st) { return st->video_720p ? 2 : st->progressive ? 1 : 0; }
@@ -113,10 +111,6 @@ static void row_text(int r, char* out, size_t cap) {
             break;
         case ROW_FPS: snprintf(v, sizeof v, "%s", g->fps ? "On" : "Off"); break;
         case ROW_SHOTS: snprintf(v, sizeof v, "%s", g->shots ? "On" : "Off"); break;
-        case ROW_RAM:
-            snprintf(v, sizeof v, "%s", !s_has_128 ? "Off (64 MB console)" : g->ram128 ? "On" : "Off");
-            boot_only = g->ram128 != g_xsdk_settings_boot.ram128;
-            break;
         case ROW_RUMBLE:
             if (pct(g->rumble)) snprintf(v, sizeof v, "%d%%", pct(g->rumble));
             else snprintf(v, sizeof v, "Off");
@@ -130,9 +124,7 @@ static void row_text(int r, char* out, size_t cap) {
         case ROW_TRIGGER: snprintf(v, sizeof v, "%d", ps->trigger_click); break;
     }
     if (!v[0]) snprintf(out, cap, "%s %s", sel ? ">" : " ", k_label[r]);
-    else if (sel && !(r == ROW_RAM && !s_has_128))   /* no arrows on the locked row */
-        snprintf(out, cap, "> %-20s < %s >%s", k_label[r], v, boot_only ? " *" : "");
-    else if (sel) snprintf(out, cap, "> %-20s   %s", k_label[r], v);
+    else if (sel) snprintf(out, cap, "> %-20s < %s >%s", k_label[r], v, boot_only ? " *" : "");
     else snprintf(out, cap, "  %-20s   %s%s", k_label[r], v, boot_only ? " *" : "");
 }
 
@@ -155,9 +147,6 @@ static void info_text(char* out, size_t cap) {
             break;
         case ROW_FPS: snprintf(out, cap, "Frames per second, top-left corner"); break;
         case ROW_SHOTS: snprintf(out, cap, "BACK saves shotNN.bmp next to settings.ini"); break;
-        case ROW_RAM:
-            snprintf(out, cap, "%s", s_has_128 ? "Upgraded consoles only (untested)" : "This console has 64 MB");
-            break;
         case ROW_RUMBLE: snprintf(out, cap, "Controller motor strength"); break;
         case ROW_LED: snprintf(out, cap, "Not with an LED modchip (Kronos...)"); break;
         case ROW_PORT: snprintf(out, cap, "The three settings below are per port"); break;
@@ -192,7 +181,7 @@ static void draw_menu(void) {
     int r;
     memset(&s_ovl, 0, sizeof s_ovl);
     s_ovl.kind = XGX_OVERLAY_BOX;
-    s_ovl.cols = 48;   /* the widest row: the panel keeps its size as values change */
+    s_ovl.cols = 48;   /* wider than any row: the panel keeps its size as values change */
     snprintf(line, sizeof line, "Melee-X settings         (running %s %s)",
              vm->height >= 720 ? "720p" : vm->progressive ? "480p" : "480i",
              vm->height >= 720 || (vm->widescreen && g_xsdk_settings_boot.widescreen) ? "16:9" : "4:3");
@@ -200,12 +189,9 @@ static void draw_menu(void) {
     add_row("", 0);
     for (r = 0; r < N_ROWS; r++) {
         row_text(r, line, sizeof line);
-        add_row(line, r == s_sel                      ? 0xFFE070
-                      : r == ROW_RAM && !s_has_128 ? 0x707890   /* can't be changed */
-                      : r >= ROW_RESTART           ? 0xB0C0E0
-                                                   : 0xE0E4F0);
+        add_row(line, r == s_sel ? 0xFFE070 : r >= ROW_RESTART ? 0xB0C0E0 : 0xE0E4F0);
     }
-    /* no blank line before the hint: 18 rows, the most that fit at 720p */
+    /* no blank line before the hint: 17 rows; 18 is the most that fit at 720p */
     info_text(line, sizeof line);
     add_row(line, 0xA0B4D8);
     if (s_msg_frames > 0) {
@@ -258,7 +244,6 @@ static void open_menu(void) {
     s_dash_720p = xhw_video_720p_allowed();
     s_dash_480p = xhw_video_480p_allowed();
     s_dash_wide = xhw_video_widescreen_set();
-    s_has_128 = xhw_mem_has_upper();
     xhw_logf("[MENU] settings menu opened");
 }
 
@@ -311,10 +296,6 @@ static void change(int dir, int wrap) {
             g->shots = !g->shots;
             xhw_pad_set_shots(g->shots);
             break;
-        case ROW_RAM:
-            if (!s_has_128) return;   /* 64 MB: stays off */
-            g->ram128 = !g->ram128;
-            break;
         case ROW_RUMBLE:
             g->rumble = step(pct(g->rumble), dir, 25, 0, 100, wrap) / 100.0f;
             s_rumble = 20;   /* a third of a second at the new strength */
@@ -354,14 +335,21 @@ int xsdk_menu_title_frame(void) {
     uint32_t cur = read_buttons(), press;
     unsigned now = xsdk_frame_count();
     int was_open = s_open;
-    /* back on the title after a while: only presses from here on count */
-    if (now - s_seen > 2) s_prev = cur;
+    /* back on the title after a while: only presses from here on count.
+     * Counted in retraces, as the repeat below: this runs once per game
+     * tick, and a slow title (xemu: ~5 retraces a frame, then the ticks
+     * caught up back to back) lost presses at "> 2" and repeated a held
+     * direction within a few retraces when it counted calls. */
+    if (now - s_seen > 30) s_prev = cur;
     s_seen = now;
     press = cur & ~s_prev;
     if ((cur & DIRS) && (cur & DIRS) == (s_prev & DIRS)) {
-        if (++s_hold >= REPEAT_DELAY && (s_hold - REPEAT_DELAY) % REPEAT_EVERY == 0) press |= cur & DIRS;
+        if ((int)(now - s_repeat_at) >= 0) {
+            press |= cur & DIRS;
+            s_repeat_at = now + REPEAT_EVERY;
+        }
     } else {
-        s_hold = 0;
+        s_repeat_at = now + REPEAT_DELAY;
     }
     s_prev = cur;
 
