@@ -191,6 +191,56 @@ about 1.5% between runs.
   serves no FTP; each build now keeps `boot_<folder>.log`), and a match's
   end could launch the next build at once (an unsigned compare).
 
+### Console round 3 (2026-10-03)
+
+Nine builds chained (`tools/xbox/console_round.py 3`), Fountain 4-CPU
+120 s at 720p, seed 1; the probe build 300 s. LTO + PGO still on the
+profile from 083f575 (the gate's code is newer).
+
+| run | build | switches | fps | sim | render | dlist | draw | gpu | GPU busy | wait |
+|---|---|---|---|---|---|---|---|---|---|---|
+| r3a | LTO + PGO | - | 34.68 | 6.16 | 10.20 | 1.28 | 5.55 | 5.53 | 569 | 5.24 |
+| r3b | LTO + PGO | B2 | 36.31 | 5.41 | 9.76 | 1.21 | 5.43 | 5.60 | 572 | 5.19 |
+| r3c | LTO + PGO, no function order | - | 36.21 | 5.47 | 9.87 | 1.20 | 5.34 | 5.61 | 569 | 5.17 |
+| r3d | fps-exec | - | 33.24 | 6.86 | 12.95 | 1.38 | 6.08 | 2.68 | 493 | 2.38 |
+| r3e | fps-exec, no function order | - | 32.93 | 6.88 | 13.23 | 1.40 | 6.26 | 2.46 | 482 | 2.20 |
+| r3f | LTO + PGO | - | **36.18** | 5.52 | 9.86 | 1.23 | 5.48 | 5.41 | 578 | 5.06 |
+| r3g | LTO + PGO | B2 | 35.77 | 5.61 | 9.84 | 1.23 | 5.51 | 5.69 | 566 | 5.33 |
+| base | dev 5620b99 | - | 32.01 | 7.17 | 14.27 | 1.88 | 6.15 | 1.65 | | |
+
+- **The first build of a chain runs ~4% slow** (r3a against r3f, the same
+  XBE; round 2's r2a too). Round 2's open question (fps-exec 3.4% below
+  dev) was this: in round 3 fps-exec runs 3.8% above dev. Rounds now start
+  with a run that isn't compared.
+- LTO + PGO with the gate's changes: **36.2 fps, +13% on dev** (round 2:
+  35.0 without the gate).
+- B2 (4 MB pages): 36.31 and 35.77 against 36.18: nothing. Rejected.
+- A2's function order: nothing with LTO + PGO (36.21 without it), +0.9%
+  without them; kept, it costs nothing.
+
+GPU probe (r3h, `env MX_ABLATE=0,2,3,8,9`, `[GPUP]` by window, ms):
+
+| window | fps | GPU late | wait | span | lag | GPU frame |
+|---|---|---|---|---|---|---|
+| none | 33.6 | 92% | 5.56 | 18.04 | 11.59 | 29.6 |
+| no shadow maps | 36.1 | 96% | 5.99 | 15.81 | 11.61 | 27.4 |
+| no reflection | 39.4 | 96% | 6.09 | 13.96 | 11.28 | 25.2 |
+| no fill (1-pixel scissor) | 45.6 | 21% | 0.10 | 17.28 | 3.40 | (CPU-bound) |
+| no EFB copies | 32.3 | 97% | 6.34 | 18.00 | 12.59 | 30.6 |
+
+The GPU's frame on Fountain is ~30 ms. Without fill it stops being the
+limit (45.6 fps, the CPU's pace), so fill costs at least 9-10 ms of it;
+the reflection pass costs 4.4 ms, the shadow maps 2.2 ms, the EFB copies
+nothing measurable. Next: fill rate without changing the picture (the
+framebuffer and depth buffer are not in NV2A tile regions, so no Z
+compression; texture layouts; blending and clears).
+
+Hardware `[SIMH]`: runs of the same build part at tick 4440-4500 into
+three outcomes (round 2 too, before the new mixer): something that
+depends on timing draws random numbers on the console. xemu's `-icount`
+runs don't part, so the xemu gate stands; on hardware `[SIMH]` is not a
+gate (`docs/roadmap.md`).
+
 ### Other facts
 
 - The profile is flat: the report's top 192 buckets (12 KB of code) hold
@@ -528,16 +578,17 @@ may go ahead.
 | C5 envelope blends | not done: the fused blend (`HSD_MtxConcatScaledAdd`, ~30 instructions a joint) costs about what validating a cached blend against the joints' matrices would, and nothing reliable bumps an epoch (game code writes `jobj->mtx` too); the per-pass costs are the view concat and `HSD_MtxInverseTranspose`, which depend on the pass | | |
 | C2 vertex pool | done 5be8438: key over enabled attributes' formats; Fountain 821 duplicate lists (1.7 MB) -> 0, pool free 4 KB -> 1.8 MB, rebuilds after warm-up ~0 | dlist -11%, render +1% | round 2 (the console rebuilt 700-3300 lists per 600 frames) |
 | B4 deferred back end | rejected by round 2: -6% fps on Fountain (32.96 against 35.01), `dlist` +3 ms; removed | +15.6% / +2% (Fountain) | r2d |
-| B2 MEM1 on 4 MB pages | round 2: +1.7% (35.60 against 35.01; sim -3%, render -2%), within twice the noise; measure again before a default | 0 / 0 (TLB only) | r2e |
+| B2 MEM1 on 4 MB pages | rejected by round 3: 36.31 and 35.77 against 36.18; removed | 0 / 0 (TLB only) | r2e, r3b, r3g |
 | B3 prefetch plans | rejected by round 2: +1.3% fps, within the noise, and the simulation it targets +2.4%; removed | | r2f |
 | C3 GPU waits | v50: the CPU never waits on an EFB copy (their waits are in the pushbuffer); the `gpu` bucket is `frame_open`'s one wait a frame for the last frame (`XGX_OVERLAP`) plus the flip, so on Fountain at 720p the GPU finishes about when the CPU does, and CPU savings may turn into that wait. Round 2 builds log it: `[NV2A] per 600 frames: GPU still busy at N frame starts, X us a frame waiting there (done Y us after the present), flip Z us`. Then: a one-frame-deep pipeline (fence per frame, ring and pushbuffer halves) if the GPU idles between kicks, or less GPU work if it doesn't | | round 2: with PGO the GPU is still busy at 94% of frame starts, 4 ms a frame waiting; busy about the whole frame, so no pipeline gain, less GPU work instead |
 | round 2 | done (2026-10-03), read under "Console round 2": PGO +7.8% on dev (35.0 fps Fountain 720p), B4 and B3 rejected, B2 to measure again, the GPU now the limit on Fountain | | |
 | release default | the user (2026-10-03): LTO + PGO become the release build's default once all of this work is in and confirmed on the console (the last step) | | |
+| round 3 | done (2026-10-03), read under "Console round 3": LTO + PGO 36.2 fps (+13% on dev), B2 rejected, the first chained run 4% slow, the GPU's frame ~30 ms with fill at least 9 of it; the mixer sounds right (the user) | | |
 | lockstep shots | done 29afd58: `env MX_LOCKSTEP=1`, the game clock a frame counter, so shots compare across builds of any speed (`docs/testing.md` "Comparing builds by screenshot"); gl: 1.0 ticks per render, B4 on and off the same moment and pixels | | |
 | E audio mixer | done (branch `fps-e`): ADPCM decoded in runs per frame with an s32 sum, a frame's source positions planned before the mix, the float math four outputs a step in SSE1, the output clamp in SSE1, the reverb in stretches between line wraps; `test_audio_mix.py` same bits (SSE1 and plain C, i686 too) | mixer only (static i686 counts): a resampled ADPCM voice ~146 -> ~62 a sample, 1:1 music ~108 -> ~52, silent ~112 -> ~38, reverb ~110 -> ~67 a sample and channel | round 2 (`[PERF]` audio, window 6) |
 | `PObjSetupMtx` (render) | branch `fps-pobj`: v50 profile has it at 7.2% own and ~6% more in its calls (at its call sites: memo `memcpy` 1.5%, `MTXCopy` 0.65%, view `C_MTXConcat` 1.3%, inverse transpose 1.2%, GX loads 0.7%), and ~1.7% on the zeroing stores of its locals; memo entries filled in place, no zeroing, SSE inverse transpose, prefetch hints; `test_pobj_mtx.py` | not run (expect -3 to -5% of all samples) | round 2 |
 | D stage collision (`mplib.c`) | branch `fps-d`: exact per-line rejects in the line loops (`test_mplib.py`: same results, 93% of Fountain's line tests skipped) | | round 3 |
-| gate: E, D, `PObjSetupMtx` | merged 8f3584d: lockstep gl shots byte for byte as fps-exec's (frames 200, 500), `[SIMH]` equal through Fountain's whole match; host tests on i686 with SSE math too | sim -9.2% / tick, render -7.7% / draw against fps-exec (Fountain; the comparison run had B3 on, ~3% of sim) | round 3; listen to the mixer |
+| gate: E, D, `PObjSetupMtx` | merged 8f3584d: lockstep gl shots byte for byte as fps-exec's (frames 200, 500), `[SIMH]` equal through Fountain's whole match; host tests on i686 with SSE math too | sim -9.2% / tick, render -7.7% / draw against fps-exec (Fountain; the comparison run had B3 on, ~3% of sim) | round 3: 36.2 fps with LTO + PGO; the user heard the mixer right |
 
 All gates: xemu `-icount`, `[SIMH]` identical up to the match's end, gl
 (and Fountain where it matters) screenshots the same. One open oddity:
