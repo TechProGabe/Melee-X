@@ -474,27 +474,6 @@ kernel's own framebuffer (the crash, hang and error screens) is outside
 tile 0. Not yet run on the console at 480p, where tile 0's pitch (2560)
 also matches and the tile is on too.
 
-**State trims are a switch until the console decides (`XGX_TRIM`, `env
-MX_TRIM=`, default 0).** With the colour tile on, the GPU is still the
-limit on Fountain of Dreams at 720p (~3.3 ms a frame waiting for it), and
-the picture can't change. Each trim replaces pixel state by a cheaper state
-with the same result in every pixel, never by an approximation: blending
-with ONE, ZERO and add is `src * 1 + dst * 0 = src` in every channel, so it
-is off (no framebuffer read); an alpha test whose compare, as `emit_fixed`
-already sends it, passes all 256 alpha values (ALWAYS, GEQUAL 0, LEQUAL
-255) is off; a depth test with ALWAYS and the depth write off can neither
-reject nor write, and pbkit's stencil (ALWAYS, KEEP on every outcome) gives
-its result nowhere, so it is off; a draw that writes no colour, alpha or
-depth is not sent at all (its state is). The trims look at what is sent,
-not at the GX pair: the two-compare alpha tests `emit_fixed` can't fold
-still send the first compare only, and a pair that GX would always pass
-but whose first compare can fail keeps its test. SETF's shadows are what
-was sent, so a draw after a trimmed one sends the blend factors and the
-alpha and depth functions only if they differ from what the GPU holds.
-The `[TRIM]` census counts what each would apply to, with the bits off, so
-a default run says which are worth a console A/B (fps, and lockstep shots
-byte for byte).
-
 ## Edits to imported code
 
 Imported files are kept as they are upstream except for these edits, each
