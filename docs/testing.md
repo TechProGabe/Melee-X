@@ -400,6 +400,7 @@ script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
 | `env MX_SIMH_VERBOSE=1` | `[SIMH]` every tick |
 | `env MX_NEXT_XBE=<path>` | 12 s after the match (or at `NEXT`) launch that XBE (`F:\Applications\<folder>\default.xbe` or a `\Device\` path), or `dashboard`; chains a console round |
 | `env MX_VIDEO=480\|480i\|720` | video mode over settings.ini's (`[VIDEO] MX_VIDEO=`); 720 still needs the dashboard to allow it |
+| `env MELEE_DEBUG_CASTLE_BILL=<frames>` | Peach's Castle: a Bullet Bill that many frames after the last, `[CASTLE]` lines per step of its state machine (`spawn`, `part2`, `animend`, `free`; `STUCK` if one never ends); `scenarios/castle` |
 | `env MX_FILL_E=1` | fill E: at boot (`E:\mx_fillN.bin`) to test the full-disk paths (failed saves and shots with notices, `[BOOT] can't write`, log on `D:\`). Use a copy of xemu's HDD; without the line the files are deleted |
 | `env MX_COPY_FIX`, `MX_COPY_STRESS`, `MX_TILE`, `MX_ABLATE` | run-time overrides of the switches above |
 | `N SHOT` | (script) screenshot at frame N: `[FBDUMP]` in xemu, `shotNN.bmp` on the console |

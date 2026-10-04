@@ -69,13 +69,11 @@ Fix order (2026-10-04):
    idle release"). Check: back to the fight camera or close-up after >10 s
    of other views, the 124x80 corner view, `scenarios/clear`, the texture
    pool.
-4. **Peach's Castle: Bullet Bill stuck, endless quake** (v43, ~30 min
-   burn-in). `grCastle_801CE260`/`801CE578`/`801CE860`
-   (`src/melee/gr/grcastle.c`): part 2 requests `QuakeKind_Loop` every
-   frame and is freed only at the Bill's first anim end
-   (`grAnime_801C83D0`). Either that check never fires (anim port bug) or
-   it fires before `xCA` runs out. Repro in xemu; log the phases, `xCA`,
-   the anim-end check.
+4. **Peach's Castle: Bullet Bill stuck, endless quake** (v43): fix in
+   v53, awaiting console confirmation. `grAnime_801C83D0` never saw the
+   Bill's anim end (`grAnime_801C8318` lost its AObj across `longjmp`,
+   the Kraid fix); in xemu six Bills in a row now spawn, end and free
+   (`scenarios/castle`).
 5. **Particles not drawn** (console, v45, 480, all particles; v43 had smoke
    and hits: bisect v43..v45 in xemu). `psdisp.c`: blend/TEV, texture
    format or a dropped primitive type. Same group, status unknown since

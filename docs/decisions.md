@@ -471,6 +471,9 @@ Speed (same results, bit for bit where a test is named):
   32-bit x87); on a Fountain-like stage it skips 81-99% of the tests.
 
 Logging, test hooks and Xbox features:
+- `src/melee/gr/grcastle.c`: `MELEE_DEBUG_CASTLE_BILL=<frames>` (test
+  runs) sets the Bullet Bill timer and logs its states as `[CASTLE]` lines;
+  inert without the variable.
 - `src/melee/gm/gmclassic.c`: melee-pc's Classic test hooks moved into
   `pc_classic_stage_override`, also called by `MELEE_BOOT_SCENE=classic`.
 - `src/melee/gm/gmvsmode.c` (`onEnterDebugVs`): `MELEE_DEBUG_VS_TIME`,
