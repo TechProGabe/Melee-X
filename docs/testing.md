@@ -291,6 +291,20 @@ Tags (switch-only tags such as `[EFB]`, `[DRAW]`, `[VPT]`, `[PBCHECK]`,
 - `[BEAT] Ns: retrace R, presented P, free ...` every 5 s: `retrace`
   climbing with `presented` still = the game loops without drawing; no
   `[BEAT]` = the machine stopped.
+- `[MEMB]` (test builds, once a minute, `-DXHW_MEMB`; from the game thread
+  at a frame end, so none during a long load): where the RAM went, in KB.
+  `free` is `[BEAT]`'s; `virt` is everything committed through
+  NtAllocateVirtualMemory, of which `MEM1+ARAM` is the demand-committed game
+  memory and `heap` nxdk's malloc (dlmalloc on VirtualAlloc, grown in 64 KB
+  segments); `pool`, `stack`, `image`, `cache` are the kernel's other
+  buckets (`MmQueryStatistics`); `other` is the rest of the used RAM
+  (contiguous memory: pushbuffer, framebuffers, texture and vertex pools,
+  audio buffers; page tables, the kernel). Then the heap's own count (bytes
+  in use and free, KB mmapped, free chunks), the process's threads, the
+  events waiting in SDL's queue (0: nothing should queue, `xhw_pad.c`), the
+  display-list cache's share of the heap (batch tables, dynamic lists) and
+  the two NV2A pools. A leak is `free` falling while `MEM1+ARAM` doesn't
+  rise; the bucket that grows by the same amount is the culprit.
 - `[WDOG] presents stopped, retrace running`: after 10 s every thread is
   dumped (game thread's EIP marked) to `boot.log` and `hang.log`, after a
   minute on screen too; `frames stopped` (no retrace for 6 s) at once.
@@ -365,6 +379,8 @@ script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
 | `-DXHW_CRASH_GUARD=0` | no SEH guard: crashes become bugchecks and demand-committed memory stops working; debug only |
 | `-DXHW_WATCHDOG=0`, `-DXHW_HEARTBEAT_SECS=<n>` | hang dumper off; `[BEAT]` period (0 = off) |
 | `-DXHW_WATCHDOG_SECS=<n>`, `-DXHW_WATCHDOG_BOOT_SECS=<n>`, `-DXHW_WATCHDOG_PRESENT_SECS=<n>` | watchdog: seconds without retraces (default 6), without a first frame after boot (45), of retraces without presents (10) |
+| `-DXHW_MEMB=<n>` | `[MEMB]` memory breakdown every n seconds (default 60 in test builds; 0 = off, a release's default) |
+| `-DXHW_PAD_DRAIN=0` | SDL joystick events stay on and queue up unread (up to v52: the memory leak); test builds' `env MX_PAD_NOISE=<n>` queues n synthetic axis events a poll, as a real controller's changes do (`decisions.md` "Memory breakdown") |
 | `-DXHW_AUDIO_APU=0` | never use the xemu APU fallback |
 | `-DXHW_AUDIO_TEST=<bits>` | xemu audio tests (with `-DXHW_AUDIO_APU=0`, `scenarios/relaunch`): 1 leaves the AC97 engine running into the next boot at a relaunch; 2 reads CIV as 0 for good (an engine stuck from boot: the give-up path). Never on a console build |
 | `-DXHW_NO_SPLASH`, `-DXHW_SPLASH_MS=<n>`, `-DXHW_SPLASH_DUMP` | boot title card off; its hold time; stream it as `[FBDUMP]` |

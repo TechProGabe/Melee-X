@@ -4,9 +4,23 @@
  * driver reports the port as the player index (1..4, SDL_xboxjoystick.c
  * xid_get_device_port), independent of the order controllers were plugged
  * in. A controller whose port can't be determined takes the first free slot.
- * The GameCube mapping is done on the SDK side (xbox/src/sdk/pad.c). */
+ * The GameCube mapping is done on the SDK side (xbox/src/sdk/pad.c).
+ *
+ * SDL's event queue: nothing here reads events (the state is polled), but
+ * SDL_Init(GAMECONTROLLER) starts the event loop, and every stick, trigger
+ * or button change became an SDL_JOY* event queued for good, ~80 bytes of
+ * malloc each, up to 65535 of them (5 MB). On the console that was the
+ * memory leak of the v39-v52 roadmap: free RAM fell in 64 KB steps (the
+ * heap's growth) whenever a controller was handled or its sticks jittered,
+ * and not at all in CPU-only burn-ins or in xemu, which has no controller
+ * attached. Joystick events are now off (the controller layer reads the
+ * joystick's state directly, not through events) and the queue is emptied
+ * every poll. -DXHW_PAD_DRAIN=0 restores the old behaviour; test builds
+ * take `env MX_PAD_NOISE=<n>` (autopad) to queue n axis events a poll the
+ * way SDL's joystick code does, which reproduces the growth in xemu. */
 #include <SDL.h>
 #include <usbh_lib.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "xhw.h"
@@ -18,6 +32,10 @@ static SDL_GameController* s_pad[PORTS];
 static SDL_JoystickID s_id[PORTS];
 static int s_init;
 
+#ifndef XHW_PAD_DRAIN
+#define XHW_PAD_DRAIN 1
+#endif
+
 static void pad_init(void) {
     if (s_init) return;
     s_init = 1;
@@ -26,6 +44,40 @@ static void pad_init(void) {
         return;
     }
     SDL_GameControllerEventState(SDL_IGNORE);
+    if (XHW_PAD_DRAIN) SDL_JoystickEventState(SDL_IGNORE);
+}
+
+/* events SDL holds in its queue (the [MEMB] line) */
+uint32_t xhw_pad_events_queued(void) {
+    int n;
+    if (!s_init) return 0;
+    n = SDL_PeepEvents(NULL, 0, SDL_PEEKEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT);
+    return n > 0 ? (uint32_t)n : 0;
+}
+
+/* test builds, env MX_PAD_NOISE=<n>: n axis changes a poll, queued as
+ * SDL_PrivateJoystickAxis does (only while the event type is enabled) */
+static void pad_noise(void) {
+    static int s_n;
+    static int16_t s_v;
+    int i;
+    if (!s_n) {   /* asked again each poll: the splash polls before the script is read */
+        const char* e = getenv("MX_PAD_NOISE");
+        if (!e || (s_n = atoi(e)) <= 0) {
+            s_n = 0;
+            return;
+        }
+        xhw_logf("[PAD] test: %d synthetic axis events a poll", s_n);
+    }
+    for (i = 0; i < s_n; i++) {
+        SDL_Event ev;
+        if (SDL_GetEventState(SDL_JOYAXISMOTION) != SDL_ENABLE) return;
+        memset(&ev, 0, sizeof ev);
+        ev.type = SDL_JOYAXISMOTION;
+        ev.jaxis.axis = (Uint8)(i & 3);
+        ev.jaxis.value = s_v++;
+        SDL_PushEvent(&ev);
+    }
 }
 
 static void open_device(int device) {
@@ -52,6 +104,8 @@ void xhw_pad_poll(void) {
     int i, n;
     pad_init();
     SDL_GameControllerUpdate();
+    if (XHW_TEST_BUILD) pad_noise();
+    if (XHW_PAD_DRAIN) SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
     for (i = 0; i < PORTS; i++) {
         if (s_pad[i] && !SDL_GameControllerGetAttached(s_pad[i])) {
             xhw_logf("[PAD] port %d: removed", i + 1);
