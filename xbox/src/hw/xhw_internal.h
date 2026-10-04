@@ -23,6 +23,11 @@ int xhw_log_try(const char* line);     /* log + flush without blocking on the lo
 int xhw_log_try_file(const char* text);
 void xhw_log_keep(const char* name);    /* boot.log closed and kept as name (a console round's chain) */   /* the same, boot.log and the tail only (not COM1) */
 
+/* xhw_main.c: how this boot ends, in lastexit.txt for the next boot's
+ * "[BOOT] previous exit" line (crash, hang report, quit, relaunch); NULL
+ * deletes it (a hang report the game recovered from) */
+void xhw_exit_write(const char* why);
+
 /* xhw_crash.c: run fn under the CPU exception reporter (crash.log + screen). */
 void xhw_crash_guard(void (*fn)(void*), void* arg);
 extern unsigned int xhw_image_base, xhw_image_end;
@@ -51,6 +56,9 @@ extern const unsigned char xhw_font16[256 * 16];   /* unscii-16: 8x16, one byte 
 /* xhw_overlay.c: the settings menu's text over a finished frame (CPU writes) */
 struct xgx_overlay;
 void xhw_overlay_draw(void* fb, int w, int h, int bpp, int pitch, const struct xgx_overlay* o);
+/* nv2a.c: a one-off notice, two lines at the top of the picture for 10 s
+ * (the audio driver's stuck engine); any thread, the first call only */
+void xhw_notice(const char* line1, const char* line2);
 
 /* xhw_watchdog.c: hang dumper (hang.log + screen) */
 void xhw_watchdog_start(void);

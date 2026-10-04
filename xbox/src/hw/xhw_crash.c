@@ -149,6 +149,7 @@ __attribute__((cdecl)) static int on_exception(EXCEPTION_RECORD* er, void* frame
     xhw_led_release(1);   /* the LED worker writes it: no SMBus wait here */
     xhw_log(s_rep);
     write_crash_log();
+    xhw_exit_write("crash (crash.log)");
     for (;;) Sleep(1000);
     return DISP_CONTINUE_SEARCH;
 }

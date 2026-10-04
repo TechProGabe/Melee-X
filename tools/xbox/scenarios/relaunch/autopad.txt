@@ -1,0 +1,16 @@
+# Audio across a relaunch (roadmap item 9; docs/testing.md "Audio at boot").
+# A 4-CPU Green Greens match; at frame 1500 the XBE relaunches itself from
+# the DVD (\Device\CdRom0) and the next boot runs this script again, so a run
+# is a chain of boots: stop it by time. Build with -DXHW_AUTOPAD=1
+# -DXHW_AUDIO_APU=0 (the AC97 path in xemu) and -DXHW_AUDIO_TEST=1 (the
+# engine left running at each relaunch) or =2 (an engine stuck from the
+# boot on: the give-up, and the notice in the frame-420 shot). Read each
+# boot's [BOOT] previous exit and [AUDIO] found/idle lines.
+env MELEE_BOOT_SCENE=vs
+env MELEE_DEBUG_VS_STAGE=17
+env MELEE_DEBUG_VS=cpu4
+env MELEE_DEBUG_VS_TIME=60
+env MELEE_SEED=1
+env MX_NEXT_XBE=\Device\CdRom0\default.xbe
+420 SHOT
+1500 NEXT

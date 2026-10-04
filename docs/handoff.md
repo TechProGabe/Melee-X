@@ -75,6 +75,7 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `clear` | Classic stage 1 won at once (`MELEE_INSTANT_WIN`): the Stage Clear screen's sepia freeze frame |
 | `toy` | Classic's last stage won at once, Game Clear, START: the trophy fall (`gmregtyfall.c`, scene 15 of mode 21; a second START goes on to the credits) |
 | `fd2` | Final Destination, 2 CPUs (Fox, Mario), 60 s: the frame-rate plan's light case |
+| `relaunch` | AC97 across relaunches: a match, then the XBE relaunches itself at frame 1500, again and again (`-DXHW_AUDIO_APU=0`, `-DXHW_AUDIO_TEST`; testing.md "Audio at boot") |
 | `probe`, `probe2` | console round 1 (`docs/fps-plan.md` step 1): Fountain of Dreams / Peach's Castle, 4 CPUs, 5 minutes, ablation windows rotating (`env MX_ABLATE=1`, probe build) |
 
 ## Working notes (from the agent's memory)
@@ -83,8 +84,12 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
   since the last build with good sound that touches audio, the AC97 driver,
   interrupts, timing or memory layout, and tell the user the risk. A healthy
   console boot logs exactly one `[AUDIO] AC97 polled` line; `halted`,
-  `stuck` or `cold reset` lines mean trouble. xemu uses an APU voice, which
-  hides AC97 problems; `-DXHW_AUDIO_APU=0` forces the AC97 path in xemu.
+  `stuck`, `cold reset` or `stuck since boot` lines mean trouble. Before
+  it, `[AUDIO] found` (three lines) and `[AUDIO] idle` record the audio
+  hardware as found and the idle sequence, and `[BOOT] previous exit` how
+  the boot before ended (docs/testing.md "Audio at boot"). xemu uses an APU
+  voice, which hides AC97 problems; `-DXHW_AUDIO_APU=0` forces the AC97
+  path in xemu, `-DXHW_AUDIO_TEST` simulates a running or stuck engine.
 - **Test build or release build**: BACK screenshots and the on-screen
   counter exist only in test builds (`-DXHW_PROF=1`, `-DXHW_AUTOPAD=1` or
   `-DXHW_TEST_BUILD=1`). A console round that needs shots or a profile gets

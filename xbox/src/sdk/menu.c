@@ -380,6 +380,7 @@ int xsdk_menu_title_frame(void) {
         } else if (s_sel == ROW_RESTART) {
             if (save_if_changed()) {
                 xhw_logf("[MENU] restart");
+                xhw_exit_reason("settings menu: Save and restart");
                 xhw_reboot_self();
             }
             set_msg("settings.ini could not be saved");

@@ -646,6 +646,8 @@ static u32 s_reset_code;
 
 void OSResetSystem(int reset, u32 code, BOOL force_menu) {
     xhw_logf("[OS] OSResetSystem(%d, %08x, %d)", reset, (unsigned)code, force_menu);
+    xhw_exit_reason(reset == OS_RESET_HOTRESET || reset == OS_RESET_RESTART ? "game restart (OSResetSystem)"
+                                                                            : "game quit (OSResetSystem)");
     if (reset == OS_RESET_HOTRESET || reset == OS_RESET_RESTART) {
         /* "Reset" from the game (e.g. the A+B+X+Y+Start reset during a match
          * is handled by the game itself; this is a real restart) */

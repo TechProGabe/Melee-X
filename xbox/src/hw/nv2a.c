@@ -1319,21 +1319,55 @@ void xgx_set_overlay(const xgx_overlay* o) {
     s_ovl_ttl = 2;   /* lingers at most one present after the last refresh */
 }
 
+/* A one-off notice (xhw_notice, xhw_internal.h), posted from any thread:
+ * two lines at the top for 10 s from the first frame that shows it, in
+ * place of the title screen's hint; the settings menu's panel wins. */
+static xgx_overlay s_notice;
+static int s_notice_state;   /* 0 none, 1 posted, 2 up, 3 done */
+static uint64_t s_notice_end;
+
+void xhw_notice(const char* line1, const char* line2) {
+    if (__atomic_load_n(&s_notice_state, __ATOMIC_ACQUIRE)) return;
+    memset(&s_notice, 0, sizeof s_notice);
+    s_notice.kind = XGX_OVERLAY_HINT;
+    s_notice.rows = 2;
+    snprintf(s_notice.text[0], XGX_OVERLAY_COLS, "%s", line1);
+    snprintf(s_notice.text[1], XGX_OVERLAY_COLS, "%s", line2);
+    s_notice.rgb[0] = 0xFFA040;
+    s_notice.rgb[1] = 0xFFE070;
+    __atomic_store_n(&s_notice_state, 1, __ATOMIC_RELEASE);
+}
+
+static int notice_due(void) {
+    int st = __atomic_load_n(&s_notice_state, __ATOMIC_ACQUIRE);
+    if (st == 1) {
+        s_notice_end = xhw_time_ns() + 10000000000ull;
+        __atomic_store_n(&s_notice_state, st = 2, __ATOMIC_RELEASE);
+    }
+    if (st != 2) return 0;
+    if (xhw_time_ns() < s_notice_end) return 1;
+    __atomic_store_n(&s_notice_state, 3, __ATOMIC_RELEASE);
+    return 0;
+}
+
 static void z16_frame_end(void);
 
 void xgx_present(int black) {
-    int ovl;
+    int ovl, note;
     uint64_t t_flip;
     frame_open();
     if (black) clear_fb(0, 0, s_fbw, s_fbh, 0xFF000000u, 1, 0, 0);
     pb_budget();   /* the frame's pushbuffer peak */
     if (s_fps_on && !black) fps_overlay();
     ovl = s_ovl_ttl > 0 && !black;
+    note = !black && (!ovl || s_ovl.kind == XGX_OVERLAY_HINT) && notice_due();
     /* the next frame_open waits (XGX_OVERLAP); a screenshot reads the frame now */
-    if (!XGX_OVERLAP || ovl || s_fbdump_once || s_shot_once ||
+    if (!XGX_OVERLAP || ovl || note || s_fbdump_once || s_shot_once ||
         (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0))
         wait_idle();
-    if (ovl) xhw_overlay_draw(fb_cpu(pb_back_buffer()), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch(), &s_ovl);
+    if (ovl || note)
+        xhw_overlay_draw(fb_cpu(pb_back_buffer()), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch(),
+                         note ? &s_notice : &s_ovl);
     if (s_ovl_ttl > 0) s_ovl_ttl--;
     if (s_fbdump_once || (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0)) {
         s_fbdump_once = 0;

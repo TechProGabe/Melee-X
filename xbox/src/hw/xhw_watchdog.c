@@ -188,6 +188,7 @@ static void dump_all(const char* why, int screen) {
     }
 
     write_hang_log();
+    xhw_exit_write("hang report on screen (hang.log)");   /* until the game goes on or leaves */
 }
 
 static volatile int s_disabled, s_busy;
@@ -198,6 +199,7 @@ static void resumed(const char* what, unsigned secs) {
     snprintf(line, sizeof line, "[WDOG] %s again after %u s", what, secs);
     xhw_log_try(line);
     if (s_screen && !s_disabled) pb_show_front_screen();
+    if (s_screen) xhw_exit_write(NULL);
     s_screen = 0;
 }
 
