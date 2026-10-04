@@ -100,6 +100,7 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `inv` | Fountain of Dreams 4-CPU, players 1-2 cloaked (`MELEE_DEBUG_VS_INVISIBLE=3`: indirect refraction) |
 | `res` | results screen with a winner: Fox (port 1) walks off Final Destination in a 15 s match, Mario wins (portrait EFB copies) |
 | `tie` | results screen with all four CPUs tied for 1st after an 8 s Final Destination match: the cards' portraits (Debug VS only; `fn_80179854` deviation) |
+| `castle` | Peach's Castle 4-CPU, untimed, a Bullet Bill every 30 frames (`MELEE_DEBUG_CASTLE_BILL`): read the `[CASTLE]` lines |
 | `clear` | Classic stage 1 won at once (`MELEE_INSTANT_WIN`): the Stage Clear screen's sepia freeze frame |
 | `toy` | Classic's last stage won at once, Game Clear, START: the trophy fall (`gmregtyfall.c`, scene 15 of mode 21; a second START goes on to the credits) |
 | `fd2` | Final Destination, 2 CPUs (Fox, Mario), 60 s: the frame-rate plan's light case |

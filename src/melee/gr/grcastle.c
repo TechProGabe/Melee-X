@@ -31,6 +31,8 @@
 #include <sysdolphin/baselib/jobj.h>
 #include <sysdolphin/baselib/psstructs.h>
 #include <sysdolphin/baselib/random.h>
+#include <sysdolphin/baselib/aobj.h>
+#include <stdlib.h>
 
 /* 1CF750 */ static void grCastle_801CF750(void* user_data, int joint_id,
                                            CollData* coll, int coll_x50,
@@ -170,6 +172,36 @@ typedef struct grCastle_PlatSubObj {
 
 static struct grCastle_YakumonoParam* yakumono_param;
 static struct lb_80011A50_t* grCs_804D6974;
+
+/* PORT: MELEE_DEBUG_CASTLE_BILL=<frames> (test builds, docs/testing.md): a
+ * Bullet Bill every <frames> frames instead of every 30-110 s, and a
+ * [CASTLE] log line at each step of its state machine. */
+static int grCs_DbgBill(void)
+{
+    static int cached = -2;
+    if (cached == -2) {
+        const char* s = getenv("MELEE_DEBUG_CASTLE_BILL");
+        cached = s != NULL ? atoi(s) : -1;
+    }
+    return cached;
+}
+static u32 grCs_DbgFrame;
+static u16 grCs_DbgPhase1[9];
+
+static void grCs_DbgAnim(const char* what, Ground_GObj* gobj)
+{
+    Ground* gp = GET_GROUND(gobj);
+    HSD_AObj* aobj = grAnime_801C8318(gobj, 0, 1);
+    OSReport("[CASTLE] f%u %s bill=%d b0=%d xCA=%d xC8=%d xCC=%p aobj=%p "
+             "flags=%08x frame=%.1f end=%.1f rate=%.2f\n",
+             grCs_DbgFrame, what, gp->u.castle11.xC6,
+             gp->u.castle11.xC4.b0, gp->u.castle11.xCA, gp->u.castle11.xC8,
+             (void*) gp->u.castle11.xCC, (void*) aobj,
+             aobj != NULL ? aobj->flags : 0,
+             aobj != NULL ? aobj->curr_frame : -1.0f,
+             aobj != NULL ? aobj->end_frame : -1.0f,
+             aobj != NULL ? aobj->framerate : -1.0f);
+}
 
 typedef struct grCastle_DynEntry {
     s16 depth;
@@ -474,6 +506,7 @@ void grCastle_801CD8A8(Ground_GObj* gobj)
     Ground* gp = GET_GROUND(gobj);
     int i;
 
+    grCs_DbgFrame++;
     grCastle_801CF868(gobj);
     grCastle_801CE19C(gobj);
     Ground_UpdateMapColl(gobj);
@@ -691,6 +724,9 @@ void grCastle_801CDFD8(Ground_GObj* gobj)
 
     // Add base value and set various shorts
     gp->u.castle9.xD4 = yakumono_param->x8 + rand_result;
+    if (grCs_DbgBill() >= 0) {
+        gp->u.castle9.xD4 = grCs_DbgBill();
+    }
     gp->u.castle9.xDC = -1;
     gp->u.castle9.xDA = -1;
     gp->u.castle9.xD8 = -1;
@@ -768,6 +804,10 @@ void grCastle_801CE19C(Ground_GObj* gobj)
                 Ground_801C5694(
                     gp, 0, yakumono_param->entries[new_gp->u.castle5.xC6].x4);
                 new_gp->u.castle11.xD4 = (HSD_GObj*) gobj;
+                if (grCs_DbgBill() >= 0) {
+                    grCs_DbgPhase1[new_gp->u.castle11.xC6] = 0;
+                    grCs_DbgAnim("spawn", new_gobj);
+                }
             }
         }
     }
@@ -885,13 +925,25 @@ void grCastle_801CE578(Ground_GObj* gobj)
                 gp2->u.castle11.xCC = grCastle_801CD4D0(2);
                 Ground_801C53EC(0x53026);
                 grCastle_801CE3AC_dontinline(gobj);
+                if (grCs_DbgBill() >= 0) {
+                    grCs_DbgAnim("part2", gobj);
+                }
             }
         }
     }
 
     if (!gp->u.castle11.xC4.b0) {
         gp = (Ground*) gobj->user_data;
+        if (grCs_DbgBill() >= 0) {
+            u16* n = &grCs_DbgPhase1[gp->u.castle11.xC6];
+            if (++*n >= 1200 && *n % 300 == 0) {
+                grCs_DbgAnim("STUCK", gobj);
+            }
+        }
         if (grAnime_801C83D0(gobj, 0, 1)) {
+            if (grCs_DbgBill() >= 0) {
+                grCs_DbgAnim("animend", gobj);
+            }
             gp->u.castle11.xC8 = yakumono_param->x58;
             gp->u.castle11.xC4.b0 = 1;
             grMaterial_801C9604(gobj, yakumono_param->x114, 0);
@@ -938,6 +990,10 @@ void grCastle_801CE578(Ground_GObj* gobj)
                         rand = 0;
                     }
                     sat->u.castle9.xD4 = (s16) (yakumono_param->xC + rand);
+                    if (grCs_DbgBill() >= 0) {
+                        sat->u.castle9.xD4 = grCs_DbgBill();
+                        grCs_DbgAnim("free", gobj);
+                    }
                 }
 
                 gp = (new_var3 = (Ground*) gobj->user_data);
