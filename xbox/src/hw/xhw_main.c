@@ -168,6 +168,19 @@ void xhw_reboot_self(void) {
     launch(path);
 }
 
+/* The folder this XBE was launched from (Melee-X-r3a for
+ * ...\Applications\Melee-X-r3a\default.xbe); 0 if there is none */
+int xhw_image_folder(char* out, int size) {
+    const ANSI_STRING* img = &XeImageFileName[0];
+    int n = (int)img->Length, end, start;
+    for (end = n - 1; end > 0 && img->Buffer[end] != '\\'; end--) {}
+    for (start = end - 1; start > 0 && img->Buffer[start - 1] != '\\'; start--) {}
+    if (end <= start || start <= 0 || end - start >= size) return 0;
+    memcpy(out, img->Buffer + start, (size_t)(end - start));
+    out[end - start] = '\0';
+    return 1;
+}
+
 /* F:\ and E:\ as the kernel names them (xhw_reboot_self: XLaunchXBE wants
  * \Device\ paths); "dashboard": back to the dashboard, as the in-game reset
  * does (a round's last build, so its logs can be pulled over FTP) */
@@ -181,12 +194,9 @@ void xhw_launch_xbe(const char* dos_path) {
     snprintf(line, sizeof line, "[BOOT] next: %s", path);
     xhw_log_try(line);   /* on disk before the launch */
     {   /* kept as boot_<this build's folder>.log: the next boots rotate boot.log away */
-        const ANSI_STRING* img = &XeImageFileName[0];
-        int n = (int)img->Length, end, start;
-        for (end = n - 1; end > 0 && img->Buffer[end] != '\\'; end--) {}
-        for (start = end - 1; start > 0 && img->Buffer[start - 1] != '\\'; start--) {}
-        if (end > start && start > 0) {
-            snprintf(line, sizeof line, "boot_%.*s.log", end - start, img->Buffer + start);
+        char folder[64];
+        if (xhw_image_folder(folder, sizeof folder)) {
+            snprintf(line, sizeof line, "boot_%s.log", folder);
             xhw_log_keep(line);
         }
     }

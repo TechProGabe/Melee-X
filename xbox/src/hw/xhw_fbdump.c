@@ -10,9 +10,10 @@
  * lines go to COM1 only (boot.log flushes every line).
  * Off unless built with -DXHW_FBDUMP_EVERY=N (every N presents).
  *
- * On the console there is no COM1: BACK on any controller writes the next
- * frame to E:\UDATA\4d580001\shotNN.bmp instead (xhw_fbdump_file), fetched
- * over FTP with the logs. */
+ * On the console there is no COM1: BACK on any controller, and an autopad
+ * script's SHOT, write the next frame to E:\UDATA\4d580001\shotNN.bmp
+ * instead (xhw_fbdump_file; shot_<folder>_NN.bmp in a console round's
+ * chained builds), fetched over FTP with the logs. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -108,14 +109,20 @@ void xhw_fbdump(const void* fb, int w, int h, int bpp, int pitch) {
 void xhw_fbdump_file(const void* fb, int w, int h, int bpp, int pitch) {
     static unsigned s_n;
     static unsigned char row[1280 * 3 + 4];
-    char path[64];
+    char path[96];
     unsigned char hdr[54];
     unsigned stride = ((unsigned)w * 3 + 3) & ~3u, size = 54 + stride * (unsigned)h;
     DWORD done;
     HANDLE f;
     int x, y;
+    char folder[40];
     if (w > 1280 || w <= 0 || h <= 0) return;
-    snprintf(path, sizeof path, XHW_UDATA_DIR "shot%02u.bmp", s_n % 100);
+    /* a console round's chained builds (env MX_NEXT_XBE) name theirs after
+     * their folder, so the next build's don't overwrite them */
+    if (getenv("MX_NEXT_XBE") && xhw_image_folder(folder, sizeof folder))
+        snprintf(path, sizeof path, XHW_UDATA_DIR "shot_%s_%02u.bmp", folder, s_n % 100);
+    else
+        snprintf(path, sizeof path, XHW_UDATA_DIR "shot%02u.bmp", s_n % 100);
     f = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (f == INVALID_HANDLE_VALUE) {
         xhw_logf("[SHOT] could not create %s", path);
