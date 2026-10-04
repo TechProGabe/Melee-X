@@ -1,4 +1,4 @@
-v4 is a big update. The three headliners: **it's a lot faster, particle effects are finally drawn, and the stages work again.** On top of that, a long list of crashes and freezes are fixed.
+v4 is a big update. The three headliners: **it's a lot faster, particle effects are finally drawn, and the stage events finally work.** On top of that, a long list of crashes and freezes are fixed.
 
 ## Faster at every resolution
 
@@ -8,13 +8,13 @@ v4 is a big update. The three headliners: **it's a lot faster, particle effects 
 
 - **Particles are drawn now.** The Fire Flower's flame, hit sparks, smoke and every other effect were invisible before. The game finally looks like Melee.
 
-## The stages work again
+## Stage events finally work
 
-- **Stage events that used to get stuck now run, on about twenty stages.**
+- **Stage events work for the first time, on about twenty stages.**
 - Brinstar Depths: Kraid rises, slams and turns the stage.
 - Peach's Castle: Bullet Bills fly and explode, no more endless shaking.
 - Onett: the drugstore sign and the cars run.
-- Adventure mode, Corneria: the Star Fox team talks again, with voices.
+- Adventure mode, Corneria: the Star Fox team talks over the comm window, with voices.
 
 ## Fixes and stability
 
