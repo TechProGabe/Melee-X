@@ -38,8 +38,10 @@ FODLONG = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_D
            'env MELEE_DEBUG_VS_TIME=300', 'env MELEE_SEED=1']
 FD = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=32', 'env MELEE_DEBUG_VS_CHARS=2,8',
       'env MELEE_DEBUG_VS_TIME=60', 'env MELEE_SEED=1']
-# folder, build, scenario, switches: in the order they run; the last one is
-# the baseline in Melee-X itself (no chaining)
+# folder, build, scenario, switches: in the order they run. Rounds 2 and 3
+# end on dev's baseline in Melee-X itself, which can't chain: it stays on
+# its results. A round whose last folder is its own ends at the dashboard
+# by itself (env MX_NEXT_XBE=dashboard), ready for `watch`.
 # round 2 (2026-10-03): MX_DEFER (B4) and MX_PREFETCH (B3) were removed after it
 ALL = {'MX_DEFER': '1', 'MX_MEM1_LARGE': '6', 'MX_PREFETCH': '1'}
 CHAINS = {}
@@ -84,6 +86,8 @@ def script(i):
     lines += [f'env {k}={v}' for k, v in sw.items()]
     if i + 1 < len(CHAIN):
         lines.append(f'env MX_NEXT_XBE=F:\\Applications\\{CHAIN[i + 1][0]}\\default.xbe')
+    elif folder != 'Melee-X':   # a chained build ends the round: back to the dashboard, FTP up
+        lines.append('env MX_NEXT_XBE=dashboard')
     return '\n'.join(lines) + '\n'
 
 
