@@ -564,6 +564,42 @@ void xhw_mem_log(const char* where) {
                  (unsigned)(st.PoolPagesCommitted * 4), xhw_lazy_committed_kb());
 }
 
+/* [NETM]'s copy test: what one rollback snapshot of the heaps would cost
+ * (docs/lan-plan.md F5). The XBE runs in ring 0, so wbinvd can write back
+ * and empty the caches before each copy: every copy starts cold. */
+int xhw_mem_copy_probe(uint32_t bytes, uint32_t reps, uint32_t* min_us, uint32_t* mean_us, uint32_t* max_us) {
+    PVOID a = NULL, b = NULL;
+    SIZE_T sa = bytes, sb = bytes, zero = 0;
+    uint64_t total = 0, lo = ~0ull, hi = 0;
+    uint32_t i;
+    if (!reps || !NT_SUCCESS(NtAllocateVirtualMemory(&a, 0, &sa, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)))
+        return 0;
+    if (!NT_SUCCESS(NtAllocateVirtualMemory(&b, 0, &sb, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE))) {
+        NtFreeVirtualMemory(&a, &zero, MEM_RELEASE);
+        return 0;
+    }
+    memset(a, 0x5a, bytes);   /* pages in and mapped: the copies time the memory, not the faults */
+    memset(b, 0xa5, bytes);
+    for (i = 0; i < reps; i++) {
+        uint64_t t0, t;
+        __asm__ volatile("wbinvd" ::: "memory");
+        t0 = xhw_time_ns();
+        if (i & 1) memcpy(a, b, bytes);
+        else memcpy(b, a, bytes);
+        t = xhw_time_ns() - t0;
+        total += t;
+        if (t < lo) lo = t;
+        if (t > hi) hi = t;
+    }
+    NtFreeVirtualMemory(&a, &zero, MEM_RELEASE);
+    zero = 0;
+    NtFreeVirtualMemory(&b, &zero, MEM_RELEASE);
+    *min_us = (uint32_t)(lo / 1000);
+    *mean_us = (uint32_t)(total / reps / 1000);
+    *max_us = (uint32_t)(hi / 1000);
+    return 1;
+}
+
 /* ======================================================================
  * Paths
  * ====================================================================== */

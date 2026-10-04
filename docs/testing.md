@@ -418,6 +418,34 @@ GObj that drew), and the display-list cache by owner, lists cached under a
 second key and the lists rebuilt most. `tools/xbox/census_report.py` sums
 them. The counts are the same on the console.
 
+### Where two runs part (`simh_diff.py`)
+
+Two runs of one build should simulate alike; on the console they don't
+(roadmap item 10). With `env MX_RAND_TRACE=1` every tick logs its RNG draws
+and a rolling hash of the match's draws (`[RAND]`), and
+`env MX_RAND_DUMP=<a>-<b>` the callers of ticks a..b (`[RANDD]`):
+
+```sh
+python3 tools/xbox/simh_diff.py a.log b.log [c.log ...] --map melee_x.map   # the build's own map
+```
+
+compares every log with the first and prints four firsts: the tick whose
+draw count differs, whose callers differ, whose draws came in another
+order (the rolling hash), and whose `[SIMH]` differs. The seed sequence
+depends only on the count, so a reorder alone hands the same values to
+other consumers: in xemu the particle system's draws come in another order
+from the first second of a match on, which is harmless (its draws only feed
+particles) and is printed as a note. The runs part at the first count,
+callers or `[SIMH]` difference; at that tick, when both logs dumped it, the
+first caller that differs with its neighbours, symbolized (without a dump it
+prints the `MX_RAND_DUMP` range to run). With three or more logs it groups
+them by outcome (the same `[SIMH]` lines). `equal through tick N` (exit 0)
+when all agree. `--match N` picks a log's N-th match. `scenarios/det`
+(Fountain, 4 CPUs, seed 1, 120 s) is the probe; `env MX_JITTER=<seed>`
+shakes a real-time xemu run's timing the way the console's varies;
+`env MX_SIMH_VERBOSE=1` logs every fighter's fields every tick, to see which
+one parts first.
+
 ## Logs
 
 Everything is written to `E:\UDATA\4d580001\` (the title ID is `4d580001`):
@@ -464,6 +492,14 @@ Lines worth reading first:
 - `[SIMH] tick N: hash`: test builds, every 60 simulation ticks of a match:
   each fighter's kind, port, action, facing, position, velocities, damage
   and the random seed, hashed. Equal lines = the same simulation.
+- `[RAND]`, `[RANDD]`: the RNG trace (`env MX_RAND_TRACE=1`,
+  `MX_RAND_DUMP`, switch table); read them with `simh_diff.py`.
+- `[NETM] tick N:` test builds, at a match's ticks 600 and 3600: the
+  cells in use of each OSAlloc heap (live/size KB, cell count; what a
+  rollback snapshot of the heaps would copy), then 1 MB copied eight times
+  between two fresh buffers with the caches emptied before each copy
+  (`wbinvd`; fastest, mean and slowest copy, MB/s, free memory). The copy
+  stalls that tick for 10-50 ms (`docs/lan-plan.md` F5).
 - `[CPU]`: test builds, at boot: CPUID 1 and 2, CR0/CR3/CR4, MXCSR and its
   mask (DAZ), the x87 control word, and on the console the MTRRs, PAT and
   the page directory's 4 MB entries. `[MEM] lazy <base>: ...` at each scene
@@ -582,6 +618,9 @@ report.
 | `N NEXT` | (autopad script, test builds) launch `MX_NEXT_XBE` at frame N: a console round's run without a match (round 5's settings-menu runs) chains on, as a match's end does 12 s after it; logs `[AUTOPAD] NEXT`, which `console_round.py watch` takes as the run's end |
 | `env MX_VIDEO=480\|480i\|720` | (autopad script, test builds) the video mode over settings.ini's (`xhw_video_boot`, logged as `[VIDEO] MX_VIDEO=`): a console round runs 480p, 480i or 720p without touching the user's settings. 720 still needs the dashboard to allow it |
 | `env MX_LOCKSTEP=1` | (autopad script, test builds) the game's clock moves 1/60 s per frame and stands still in between, so every rendered frame is one simulation tick: screenshots by frame number show the same moment in builds of any speed ("Comparing builds by screenshot"). Pacing is off; `[PERF]` keeps the real clock |
+| `env MX_RAND_TRACE=1` | (autopad script, test builds) the RNG trace (`simhash.c`, `random.c`'s `PORT:` hook): a `[RAND] tick N: D draws, hash H, callers C` line every tick of a match, H a rolling hash of every `HSD_Rand` draw so far (caller and new seed), C a sum over the tick's callers that leaves their order out; draws during the render pass and off the game thread are counted apart. Lines go out in batches (before each `[SIMH]`), not one log call a tick. Observes only: `[SIMH]` is the same with and without it. `tools/xbox/simh_diff.py` ("Where two runs part") |
+| `env MX_RAND_DUMP=<a>-<b>` | (autopad script, test builds) with or without the trace: every draw's caller (return address) in ticks a..b as `[RANDD]` lines (`r:` in the render pass, `t:` off the game thread; up to 1024 a tick). ~100 draws a tick at most in a 4-CPU match, ~10 KB of log a tick |
+| `env MX_JITTER=<seed>` | (autopad script, test builds) a seeded delay of 0-2 ms at the frame boundary, in the mixer loop and in the DVD worker before each completion (`os.c` `xsdk_jitter`), logged as `[OS] jitter`: real-time xemu runs then vary when voices end, reads complete and ticks run, as the console does (roadmap item 10) |
 | `-DXGX_OVERLAP=0` | `xgx_present` waits for the GPU before the flip, as up to v32, instead of the next frame's first GPU use (v33) |
 | `-DXGX_DEBUG_VPTRACE[=<n>]` | log the vertex-program selects of two consecutive frames every n (default 600) as `[VPT]` lines: each program (key hash, instructions, key bytes), then the selects in order with `L` where one was loaded; replay with `tools/xbox/vp_policy.py boot.log` |
 | `-DXGX_DEBUG_NOMIP` | bind only the base level of every texture |

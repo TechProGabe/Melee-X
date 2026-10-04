@@ -407,6 +407,29 @@ and confirmed on the console: the `build` workflow passes both knobs and
 profile is retrained (`tools/xbox/pgo_train.sh`) after game or sdk code
 changes, or the changed functions build without it.
 
+### Determinism probes (LAN plan phase 0A, 2026-10-04)
+
+LAN play is lockstep (`docs/lan-plan.md` D2), so it needs the simulation
+to be a function of seed and inputs, which it isn't on the console
+(roadmap item 10). Phase 0A only measures, in test builds, through autopad
+`env` switches; none of it changes what is simulated or drawn. **The RNG
+trace** (`env MX_RAND_TRACE=1`, `MX_RAND_DUMP=<a>-<b>`): every `HSD_Rand`
+draw reports its caller from `random.c` (`PORT:` below) to `simhash.c`,
+which logs per tick a draw count and a rolling hash of the match's draws,
+and the callers of a tick range: the first differing draw names the timing
+input that reached the simulation (`tools/xbox/simh_diff.py`). The hash
+rolls over the whole match so the first differing `[RAND]` line is the
+tick, and a dump range covers the console's known parting point. **Timing
+jitter** (`env MX_JITTER=<seed>`): seeded 0-2 ms delays at the three places
+whose timing the simulation may see (the frame boundary, the mixer loop,
+the DVD worker's completions), so xemu, which under `-icount` never parts,
+can be made to vary as the console does. **`[NETM]`** at ticks 600 and 3600
+of a match: the OSAlloc heaps' live cells and a 1 MB copy between cold
+buffers (`xhw_mem_copy_probe`, `wbinvd` before each copy, in the hw layer
+because it runs in ring 0), the numbers that decide against rollback
+(lan-plan D2, F5). The copy stalls one tick for 10-50 ms in every test
+build's match; lockstep shots and `[SIMH]` don't see it.
+
 ### Stall candidates (round 1, 2026-10-03)
 
 Console round 1 (`docs/fps-plan.md` "Console round 1") picked three
@@ -820,6 +843,14 @@ marked `PORT:`:
   thread at once instead of after two thread switches to the ARQ worker
   (`docs/fps-plan.md` C4). Same callbacks, same order; the frame-boundary
   delivery already runs them on the game thread.
+- `src/sysdolphin/baselib/random.c` (`HSD_Rand`, `HSD_Randf`), under
+  `TARGET_XBOX`: after the seed update each draw calls
+  `xsdk_rand_draw(seed, __builtin_return_address(0))`, the RNG trace of
+  `docs/lan-plan.md` phase 0A (`xbox/src/sdk/simhash.c`, `env
+  MX_RAND_TRACE`/`MX_RAND_DUMP`, test builds). It reads and writes nothing
+  the game sees; in a release the function is empty. `HSD_Randi`'s draw is
+  `HSD_Rand` inlined into it (checked in the object), so it reports
+  `HSD_Randi`'s caller.
 
 Game files are compiled with `-Werror=implicit-function-declaration`. The
 prelude renames `acosf`, `atan2f`, `asinf`, `expf` and `powf` after

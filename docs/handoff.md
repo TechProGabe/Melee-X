@@ -75,6 +75,8 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `clear` | Classic stage 1 won at once (`MELEE_INSTANT_WIN`): the Stage Clear screen's sepia freeze frame |
 | `toy` | Classic's last stage won at once, Game Clear, START: the trophy fall (`gmregtyfall.c`, scene 15 of mode 21; a second START goes on to the credits) |
 | `fd2` | Final Destination, 2 CPUs (Fox, Mario), 60 s: the frame-rate plan's light case |
+| `det` | the determinism probe (`docs/lan-plan.md` phase 0A): Fountain of Dreams 4-CPU, seed 1, 120 s, no shots; with `env MX_RAND_TRACE=1`, `simh_diff.py` |
+| `v1-fod`, `v1-ps`, `v1-ys`, `v1-dl`, `v1-bf`, `v1-fd`, `v1-corn`, `v1-pc` | 1v1 (Fox, Mario CPUs), 60 s, no shots: fps of a LAN-sized match on eight stages (console round 7) |
 | `probe`, `probe2` | console round 1 (`docs/fps-plan.md` step 1): Fountain of Dreams / Peach's Castle, 4 CPUs, 5 minutes, ablation windows rotating (`env MX_ABLATE=1`, probe build) |
 
 ## Working notes (from the agent's memory)

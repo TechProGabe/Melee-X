@@ -121,6 +121,11 @@ uint32_t xhw_mem_free_kb(void);
 uint32_t xhw_mem_hold_upper(void);
 /* 1: the console has RAM above 64 MB (MmQueryStatistics' physical pages). */
 int xhw_mem_has_upper(void);
+/* [NETM] (test builds, docs/lan-plan.md phase 0A): copies `bytes` back and
+ * forth `reps` times between two fresh buffers, the caches written back and
+ * emptied before each copy; the fastest, mean and slowest copy in
+ * microseconds. 0 when the two buffers couldn't be had. */
+int xhw_mem_copy_probe(uint32_t bytes, uint32_t reps, uint32_t* min_us, uint32_t* mean_us, uint32_t* max_us);
 
 /* ---- files and paths ---- */
 /* The folder default.xbe runs from, mounted as D:\ ("D:\\"). */

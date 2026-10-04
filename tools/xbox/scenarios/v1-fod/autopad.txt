@@ -1,0 +1,8 @@
+# 1v1 on Fountain of Dreams: two CPUs (Fox, Mario), 60 s, no shots
+# (docs/lan-plan.md phase 0A: frames per second and ticks per render of a
+# 1v1 match)
+env MELEE_BOOT_SCENE=vs
+env MELEE_DEBUG_VS_STAGE=2
+env MELEE_DEBUG_VS_CHARS=2,8
+env MELEE_DEBUG_VS_TIME=60
+env MELEE_SEED=1
