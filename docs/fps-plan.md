@@ -245,6 +245,56 @@ depends on timing draws random numbers on the console. xemu's `-icount`
 runs don't part, so the xemu gate stands; on hardware `[SIMH]` is not a
 gate (`docs/roadmap.md`).
 
+### Console round 4 (2026-10-03)
+
+Twelve runs of one XBE (LTO + PGO, profile retrained on 10e7a09),
+Fountain 4-CPU 720p seed 1: a warm-up, the tile settings (`env MX_TILE`,
+`renderer.md` "Tile regions") over 120 s, then 30 s lockstep shot runs.
+The `[NV2A] tiles` lines read back what each run wrote.
+
+| run | MX_TILE | tile 0 (colour) | tile 1 Z compression | fps | sim | render | gpu | GPU busy | wait |
+|---|---|---|---|---|---|---|---|---|---|
+| r4a | 0 (warm-up) | base\|2 (pbkit) | 84000000 (pbkit) | 35.16 | 5.93 | 10.13 | 5.72 | 575 | 5.38 |
+| r4b | 0 | base\|2 | 84000000 | 36.17 | 5.50 | 9.76 | 5.87 | 571 | 5.43 |
+| r4c | 8 | base\|2 | off | 36.37 | 5.48 | 9.86 | 5.60 | 572 | 5.17 |
+| r4d | 1 | base\|2 | 80000000 (Z16) | 36.21 | 5.46 | 9.73 | 5.91 | 574 | 5.46 |
+| r4e | 2 | base\|1 | 84000000 | **40.21** | 4.93 | 9.77 | 3.65 | 537 | 3.28 |
+| r4f | 4 | base\|3 | 84000000 | **40.18** | 4.97 | 9.83 | 3.60 | 549 | 3.31 |
+| r4g | 3 | base\|1 | 80000000 | 39.59 | 5.06 | 9.89 | 3.68 | 539 | 3.33 |
+| r4h | 5 | base\|3 | 80000000 | 39.53 | 5.07 | 9.86 | 3.79 | 538 | 3.30 |
+
+- **The colour tile's enable bit (bit 0) is +11%: 36.2 -> 40.2 fps**, the
+  GPU's wait per frame 5.4 -> 3.3 ms. pbkit's tile 0 (`base|2`) is not
+  enabled, as envytools has it. base|1 and base|3 are the same.
+- Z compression: nothing either way (off, Z16 format, Z24S8 format all
+  within 0.6 fps), so `OCX_Z16_TILE_FLAGS` and bits 1 and 8 can go.
+- Shots (r4i-r4l, MX_TILE 0, 3, 5, 8, ticks 200/500/800/1200): 8 against
+  0 byte for byte. With the colour tile on (3, 5) every shot is the
+  tile-off shot's 16-byte chunks rearranged, exactly (same multiset, all
+  four shots): the CPU at pbkit's 0x8xxxxxxx addresses reads the raw tiled
+  layout, the picture the GPU drew is the same. The display was right (the
+  user watched the runs).
+- So the CPU paths into the framebuffer need the tile's view: the settings
+  menu (`xhw_overlay.c`, release builds too), BACK screenshots, the CPU EFB
+  readback (`XGX_EFB_GPU_COPY=0`, debug traces). Round 5 tries the NV2A's
+  aperture (BAR1, 0xF0000000 + physical) for them (`nv2a.c` `fb_cpu`).
+
+### Console round 5 (2026-10-03)
+
+Five runs of one XBE (round 4's plus `fb_cpu`): the title's settings menu
+with MX_TILE 0 and 4 (`[AUTOPAD] NEXT` chains on with the menu open),
+lockstep shots with 0 and 4 (with 4 each shot written twice: through the
+aperture and at pbkit's address), then Fountain 120 s with 4.
+
+- The aperture goes through the tile: the four tile-on shots read there
+  are byte for byte the tile-off ones (and round 4's r4i); read at
+  pbkit's address they are the tiled layout. The menu (written through
+  the aperture) and title shots are the same with the tile on and off,
+  and the user saw the titles right on the TV.
+- r5e: 39.4 fps with the tile (round 4: 40.2; r5d's render bucket holds
+  its doubled shots).
+- `XGX_TILE` 4 is the default (`decisions.md`).
+
 ### Other facts
 
 - The profile is flat: the report's top 192 buckets (12 KB of code) hold
@@ -592,6 +642,8 @@ may go ahead.
 | E audio mixer | done (branch `fps-e`): ADPCM decoded in runs per frame with an s32 sum, a frame's source positions planned before the mix, the float math four outputs a step in SSE1, the output clamp in SSE1, the reverb in stretches between line wraps; `test_audio_mix.py` same bits (SSE1 and plain C, i686 too) | mixer only (static i686 counts): a resampled ADPCM voice ~146 -> ~62 a sample, 1:1 music ~108 -> ~52, silent ~112 -> ~38, reverb ~110 -> ~67 a sample and channel | round 2 (`[PERF]` audio, window 6) |
 | `PObjSetupMtx` (render) | branch `fps-pobj`: v50 profile has it at 7.2% own and ~6% more in its calls (at its call sites: memo `memcpy` 1.5%, `MTXCopy` 0.65%, view `C_MTXConcat` 1.3%, inverse transpose 1.2%, GX loads 0.7%), and ~1.7% on the zeroing stores of its locals; memo entries filled in place, no zeroing, SSE inverse transpose, prefetch hints; `test_pobj_mtx.py` | not run (expect -3 to -5% of all samples) | round 2 |
 | D stage collision (`mplib.c`) | branch `fps-d`: exact per-line rejects in the line loops (`test_mplib.py`: same results, 93% of Fountain's line tests skipped) | | round 3 |
+| round 4 / tile regions | done (2026-10-03), read under "Console round 4": the colour tile enabled 40.2 fps (+11% on round 3's 36.2), Z compression settings nothing; the picture the same, but the CPU sees the tiled layout | | r4b-r4l |
+| colour tile default | done (round 5): `XGX_TILE` 4 by default, the CPU's framebuffer access through the NV2A's aperture (`fb_cpu`): shots there byte for byte the untiled ones, the settings menu right | 0 (GPU only) | r5a-r5e; 480p not run yet |
 | gate: E, D, `PObjSetupMtx` | merged 8f3584d: lockstep gl shots byte for byte as fps-exec's (frames 200, 500), `[SIMH]` equal through Fountain's whole match; host tests on i686 with SSE math too | sim -9.2% / tick, render -7.7% / draw against fps-exec (Fountain; the comparison run had B3 on, ~3% of sim) | round 3: 36.2 fps with LTO + PGO; the user heard the mixer right |
 
 All gates: xemu `-icount`, `[SIMH]` identical up to the match's end, gl

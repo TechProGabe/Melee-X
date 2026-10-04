@@ -1282,6 +1282,24 @@ static void fps_overlay(void) {
         }
 }
 
+/* The CPU's view of a framebuffer. With tile 0 enabled (XGX_TILE 2 or 4,
+ * the default; tiles_setup) the GPU and the display see the framebuffers
+ * through the tile's address mapping, and the CPU at pbkit's addresses
+ * (0x8xxxxxxx) sees the raw tiled layout (console round 4: every 16-byte
+ * chunk is there, rearranged). The NV2A's memory aperture (BAR1,
+ * 0xF0000000 + physical) is the GPU's own window on the same memory and
+ * goes through the tile (round 5: shots through it byte for byte the
+ * untiled ones): the settings menu, screenshots and the CPU EFB readback
+ * use it. Without the tile, or without the mapping, this is fb itself. */
+static uint8_t* s_fb_ap;
+static uint32_t s_fb_ap_base, s_fb_ap_end;   /* physical range s_fb_ap covers */
+
+static void* fb_cpu(void* fb) {
+    uint32_t phys = (uint32_t)(uintptr_t)fb & 0x03FFFFFFu;
+    if (!s_fb_ap || phys < s_fb_ap_base || phys >= s_fb_ap_end) return fb;
+    return s_fb_ap + (phys - s_fb_ap_base);
+}
+
 /* The settings menu (xgx.h): the CPU writes it into the finished frame, so
  * a frame that shows it waits for the GPU first. Only the title screen
  * has it. */
@@ -1315,15 +1333,15 @@ void xgx_present(int black) {
     if (!XGX_OVERLAP || ovl || s_fbdump_once || s_shot_once ||
         (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0))
         wait_idle();
-    if (ovl) xhw_overlay_draw(pb_back_buffer(), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch(), &s_ovl);
+    if (ovl) xhw_overlay_draw(fb_cpu(pb_back_buffer()), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch(), &s_ovl);
     if (s_ovl_ttl > 0) s_ovl_ttl--;
     if (s_fbdump_once || (XHW_FBDUMP_EVERY && (s_frame + 1) % XHW_FBDUMP_EVERY == 0)) {
         s_fbdump_once = 0;
-        xhw_fbdump(pb_back_buffer(), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());
+        xhw_fbdump(fb_cpu(pb_back_buffer()), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());
     }
     if (s_shot_once) {
         s_shot_once = 0;
-        xhw_fbdump_file(pb_back_buffer(), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());
+        xhw_fbdump_file(fb_cpu(pb_back_buffer()), s_fbw, s_fbh, s_bpp, (int)pb_back_buffer_pitch());
     }
     if (s_shot_req) {
         s_shot_req = 0;
@@ -3015,7 +3033,7 @@ static void read_rect_cpu(const int32_t src[4], uint32_t dw, uint32_t dh, uint32
     wait_idle();
     pb_open();
     /* write-combined memory: every read here is an uncached bus cycle */
-    fb = (const uint8_t*)pb_back_buffer();
+    fb = (const uint8_t*)fb_cpu(pb_back_buffer());
     pitch = pb_back_buffer_pitch();
     if (dw > 1024) dw = 1024;
     /* the column map is the same for every row: once per copy, not per pixel */
@@ -3516,8 +3534,11 @@ void xgx_read_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, uint8_t*
  * layout only: a tile region is the memory controller's address mapping,
  * the same for every client, and Z compression stores a block only when
  * its depths come back exactly, so the picture can't change. Bits of
- * -DXGX_TILE (default 0, pbkit's setup untouched; test builds also take
- * "env MX_TILE=n" from the autopad script):
+ * -DXGX_TILE (default 4; 0 leaves pbkit's setup; test builds also take
+ * "env MX_TILE=n" from the autopad script). Console rounds 4 and 5: the
+ * colour tile's enable bit (2 or 4) is +11% at 720p on Fountain (36.2 ->
+ * 40.2 fps), the picture byte for byte the same; the Z compression
+ * settings (1, 8) changed nothing:
  *   1 the Z16 depth tile compresses as Z16 (no 0x04000000), as
  *     -DOCX_Z16_TILE_FLAGS=0x80000001 would; nothing at 32 bits
  *   2 tile 0 (colour) gets the enable bit as envytools has it: base | 1
@@ -3527,7 +3548,7 @@ void xgx_read_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, uint8_t*
  * 1280 wide; not with -DXHW_VIDEO_480_BPP=16, 1280 bytes in a 1536 tile).
  * The "[NV2A] tiles" line at boot reads all eight regions back either way. */
 #ifndef XGX_TILE
-#define XGX_TILE 0
+#define XGX_TILE 4   /* pbkit's base | 2 plus the enable bit */
 #endif
 static int s_tile = XGX_TILE;
 
@@ -3572,8 +3593,17 @@ static void tiles_setup(void) {
         if (z1 != VIDEOREG(NV_PFB_ZCOMP + 4)) tile_write(NV_PFB_ZCOMP + 4, NV_PGRAPH_ZCOMP_XBOX + 4, 0x90 + 4, z1);
         VIDEOREG(NV_PFIFO_CACHE1_DMA_PUSH) = old;
     }
-    n = snprintf(line, sizeof line, "[NV2A] tiles (XGX_TILE %d%s%s), tags %u:", s_tile, fb_ok ? "" : ", fb pitch differs",
-                 z_ok ? "" : ", depth pitch differs", (unsigned)VIDEOREG(0x100320));
+    if (VIDEOREG(NV_PFB_TILE) & 1) {   /* fb_cpu: the tiled framebuffers through the aperture */
+        uint32_t base = VIDEOREG(NV_PFB_TILE) & 0x03FFC000u, end = (VIDEOREG(NV_PFB_TLIMIT) | 0x3FFFu) + 1;
+        s_fb_ap = (uint8_t*)MmMapIoSpace(0xF0000000u + base, end - base, PAGE_READWRITE | PAGE_WRITECOMBINE);
+        s_fb_ap_base = base;
+        s_fb_ap_end = end;
+        xhw_logf("[NV2A] tiled framebuffers %08x-%08x: CPU through the aperture at %p", (unsigned)base,
+                 (unsigned)end, (void*)s_fb_ap);
+    }
+    n = snprintf(line, sizeof line, "[NV2A] tiles (XGX_TILE %d%s%s), cfg %08x %08x, tags %u:", s_tile,
+                 fb_ok ? "" : ", fb pitch differs", z_ok ? "" : ", depth pitch differs", (unsigned)VIDEOREG(NV_PFB_CFG0),
+                 (unsigned)VIDEOREG(NV_PFB_CFG0 + 4), (unsigned)VIDEOREG(0x100320));
     for (i = 0; i < 8 && n > 0 && n < (int)sizeof line; i++) {
         uint32_t t = VIDEOREG(NV_PFB_TILE + i * 16), z = VIDEOREG(NV_PFB_ZCOMP + i * 4);
         if (!t && !z) continue;
