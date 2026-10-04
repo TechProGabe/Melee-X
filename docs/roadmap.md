@@ -87,9 +87,17 @@ Fix order (2026-10-04):
    the clear after an EFB copy (logs `~/xemu/hw/logs-tester-100man/`); the
    copy fix since v46 targets it. Confirm with the tester on the next RC.
 7. **Classic Team Kirby card: some Kirbys corrupted** (tester, build not
-   stated). Z-texture mask path. Repro: `MELEE_BOOT_SCENE=classic`,
-   `MELEE_CLASSIC_STAGE_OVERRIDE=8`, `MELEE_CLASSIC_TEAM=kirby`, 480 32-bit
-   and 720p 16-bit; ask for build, mode, photo.
+   stated; GitHub #7). v53 fixes the 16-bit (720p) card: the Z-texture
+   stage read the mask's alpha, which an R5G6B5 copy doesn't keep, so each
+   tile drew whole (one fighter on a black right half, Team Kirby and Team
+   Jigglypuff alike; renderer.md "Z textures"). In xemu the 480 32-bit and
+   16-bit cards now match. Still different from the GameCube: overlapping
+   tiles layer by draw order, not by each fighter's copied depth (the mask
+   has no depth). Repro: `MELEE_BOOT_SCENE=classic`,
+   `MELEE_CLASSIC_STAGE_OVERRIDE=8`, `MELEE_CLASSIC_TEAM=kirby|jiggly`,
+   shots at frames 20-92 (`-DXHW_VIDEO_480_BPP=16` for the 720p path).
+   Confirm on the console at 720p; if 480 still looks wrong there, ask for
+   a photo.
 8. **128 MB consoles always in 64 MB** (user, 2026-10-02): drop `[system]
    ram128` and the menu row, keep `xhw_mem_hold_upper` unconditional,
    ignore old lines; README, platform.md, decisions.md.
@@ -148,6 +156,9 @@ Other open:
 - Classic team cards half black: depth plane priming and `GXSetZTexture`
   as a mask (renderer.md).
 - Star KOs ending at once (`ft_0D31.c`, decisions.md).
+- Pokemon Stadium big-screen text missing (v52 tester log: `sislib: font 1
+  string 5 resolves outside MEM1`): the guard took the XBE static the stage
+  writes into the table for a stray pointer (v53, `sislib.c`).
 - Results 1st-place portrait black (RC1) and tie portraits black
   (decisions.md "Edits to imported code"; `scenarios/res`, `tie`).
 - Stage Clear background black (RC1): EFB copies have alpha 1

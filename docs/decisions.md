@@ -374,6 +374,9 @@ Game fixes:
 - `src/melee/ft/ftparts.c` (`ftParts_80074D7C`): a visibility group whose
   table or non-empty index list points outside MEM1/ARAM is skipped and
   logged once per kind (`[WARN] ftParts:`).
+- `src/sysdolphin/baselib/sislib.c` (`sis_bind`): the "resolves outside
+  MEM1" guard also accepts slots inside the XBE image (a 32-bit host stores
+  `DP_SET` statics raw; Pokemon Stadium's big-screen text was dropped).
 - `src/melee/lb/lbaudio_ax.c` (`lbAudioAx_80027648`): a needed SSM that
   failed to load with nothing pending reloads bank 2 once, then is dropped,
   instead of waiting forever.
