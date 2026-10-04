@@ -418,6 +418,7 @@ melee-pc's harness hooks work on the Xbox:
 
 ```
 env MELEE_BOOT_SCENE=vs        # skip the menus: debug VS (gmvsmode.c); =title: the title screen (BACK: settings menu, scenarios/settings)
+env MELEE_BOOT_SCENE=cutscene  # debug cutscene mode; MELEE_BOOT_CUTSCENE=<state> picks one (gm_Mode_DebugCutscene_States: 5 = Adventure Corneria's Star Fox scene)
 env MELEE_DEBUG_VS_STAGE=10    # StKind (src/melee/gr/forward.h): 10 = Mute City
 env MELEE_DEBUG_VS=cpu4        # Link, Mario, Fox and DK as four CPUs
 env MELEE_DEBUG_VS_TIME=20     # a 20-second timed match: ends on TIME!
