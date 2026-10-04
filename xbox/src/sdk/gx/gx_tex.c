@@ -352,6 +352,16 @@ static void drop_at(int i) {
 
 static void drop(Entry* e) { drop_at((int)(e - s_cache)); }
 
+/* Textures unused this long are released (gx_tex_frame_end). EFB copies
+ * are kept: one can't be made again from memory, and the game binds a
+ * copy's destination before the copy of the frame (Pokémon Stadium's big
+ * screen, back on the fight camera or the close-up after ~10 s of other
+ * views), where the GameCube shows the copy still in memory and an upload
+ * of the destination showed what the copy never wrote (garbage, black in
+ * xemu). A copy idle that long binds only as the size it was copied at,
+ * and goes at a scene change (gx_tex_scene_leave). */
+#define TEX_IDLE_FRAMES 600
+
 void gx_tex_flush_all(void) {
     int i;
     for (i = s_count - 1; i >= 0; i--)
@@ -363,8 +373,13 @@ void gx_tex_flush_all(void) {
  * only makes the frame upload them again, or drop them). An EFB copy can't
  * be made again from memory, so among the older entries it counts as
  * EFB_GRACE frames younger than it is: textures are re-uploaded first, but
- * a stale copy still goes. -1: nothing to evict. */
+ * a stale copy still goes. A destination copied to again (efb 2: a screen,
+ * a shadow map) counts as EFB_REPEAT_GRACE frames younger: Pokémon
+ * Stadium's screen copy waits out ~10 s of other views, and the attract
+ * demo's copies, a new destination each frame, still go first. -1: nothing
+ * to evict. */
 #define EFB_GRACE 60
+#define EFB_REPEAT_GRACE 3600
 static int lru_victim(void) {
     int i, pick = -1, pick_hot = -1;
     int32_t best = 0;
@@ -372,7 +387,8 @@ static int lru_victim(void) {
         const Entry* e = &s_cache[i];
         if (is_bound(e->tex)) continue;
         if (e->last_used != s_frame) {
-            int32_t rank = (int32_t)(s_frame - e->last_used) - (e->efb ? EFB_GRACE : 0);   /* higher: evict first */
+            int32_t rank = (int32_t)(s_frame - e->last_used) -
+                           (e->efb > 1 ? EFB_REPEAT_GRACE : e->efb ? EFB_GRACE : 0);   /* higher: evict first */
             if (pick < 0 || rank > best) {
                 pick = i;
                 best = rank;
@@ -399,11 +415,15 @@ static int only_hot_left(void) {
 int gx_tex_grow_for_frame(void) { return only_hot_left() && xgx_tex_pool_grow(); }
 
 /* Scene change: textures in the overflow pool go, then the pool itself
- * (xgx_tex_pool_grow). The next scene uploads what it draws. */
+ * (xgx_tex_pool_grow), and EFB copies idle for TEX_IDLE_FRAMES (a copy in
+ * use stays: Stage Clear's freeze frame is the match's last frame). The
+ * next scene uploads what it draws. */
 void gx_tex_scene_leave(void) {
     int i;
     for (i = s_count - 1; i >= 0; i--)
-        if (xgx_tex_in_overflow(s_cache[i].tex)) drop_at(i);
+        if (xgx_tex_in_overflow(s_cache[i].tex) ||
+            (s_cache[i].efb && s_frame - s_cache[i].last_used > TEX_IDLE_FRAMES))
+            drop_at(i);
     xgx_tex_pool_shrink();
 }
 
@@ -706,6 +726,10 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
     /* the GX size (never 0: w and h are) only when the texels are hashed or
      * uploaded, not for a lookup that finds a texture already checked */
     e = find(o->data, o->w, o->h, o->fmt, (uint8_t)levels, tl ? tl->data : NULL);
+    if (e && e->efb && s_frame - e->last_used > TEX_IDLE_FRAMES && (e->w != o->w || e->h != o->h)) {
+        drop(e);   /* an idle copy's memory, now a texture of another size */
+        e = NULL;
+    }
     if (e && !e->efb && tex_due(e)) {
         EntryCold* c = cold_of(e);
         int quick = c->stable >= TEX_STABLE, texels;
@@ -836,6 +860,7 @@ void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h
             s_cache[hit].h = (uint16_t)h;
             s_cache[hit].fmt = (uint8_t)fmt;
             s_cache[hit].last_used = s_frame;
+            s_cache[hit].efb = 2;   /* copied to again (lru_victim) */
             return;
         }
         drop_at(hit);
@@ -855,7 +880,7 @@ void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h
     }
 }
 
-/* textures unused for ~10 s are released */
+/* textures unused for ~10 s are released (TEX_IDLE_FRAMES), EFB copies not */
 #ifndef XGX_STATS_EVERY
 #define XGX_STATS_EVERY 600
 #endif
@@ -895,7 +920,7 @@ void gx_tex_frame_end(void) {
     }
     s_frame++;
     for (i = 0; i < s_count; i++)
-        if (s_frame - s_cache[i].last_used > 600) {
+        if (!s_cache[i].efb && s_frame - s_cache[i].last_used > TEX_IDLE_FRAMES) {
             drop_at(i);
             i--;
         }
