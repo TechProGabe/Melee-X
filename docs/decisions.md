@@ -381,6 +381,17 @@ Game fixes:
   SSM that overflows its bank is dropped without its callback (it was
   requeued forever); `lbaudio_ax.c` (`lbAudioAx_80023B24`, the sound test)
   waits for loads in flight before emptying bank 2.
+- `synth.c` (v53): `HSD_SynthSFXUnloadBank` and `HSD_SynthSFXGroupDataRemove`
+  change the bank lists and the sound-effect hash under the interrupt
+  lock, which the load completions (DVD/ARQ worker threads) hold; on the
+  GameCube those completions were interrupts and couldn't land mid-change.
+  Hash walks (`HSD_Synth_80389334`, `HSD_SynthSFXDataUnlink`) check each
+  entry lies inside the audio heap's allocations (`pc_sfx_entry_ok`); a
+  broken link skips the sound with `[WARN] sfx N: bucket B chain broken`
+  instead of crashing (tester crash, v52: `HSD_SynthSFXPlayWithGroup`
+  reading address 3 after 14 VS matches). With it, `OSAlloc` (os.c) takes
+  its own lock: the audio heap is allocated from on those workers and freed
+  on the game thread.
 
 Speed (same results, bit for bit where a test is named):
 - HSD animation and matrices (`test_anim_mtx.py`, `anim_mtx_ref.c`; a NaN
