@@ -295,7 +295,7 @@ aperture and at pbkit's address), then Fountain 120 s with 4.
   its doubled shots).
 - `XGX_TILE` 4 is the default (`decisions.md`).
 
-### Console round 6, the final one (staged)
+### Console round 6, the final one (2026-10-04)
 
 One XBE, built as releases will be (ThinLTO + PGO on a profile retrained
 with the GX front-end change, the colour tile on) plus autopad; 15 runs
@@ -313,8 +313,43 @@ with the GX front-end change, the colour tile on) plus autopad; 15 runs
 | r6n | the settings menu at 720p | drawn right (shot) |
 | r6o | 4 minutes of copy stress (`MX_COPY_STRESS=40`) with `MX_COPY_FIX=7` | the merged clear doesn't bring back the GPU stall |
 
-Read with `console_round.py 6 report` and `console_round.py 6 shots`
-(the `[TRIM]` lines say how many draws each trim met).
+Read with `console_round.py 6 report` and `console_round.py 6 shots`.
+
+| run | what | fps | sim | render | draw | GPU busy | wait |
+|---|---|---|---|---|---|---|---|
+| r6a | warm-up | 39.47 | 5.17 | 9.75 | 5.41 | 550 | 3.37 |
+| r6b | defaults | **39.77** | 4.91 | 9.67 | 5.47 | 548 | 3.43 |
+| r6c | `MX_COPY_FIX=7` | 39.82 | 4.94 | 9.47 | 5.51 | 549 | 3.49 |
+| r6d | `MX_TRIM=15` | 39.90 | 4.90 | 9.62 | 5.48 | 545 | 3.42 |
+| r6e | both | 39.94 | 4.90 | 9.47 | 5.53 | 546 | 3.47 |
+| r6f | defaults | **39.97** | 4.90 | 9.52 | 5.41 | 547 | 3.54 |
+| r6g | Final Destination 1v1 | 59.71 (the 60 cap) | 1.84 | 3.82 | 2.04 | 28 | 0.16 |
+| r6h | 480p, tile on | **45.47** | 4.31 | 9.70 | 5.35 | 409 | 1.15 |
+| r6i | 480p, tile off | 42.46 | 4.63 | 9.74 | 5.43 | 484 | 2.14 |
+
+- **The release build: 39.9 fps on Fountain 4-CPU at 720p, +25% on dev's
+  32.0** (round 3's baseline); Final Destination holds 60. At 480p the
+  colour tile is +7% (42.5 -> 45.5).
+- The GX front-end change: within the noise (round 5's r5e 39.4, round 4
+  40.2); render 9.5-9.7 ms against 9.8-10.0.
+- State trims: the `[TRIM]` census over the match finds 0 draws with a
+  ONE/ZERO blend, 0 with an always-passing alpha test, 0 that write
+  nothing, ~2 a frame with depth ALWAYS and no write (the blends are
+  SRCALPHA/INVSRCALPHA, enabled or not, and SRCALPHA/ONE; the alpha tests
+  GEQUAL 1 AND LEQUAL 255 or off). Nothing to gain: removed (56d5ab1).
+- The merged clear: nothing (39.82, 39.94 with the trims). The copy
+  stress with it ran its 4 minutes without a stall (r6o, 13 fps under
+  40 repeats a copy), but `XGX_COPY_FIX` stays 5, the configuration with
+  22 minutes of stress behind it.
+- Shots: 480p tile off and on byte for byte the same (all four); the
+  settings menu the same as round 5's; at 720p three of four the same
+  between defaults and both switches, and the same as rounds 4 and 5. The
+  fourth (tick 500) of the defaults run has one 32-bit word (2 pixels,
+  644-645,519) dark on the fountain's rim; `[SIMH]` and every other shot
+  match, xemu's shot of that build at that tick has no speck, and the
+  switches' run has the earlier rounds' bytes. One word in one of 15
+  shots: a transient write or read, not a rendering difference (that
+  would repeat); open until a repeat run shows it again (`roadmap.md`).
 
 ### Other facts
 
@@ -667,9 +702,9 @@ may go ahead.
 | colour tile default | done (round 5): `XGX_TILE` 4 by default, the CPU's framebuffer access through the NV2A's aperture (`fb_cpu`): shots there byte for byte the untiled ones, the settings menu right | 0 (GPU only) | r5a-r5e; 480p not run yet |
 | gate: E, D, `PObjSetupMtx` | merged 8f3584d: lockstep gl shots byte for byte as fps-exec's (frames 200, 500), `[SIMH]` equal through Fountain's whole match; host tests on i686 with SSE math too | sim -9.2% / tick, render -7.7% / draw against fps-exec (Fountain; the comparison run had B3 on, ~3% of sim) | round 3: 36.2 fps with LTO + PGO; the user heard the mixer right |
 | GX front-end lookups (render) | branch `fps-cpu`: as shares of the v50 profile's render samples (render ~48% of all), the texture lookup `find` is 2.0%, `gx_tex_bind` 1.4%, `GXLoadTexObj` 0.5%, `GXGetTexBufferSize` 0.3%, their `memcmp`/`memcpy` calls 0.6%, `gx_dl_culled` 2.8%; texture cache entries split hot/cold (one 32-byte line per probe, was two), no second `bind_unchanged`, word compares instead of `memcmp` calls, the GX size only to hash or upload, upload out of line; the clip planes kept per projection (`gx_cull.h`, `gx_proj_gen`); `test_tex_cache.py` (same trace as `gx_tex_ref.c`), `test_dl_cull.py` (same culls and plane bits); no imported code | expect render -2 to -2.5% (~0.2 ms a frame); merged 4b42a47, lockstep Fountain shots (ticks 200, 500) and `[SIMH]` the same in xemu | round 6 |
-| state trims | branch `fps-trim`, merged 41be939: `-DXGX_TRIM` / `env MX_TRIM` (default 0): blend ONE/ZERO off, an alpha test that passes every alpha off, depth ALWAYS without a write off, draws that write nothing not sent; `[TRIM]` census in test builds; xemu: `MX_TRIM=15` shots and `[SIMH]` the same | | round 6 A/B (r6d, r6e, r6m) |
-| merged clear | `MX_COPY_FIX=7` (bit 2, colour and depth in one `CLEAR_SURFACE`, untried since v45): xemu shots and `[SIMH]` the same | | round 6 A/B (r6c, r6e, r6m) and the copy stress (r6o) |
-| round 6 (final) | staged: see "Console round 6" | | |
+| state trims | rejected by round 6 and removed (56d5ab1): the census found almost no draws they apply to (0, 0, ~2 a frame, 0), fps the same | | r6d, r6e |
+| merged clear | `MX_COPY_FIX=7`: nothing in round 6 (39.82 against 39.77/39.97), stress clean for 4 minutes; the default stays 5 | | r6c, r6e, r6o |
+| round 6 (final) | done (2026-10-04), read under "Console round 6": the release build 39.9 fps on Fountain 720p (+25% on dev), FD at 60, 480p +7% with the tile; shots the same but one 2-pixel speck in one shot, open | | r6a-r6o |
 
 All gates: xemu `-icount`, `[SIMH]` identical up to the match's end, gl
 (and Fountain where it matters) screenshots the same. One open oddity:

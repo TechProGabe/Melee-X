@@ -435,6 +435,14 @@ addresses their animation reads, prefetched three nodes ahead. Round 2
 (r2f): +1.3% fps, within the noise, and the simulation it aimed at 2.4%
 slower.
 
+**Pixel state is sent as GX sets it (state trims, tried and removed).**
+`XGX_TRIM` sent identity state cheaper: a ONE/ZERO blend off, an alpha
+test that passes every alpha off, depth ALWAYS without a write off, draws
+that write nothing skipped. Exact, and the same shots in xemu, but round 6's
+census over a Fountain match found 0, 0, ~2 a frame and 0 draws that
+qualify (Melee blends SRCALPHA/INVSRCALPHA or SRCALPHA/ONE, and its alpha
+tests are real), and the frame rate didn't move. Removed (56d5ab1).
+
 **Screenshots compare across builds by lockstep (`env MX_LOCKSTEP=1`).**
 Gating a speed-up by screenshot needs the shots of both builds at the same
 tick, and under xemu the faster build gets through more frames per tick.
