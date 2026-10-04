@@ -251,6 +251,18 @@ misses in lookups and revalidation rather than useful work. v33:
   `-ftrivial-auto-var-init`, `HSD_MtxInverseTranspose` computes its
   cofactors in SSE from one read of each row, and the walk prefetches the
   next envelope and a new envelope's joints. Same matrices, same bits.
+- After v50, GX front end (the render bucket's lookups): the texture
+  cache's entries keep what a bind reads (key, chain, handle, the frames it
+  was checked and used) in one aligned 32-byte line and the hashes in a
+  second array (`find` was ~2% of the v50 console's render samples, nearly
+  all on the two lines a 48-byte entry spread those fields over);
+  `GXLoadTexObj` binds a changed object without asking `bind_unchanged`
+  again, compares texture objects and maps as words instead of `memcmp`
+  calls, and works out the GX size only to hash or upload; the upload path
+  stays out of line. `gx_dl_culled` makes its five clip planes once per
+  projection (`gx_cull.h`, `gx_proj_gen`) instead of for every list (~150
+  of its ~350 instructions). Same textures, binds, dirty bits and culls
+  (`test_tex_cache.py`, `test_dl_cull.py`).
 - After v45, per draw: a texture unit built from the same inputs as the
   registers it last sent (texture handle, the map's wrap, filters and LOD
   bias, the unit kind, and an epoch every texture made or freed bumps)

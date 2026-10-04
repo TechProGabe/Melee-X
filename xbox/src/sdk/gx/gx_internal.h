@@ -29,6 +29,9 @@ typedef struct {
 } GxFront;
 
 extern GxFront g_gx;
+/* changes of g_xgx.proj (GXInit, GXSetProjection; nothing else writes it):
+ * gx_dl_culled keeps its clip planes per generation (gx_cull.h) */
+extern uint32_t gx_proj_gen;
 
 void gx_vtx_reset(void);
 void gx_vtx_flush(void);   /* submit a pending GXBegin batch */
