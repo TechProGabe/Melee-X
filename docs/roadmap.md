@@ -113,6 +113,14 @@ Fix order after RC2 (2026-10-02), details in the entries below:
    tell the player on screen once, non-fatally: "Sound hardware is stuck
    after a crash. Turn the Xbox off and on to get sound back." Test
    builds also log it as one `[AUDIO] stuck since boot` line.
+10. The simulation isn't deterministic on the console (docs/fps-plan.md
+   round 3): Fountain 4-CPU, seed 1, runs of one build part at tick
+   4440-4500 into three outcomes (the random seed first), the same three in
+   rounds 2 and 3; xemu -icount runs never part. Something timing-dependent
+   draws random numbers (candidates: sound voices finishing on the mixer's
+   own clock, asynchronous loads). Harmless to play; it rules out replays
+   and hardware [SIMH] gates. To do: log HSD_Randi's callers around tick
+   4440-4500 on the console and find the branch.
 
 - Fixed on dev: the v1 release hung on the intro movie (GitHub #5, #6,
   reddit), at any video mode. `xgx_present` called pbkit's `pb_finished`
