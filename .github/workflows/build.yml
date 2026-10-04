@@ -50,7 +50,12 @@ jobs:
       - name: Toolchain
         run: tools/xbox/setup.sh
 
+      # ThinLTO + PGO with the committed profile (docs/pgo.md): console
+      # rounds 2-6 (docs/fps-plan.md), +13% on Fountain 4-CPU at 720p
       - name: Build default.xbe
+        env:
+          XBOX_LTO: "1"
+          XBOX_PGO: xbox/melee.profdata
         run: xbox/build.sh
 
       # $$XTIMAGE section, title ID 4D580001 and default.tbn (as tools/xbox/docker/build.sh does)

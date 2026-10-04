@@ -397,6 +397,16 @@ layout order and the freestanding image both stay. ThinLTO imports only
 functions of up to 10 instructions: more inlining paid in code size, which
 the console's 16 KB code cache pays for.
 
+**Releases are ThinLTO + PGO (2026-10-03, the user's call).** Console
+rounds 2 and 3 measured them at +13% on Fountain 4-CPU at 720p against
+dev, with `[SIMH]` and lockstep shots the same as a plain build in xemu.
+The user decided they become the release default once the fps work is in
+and confirmed on the console: the `build` workflow passes both knobs and
+`package_release.py` refuses a build without them. Local builds stay plain
+(faster to build; the knobs are for releases and console rounds). The
+profile is retrained (`tools/xbox/pgo_train.sh`) after game or sdk code
+changes, or the changed functions build without it.
+
 ### Stall candidates (round 1, 2026-10-03)
 
 Console round 1 (`docs/fps-plan.md` "Console round 1") picked three
