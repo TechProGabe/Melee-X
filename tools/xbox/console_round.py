@@ -61,7 +61,7 @@ CHAINS[2] = [
 # round 3: the final build (LTO + PGO, profile retrained) twice, B2 twice,
 # and A2's function order off, with and without LTO + PGO (round 2's r2a
 # ran 3.4% below dev's baseline)
-B2 = {'MX_MEM1_LARGE': '6'}
+B2 = {'MX_MEM1_LARGE': '6'}   # B2, removed after round 3
 CHAINS[3] = [
     ('Melee-X-r3a', 'ltopgo', 'fod', {}),
     ('Melee-X-r3b', 'ltopgo', 'fod', B2),

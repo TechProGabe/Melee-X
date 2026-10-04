@@ -141,7 +141,6 @@ void xhw_quit_to_dashboard(void) {
     xhw_led_shutdown();
     xhw_audio_shutdown();
     xhw_pad_shutdown();
-    xhw_lazy_large_release();
     XLaunchXBE(NULL);
     for (;;) Sleep(1000);
 }
@@ -156,7 +155,6 @@ static void __attribute__((noreturn)) launch(char* path) {
     xhw_led_shutdown();
     xhw_audio_shutdown();
     xhw_pad_shutdown();
-    xhw_lazy_large_release();
     XLaunchXBE(path);
     HalReturnToFirmware(HalRebootRoutine);
     for (;;) Sleep(1000);
