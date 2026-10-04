@@ -66,7 +66,10 @@ void xhw_error_screen(const char* title, const char* const* lines) {
 
 void xhw_fatal(const char* title, const char* msg) {
     const char* lines[2] = { msg, NULL };
+    char why[96];
     xhw_logf("[FATAL] %s: %s", title, msg);
+    snprintf(why, sizeof why, "fatal error screen (%s)", title);
+    xhw_exit_reason(why);
     xhw_error_screen(title, lines);
     Sleep(15000);
     xhw_quit_to_dashboard();
@@ -86,6 +89,7 @@ static void fatal_no_disc(void) {
         NULL,
     };
     xhw_logf("[BOOT] no disc image in D:\\");
+    xhw_exit_reason("no disc image");
     xhw_error_screen("No disc image found", lines);
     Sleep(30000);
     xhw_quit_to_dashboard();
@@ -97,6 +101,50 @@ static void read_image_range(void) {
     const unsigned char* xbe = (const unsigned char*)0x00010000;
     xhw_image_base = *(const unsigned int*)(xbe + 0x104);
     xhw_image_end = xhw_image_base + *(const unsigned int*)(xbe + 0x10C);
+}
+
+/* How the previous boot ended, for roadmap item 9 (silent boots after a
+ * crash or a power-off): each way out of the XBE that runs code writes
+ * lastexit.txt in the save folder, and the next boot logs it and deletes
+ * it. No file: the console was switched off or reset, or the XBE killed
+ * (or the previous build didn't write one). Failures are ignored. */
+#define EXIT_FILE XHW_UDATA_DIR "lastexit.txt"
+static char s_exit_why[96];
+
+void xhw_exit_reason(const char* why) { snprintf(s_exit_why, sizeof s_exit_why, "%s", why); }
+
+void xhw_exit_write(const char* why) {
+    char line[128];
+    DWORD w;
+    int n;
+    HANDLE h;
+    if (!why) {   /* the game went on after all */
+        DeleteFileA(EXIT_FILE);
+        return;
+    }
+    n = snprintf(line, sizeof line, "%s, retrace %u\r\n", why, xhw_frame_count());
+    h = CreateFileA(EXIT_FILE, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return;
+    if (n > (int)sizeof line - 1) n = (int)sizeof line - 1;
+    WriteFile(h, line, (DWORD)n, &w, NULL);
+    xhw_flush_handle(h);
+    CloseHandle(h);
+}
+
+static void log_previous_exit(void) {
+    char buf[128];
+    DWORD got = 0;
+    HANDLE h = CreateFileA(EXIT_FILE, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        xhw_logf("[BOOT] previous exit: not recorded (switched off, reset or killed)");
+        return;
+    }
+    if (!ReadFile(h, buf, sizeof buf - 1, &got, NULL)) got = 0;
+    CloseHandle(h);
+    DeleteFileA(EXIT_FILE);
+    while (got && (buf[got - 1] == '\n' || buf[got - 1] == '\r')) got--;
+    buf[got] = '\0';
+    xhw_logf("[BOOT] previous exit: %s", got ? buf : "(empty record)");
 }
 
 static void main_body(void* arg) {
@@ -112,6 +160,7 @@ static void main_body(void* arg) {
     read_image_range();
     xhw_logf("[BOOT] image %08x-%08x %.*s", xhw_image_base, xhw_image_end, (int)XeImageFileName[0].Length,
              XeImageFileName[0].Buffer);
+    log_previous_exit();
     xhw_watchdog_start();
     xhw_prof_set_game_thread();
     xhw_prof_start();
@@ -138,6 +187,7 @@ int main(void) {
 }
 
 void xhw_quit_to_dashboard(void) {
+    xhw_exit_write(s_exit_why[0] ? s_exit_why : "quit to the dashboard");
     xhw_led_shutdown();
     xhw_audio_shutdown();
     xhw_pad_shutdown();
@@ -152,6 +202,7 @@ void xhw_quit_to_dashboard(void) {
  * quick-reboots and doesn't come back; it returns only when the path has
  * no folder in it, and then the console reboots. */
 static void __attribute__((noreturn)) launch(char* path) {
+    xhw_exit_write(s_exit_why[0] ? s_exit_why : "relaunch");
     xhw_led_shutdown();
     xhw_audio_shutdown();
     xhw_pad_shutdown();
@@ -200,6 +251,7 @@ void xhw_launch_xbe(const char* dos_path) {
             xhw_log_keep(line);
         }
     }
+    xhw_exit_reason("next XBE of a console round");
     if (strcmp(dos_path, "dashboard") == 0) xhw_quit_to_dashboard();
     launch(path);
 }
