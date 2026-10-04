@@ -331,7 +331,7 @@ the GPU's frame. None of it changes a release; outside a probe build the
   720p. pbkit gives the depth buffer's tile compression tags with the
   32-bit flag (`0x84000001`) also for Z16; `-DOCX_Z16_TILE_FLAGS` sets the
   Z16 tile's flags for a console A/B (`docs/testing.md`), the default is
-  unchanged. Clear colours go to pbkit's `pb_fill` as A8R8G8B8, which
+  unchanged (`-DXGX_TILE` bit 1 does the same at run time, "Tile regions"). Clear colours go to pbkit's `pb_fill` as A8R8G8B8, which
   converts them to the surface's format: `clear_fb` converted them to
   R5G6B5 first as well, so every 16-bit clear colour (a stage's fog-coloured
   clear) came out near black.
@@ -339,6 +339,45 @@ the GPU's frame. None of it changes a release; outside a probe build the
   depth resolution at distance `d`; xemu 0.8 floors depth to 16 bits as
   the hardware does, and the 720p Dream Land and Pokémon Stadium runs show
   no z-fighting.
+
+### Tile regions
+
+The NV2A's memory controller has eight tile regions (`NV_PFB_TILE`, with
+copies in PGRAPH and its RDI that must match): a range of memory with a
+pitch from a fixed table, base and size 16 KB aligned, laid out so that a
+2D block of a surface falls into one DRAM page. The mapping is by address
+and the same for every client (rendering, texture reads, scan-out, and
+on NV2x PCs host reads, which nouveau relies on), so it changes no pixel.
+A region can also have Z compression (`NV_PFB_ZCOMP`): blocks of depth
+that one plane describes exactly are stored in fewer bytes, a tag per
+block says which; a block that doesn't fit stays uncompressed, so this
+can't change a pixel either, but the CPU must not read such a buffer and
+it can't be sampled as a texture (the Z-texture mask below).
+
+`pb_init` sets them up as the XDK does: tile 0 over the three framebuffers,
+tile 1 over the depth buffer with compression (tag base 0), both pitches
+2560 bytes at 720p and at 480, which the table has. Two things look off:
+
+- pbkit writes a tile's base word as `base | 2 | (flags & 1)`, so tile 0
+  (flags 0) gets `base | 2`, tile 1 `base | 3`. envytools (NV20-NV30),
+  nouveau (`nv20_fb.c`, which NV2A uses) and xemu's `nv2a_regs.h` all have
+  bit 0 as the region's enable and bit 1 as a bank offset: by them the
+  framebuffers are not tiled at all. Whether the NV2A follows them or
+  pbkit (copied from the XDK) is not known.
+- the compression word's format bit (`0x04000000`, envytools' NV20
+  `FORMAT`: 0 Z16, 1 Z24S8) is set for the Z16 buffer at 720p as well:
+  the compressor then fits Z24S8 planes to pairs of Z16 values, which
+  only a uniform (cleared) block passes.
+
+`-DXGX_TILE=<bits>` (test builds: `env MX_TILE=`) re-programs both in
+`tiles_setup`, at boot before the first frame's clear: 1 the Z16 format,
+2 tile 0 as `base | 1`, 4 tile 0 as `base | 3`, 8 no Z compression (the
+A/B's baseline). The default (0) leaves pbkit's setup. A tile is only
+changed when its pitch is the surface's (not under `-DXHW_VIDEO_480_BPP=16`,
+whose 1280-byte rows sit in 1536-byte tiles). The boot line `[NV2A]
+tiles` reads all eight regions back, their compression words and the tag
+count. xemu ignores tile regions; only the console can say which settings
+are faster (and that the picture stays the same).
 
 ## Vertex programs (`nv2a_vp.c`)
 
