@@ -59,6 +59,7 @@ here than on x86-64:
 | NV2A: texture pool | 6 MB at 720p, 8 MB at 480 |
 | pushbuffer (1 MB) + vertex ring (1.5 MB) | 2.5 MB |
 | NV2A: display-list vertex cache | 4 MB (down to 2 MB if short; 720p had 3 MB) |
+| network (`xhw_net.c`, only once started: LAN play, test builds' probe) | lwIP and the NIC ~144 KB (64 x 2 KB contiguous receive buffers, rings, kernel pool), 64 KB per open UDP socket; its code (~250 KB) is in the image always |
 
 MEM1 and ARAM are reserved at fixed VAs and committed 64 KB at a time
 (`xhw_reserve_lazy`). The first touch of a chunk faults, and the SEH

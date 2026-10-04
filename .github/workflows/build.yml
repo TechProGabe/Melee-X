@@ -78,6 +78,9 @@ jobs:
           python3 tools/xbox/test_audio_mix.py
           python3 tools/xbox/test_mplib.py
           python3 tools/xbox/test_card_endian.py
+          python3 tools/xbox/test_net_ring.py
+          python3 tools/xbox/test_net_gov.py
+          python3 tools/xbox/test_net_audit.py
 
       - uses: actions/upload-artifact@v4
         with:

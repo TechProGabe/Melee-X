@@ -123,6 +123,7 @@ static void main_body(void* arg) {
     if (!find_disc_image(disc, sizeof disc)) fatal_no_disc();
     xhw_logf("[BOOT] disc image %s", disc);
     xhw_autopad_load();
+    xhw_netprobe_boot();   /* test builds: env MX_NETPROBE, MX_LOG_UDP (nothing otherwise) */
     xhw_splash_progress(0.1f);
 
     xsdk_early();
@@ -138,6 +139,7 @@ int main(void) {
 }
 
 void xhw_quit_to_dashboard(void) {
+    xhw_net_shutdown();   /* nothing if the network never started */
     xhw_led_shutdown();
     xhw_audio_shutdown();
     xhw_pad_shutdown();
@@ -152,6 +154,7 @@ void xhw_quit_to_dashboard(void) {
  * quick-reboots and doesn't come back; it returns only when the path has
  * no folder in it, and then the console reboots. */
 static void __attribute__((noreturn)) launch(char* path) {
+    xhw_net_shutdown();
     xhw_led_shutdown();
     xhw_audio_shutdown();
     xhw_pad_shutdown();

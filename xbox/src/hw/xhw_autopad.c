@@ -159,6 +159,7 @@ void xhw_autopad_load(void) {
 
 static volatile uint32_t s_match_tick;   /* xhw_autopad_tick: ticks since the match's first */
 void xhw_autopad_tick(uint32_t tick) { s_match_tick = tick; }
+uint32_t xhw_autopad_match_tick(void) { return s_match_tick; }   /* the network probe (xhw_netprobe.c) */
 
 static DWORD s_match_end;   /* GetTickCount at the match's end, 0 before */
 
@@ -218,4 +219,5 @@ void xhw_autopad_apply(int port, xhw_pad* out) {
 }
 void xhw_autopad_match_end(void) {}
 void xhw_autopad_tick(uint32_t tick) { (void)tick; }
+uint32_t xhw_autopad_match_tick(void) { return 0; }
 #endif

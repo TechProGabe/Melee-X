@@ -1,0 +1,8 @@
+# the network probe (docs/testing.md "Network"): MX_NETPROBE=1 at boot,
+# then a 2-minute Final Destination match, Fox and Mario: 60 s of pings at 60 Hz
+env MX_NETPROBE=1
+env MELEE_BOOT_SCENE=vs
+env MELEE_DEBUG_VS_STAGE=32
+env MELEE_DEBUG_VS_CHARS=2,8
+env MELEE_DEBUG_VS_TIME=120
+env MELEE_SEED=1

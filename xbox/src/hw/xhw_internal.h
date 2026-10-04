@@ -85,6 +85,17 @@ void xhw_pad_shutdown(void);
 void xhw_led_shutdown(void);
 void xhw_led_release(int for_good);
 
+/* xhw_net.c / xhw_netprobe.c (test builds; docs/lan-plan.md phase 0B) */
+enum { XHW_NET_HOW_NONE, XHW_NET_HOW_MANUAL, XHW_NET_HOW_DHCP, XHW_NET_HOW_AUTOIP };
+int xhw_net_how(void);                 /* where the address came from (XHW_NET_HOW_*) */
+uint32_t xhw_net_up_ms(void);          /* ms from xhw_net_start to the address; 0 before */
+uint32_t xhw_net_link_ms(void);        /* ms from xhw_net_start to the first link up; 0 before */
+/* xhw_sys.c: every log line (no newline) also goes here once set: env MX_LOG_UDP */
+extern void (*volatile xhw_log_tee)(const char* line, size_t n);
+void xhw_net_log_udp(uint32_t ip, uint16_t port);   /* starts the network and the log stream */
+void xhw_netprobe_boot(void);          /* env MX_NETPROBE, MX_LOG_UDP; after the autopad script loads */
+uint32_t xhw_autopad_match_tick(void); /* xhw_autopad.c: ticks since the match's first (0: none) */
+
 /* sdk side (game triple): settings before the video mode is chosen, then
  * the game on the disc image (never returns) */
 void xsdk_early(void);

@@ -412,10 +412,72 @@ so the port converts at the boundary, in `src/melee/lb/lbcardgame.c`
   not part of this port and its users' saves are native-order files; the
   .gci compatibility with Dolphin and real cards is this port's promise.
 
+## Network (`xhw_net.c`, `xhw_netprobe.c`)
+
+The groundwork for LAN play (`docs/lan-plan.md` phase 0B, D3, D11, D14).
+The XBE links nxdk's prebuilt network library, `libnxdk_net.lib` (lwIP
+2.2.1 and the NIC driver nvnetdrv), and `xhw_net.c` drives it behind the
+`xhw_net_*`/`xhw_udp_*` functions in `xhw.h` (scalars and byte buffers; no
+lwIP type crosses). Nothing starts it in a release build yet: the LAN
+lobby will (phase 3). Test builds start it with `env MX_NETPROBE=1` or
+`env MX_LOG_UDP=` (`docs/testing.md` "Network").
+
+- **Off means silent.** Until `xhw_net_start` the NIC is untouched: no
+  DHCP, no ARP, no frame (an offline boot logs no `[NET]` line, and a
+  capture of one shows nothing from its MAC). The library costs only its
+  code (~250 KB of image, `docs/architecture.md`).
+- **Start-up.** `xhw_net_start` returns at once; a worker thread starts
+  lwIP's thread (priority +1, set from inside it), adds the NIC (64 receive
+  buffers of 2 KB in contiguous memory, its interrupt and DPC) and polls
+  the link four times a second. Address: the dashboard's manual address if
+  the configuration sector has one (checked with ACD first, RFC 5227), else
+  DHCP; with no lease 4 s after the link came up, AutoIP too
+  (169.254.1.0-169.254.254.255), while DHCP keeps trying. A lease that comes
+  later replaces the AutoIP address. `xhw_net_state`: off, no cable,
+  getting an address, up, failed, address conflict.
+- **Conflicts.** lwIP's ACD probes every address before use, declines a
+  DHCP offer that is taken (DHCPDECLINE, then 10 s back-off), moves a
+  link-local address elsewhere, and defends an address in use once before
+  giving it up. The worker sees each of these and reports "address
+  conflict" for 10 s (`[NET] address conflict (...)`), during which
+  `xhw_net_ip` is 0.
+- **Conduct** (D14), held below any caller: IPv4 only (frames reach lwIP
+  through `net_input`, which drops IPv6 and multicast; otherwise a router
+  advertisement makes lwIP send a router solicitation, though no IPv6
+  address exists); TTL 1 on every socket; nothing over 1200 bytes; sends
+  only to on-link addresses (our subnet, or 169.254/16 while link-local),
+  never to the directed broadcast, broadcasts only to
+  255.255.255.255:41001, under 200 bytes, two a second at most; received
+  datagrams from our address, 0.0.0.0, broadcast or multicast sources,
+  port 0 or off the link never reach a socket; and each socket has a
+  transmit governor (token buckets: 250 datagrams and 256 KB a second,
+  bursts of 32), whose drops are counted (`[NET] tx governor dropped N`).
+  Refusals and filtered datagrams are logged as running counts, at most
+  once a second per socket.
+- **Sockets.** Up to four UDP sockets; lwIP's thread copies each datagram
+  into the socket's 64 KB ring (allocated when the socket opens), which
+  `xhw_udp_recv` empties; `xhw_udp_wait` waits on an event. A full ring
+  drops the new datagram (`[NET] udp N: ... dropped`).
+- **Leaving.** `xhw_net_pause` stops the NIC's receive and transmit
+  (leaving the lobby); `xhw_net_shutdown`, in both ways out of the XBE
+  (`xhw_quit_to_dashboard` and every `XLaunchXBE`), stops the NIC: its
+  interrupt disconnected, the controller reset, its memory freed. The DHCP
+  lease is not released (RFC 2131 allows it; the dashboard takes it again).
+- **Threads and memory.** lwIP's thread (+1) and the NIC's DPC use the
+  kernel pool and the XBE's own memory, never MEM1 or ARAM (lazily
+  committed, docs/architecture.md); their stacks are small, so nothing is
+  logged from them.
+- **Known limit.** lwIP keeps one IPv4 address per interface, so a DHCP
+  lease that arrives during a session on an AutoIP address changes the
+  address under it (D14 rule 5 wants the session to finish on its own
+  address): phase 3 has to hold DHCP back for a session that started
+  link-local, or end it.
+
 ## Not built
 
 melee-pc's netplay, ranked, LAN, Slippi replays, launcher, updater,
-texture packs and custom music are not built. `stubs.c` is generated from
+texture packs and custom music are not built (the Xbox network layer
+under the coming LAN play is, "Network" above). `stubs.c` is generated from
 melee-pc's headers and reports each of them as off. `features.c` turns off
 UCF, the free camera, frozen stadium and unlock-all, which gives vanilla
 gameplay.
