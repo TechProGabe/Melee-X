@@ -462,6 +462,10 @@ Logging, test hooks and Xbox features:
 - `src/melee/gm/gmvsmode.c` (`onEnterDebugVs`): `MELEE_DEBUG_VS_TIME`,
   `_CHARS`, `_ITEMS`, `_INVISIBLE`; `ftkirby.c` (`ftKb_Init_OnDeath`):
   `MELEE_DEBUG_KIRBY_HAT`. `TARGET_PC`, inert without the variables.
+- `src/melee/gm/gmboot.c`, `gm_1A3F.c` (`runGameMode`):
+  `MELEE_BOOT_SCENE=cutscene` boots the debug cutscene mode at state
+  `MELEE_BOOT_CUTSCENE` (`scenarios/cntalk`). `TARGET_PC`, inert without
+  the variables.
 - `src/melee/gm/gm_1A3F.c` (`gm_801A4014`): scene enters and leaves are
   logged with free memory (`xsdk_scene_log`).
 - `src/melee/gm/gmvs.c`: `[GAME]` lines at a match's end and at the
