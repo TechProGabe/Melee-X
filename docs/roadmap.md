@@ -76,10 +76,17 @@ Fix order (2026-10-04):
    (`grAnime_801C83D0`). Either that check never fires (anim port bug) or
    it fires before `xCA` runs out. Repro in xemu; log the phases, `xCA`,
    the anim-end check.
-5. **Particles not drawn** (console, v45, 480, all particles; v43 had smoke
-   and hits: bisect v43..v45 in xemu). `psdisp.c`: blend/TEV, texture
-   format or a dropped primitive type. Same group, status unknown since
-   v43: Adventure Corneria's Arwing cutscene silent with Falco's face
+5. **Particles not drawn**: fixed for v53 (needs a console check: the Fire
+   Flower's flame, hit sparks). The GX front end read `psdisp.c`'s raw
+   FIFO writes (positions as `GXTexCoord1f32`, the TEX0 index as
+   `GXCmd1u8`) as whole texture coordinates and matrix indices, so no
+   textured particle completed a vertex (xemu 4-Mario match: ~8000 short
+   batches per 600 frames before, 0 after; `renderer.md` "Immediate
+   mode"). Always so (`GXCmd1u8` was a matrix index only since the first
+   renderer commit), not a v44/v45 regression; what drew in v43 were
+   model effects and untextured particles. Still open: `GXSetPointSize`/`GXSetLineWidth` are
+   no-ops, so point and line particles would draw 1 pixel wide (none drew
+   in the xemu runs). Same group, status unknown since v43: Adventure Corneria's Arwing cutscene silent with Falco's face
    frozen (voice bank or a stale EFB copy); trophy transition lighting dark
    and a background flash (`scenarios/toy`; suspects in `nv2a_vp.c`:
    normals normalized where GX doesn't, spot cosine not clamped at 0).
