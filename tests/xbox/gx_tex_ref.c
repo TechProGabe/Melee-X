@@ -35,33 +35,23 @@ _Static_assert(sizeof(TlutObj) <= sizeof(GXTlutObj), "GXTlutObj too small");
 #define TLUT_SLOTS 20
 static TlutObj s_tlut[TLUT_SLOTS];
 
-/* ---- cache ----
- * An entry is split in two arrays by index. What a bind reads (the lookup's
- * key and chain, the frames it was checked and used) is one aligned 32-byte
- * line; the 48-byte entry had those fields on two lines, and the lookup
- * (`find`) was ~2% of the console's render time, nearly all of it on those
- * cache misses (v50). The hashes are read at most once a frame a texture. */
+/* ---- cache ---- */
 typedef struct {
     const uint8_t* data;
     const uint8_t* tlut_data;
     uint16_t w, h;
     uint8_t fmt, levels, tlut_fmt, efb;
-    uint32_t tex;
-    int next;                   /* bucket chain by data pointer, -1: end */
-    uint32_t checked, last_used;
-} Entry;
-_Static_assert(sizeof(Entry) == 32 || sizeof(void*) != 4, "Entry is one cache line");
-
-typedef struct {
     uint32_t hash, tlut_hash;
     uint32_t qhash;             /* quick_hash of the texels, for stable entries (tex_due) */
+    uint32_t tex;
+    uint32_t last_used, checked;
     uint32_t stable;            /* revalidations passed in a row (tex_due) */
-} EntryCold;
+    int next;                   /* bucket chain by data pointer, -1: end */
+} Entry;
 
 #define CACHE_MAX 2048
 #define CACHE_BUCKETS 1024
-static Entry s_cache[CACHE_MAX] __attribute__((aligned(32)));
-static EntryCold s_cold[CACHE_MAX];
+static Entry s_cache[CACHE_MAX];
 static int s_count;
 static int s_bucket[CACHE_BUCKETS];
 static int s_bucket_ready;
@@ -102,13 +92,10 @@ static void chain_unlink(int i) {
     if (*link == i) *link = s_cache[i].next;
 }
 
-static EntryCold* cold_of(const Entry* e) { return &s_cold[e - s_cache]; }
-
 /* a new entry at the end of the array, linked */
 static Entry* entry_add(const uint8_t* data) {
     Entry* e = &s_cache[s_count];
     memset(e, 0, sizeof *e);
-    memset(&s_cold[s_count], 0, sizeof s_cold[s_count]);
     e->data = data;
     chain_link(s_count++);
     return e;
@@ -344,7 +331,6 @@ static void drop_at(int i) {
     if (i != last) {
         chain_unlink(last);
         s_cache[i] = s_cache[last];
-        s_cold[i] = s_cold[last];
         chain_link(i);
     }
     s_count--;
@@ -617,10 +603,7 @@ static uint32_t upload_now(const TexObj* o, const TlutObj* tl, uint32_t levels, 
     return tex;
 }
 
-/* out of line: the decoders would otherwise land in the middle of the bind
- * path, which runs some 600 times a frame and uploads a few times a second */
-__attribute__((noinline)) static uint32_t upload(const TexObj* o, const TlutObj* tl, uint32_t levels,
-                                                 uint32_t bytes) {
+static uint32_t upload(const TexObj* o, const TlutObj* tl, uint32_t levels, uint32_t bytes) {
     int pf = xhw_perf_enter(XHW_PERF_TEX);
     uint32_t tex = upload_now(o, tl, levels, bytes);
     xhw_perf_leave(pf);
@@ -644,27 +627,13 @@ static uint32_t magenta_tex(void) {
 #endif
 }
 
-/* Equal as memcmp() would find them, a word at a time in line: memcmp is a
- * call here (-ffreestanding), on every bind. TexObj and XgxMap have no
- * padding, so their bytes are their words. */
-_Static_assert(sizeof(TexObj) == sizeof(void*) + 24, "TexObj: no padding");
-_Static_assert(sizeof(XgxMap) == 32, "XgxMap: 8 words, no padding");
-static inline int words_same(const void* a, const void* b, uint32_t n) {
-    const uint32_t *x = (const uint32_t*)a, *y = (const uint32_t*)b;
-    uint32_t i;
-    for (i = 0; i < n; i++)
-        if (x[i] != y[i]) return 0;
-    return 1;
-}
-
-static const TlutObj* tlut_of(const TexObj* o) { return o->is_ci && o->tlut < TLUT_SLOTS ? &s_tlut[o->tlut] : NULL; }
-
 /* the same object again, already looked up and validated this frame:
  * nothing changes (s_bound is cleared whenever an entry is dropped) */
-static int bind_unchanged(uint32_t map, const TexObj* o, const TlutObj* tl) {
+static int bind_unchanged(uint32_t map, const TexObj* o) {
     const MapBind* b = &s_bound[map];
+    const TlutObj* tl = o->is_ci && o->tlut < TLUT_SLOTS ? &s_tlut[o->tlut] : NULL;
     return b->frame == s_frame && b->tex && g_xgx.map[map].tex == b->tex && b->tlut_data == (tl ? tl->data : NULL) &&
-           words_same(&b->obj, o, sizeof *o / 4);
+           memcmp(&b->obj, o, sizeof *o) == 0;
 }
 
 /* Revalidation (sampled hash of the texels and palette) runs at most once a
@@ -677,20 +646,32 @@ static int bind_unchanged(uint32_t map, const TexObj* o, const TlutObj* tl) {
 #define TEX_STABLE 120
 static int tex_due(Entry* e) {
     if (e->checked == s_frame) return 0;
-    if (cold_of(e)->stable >= TEX_STABLE && ((s_frame + ((uint32_t)(uintptr_t)e->data >> 5)) & 3)) return 0;
+    if (e->stable >= TEX_STABLE && ((s_frame + ((uint32_t)(uintptr_t)e->data >> 5)) & 3)) return 0;
     e->checked = s_frame;
     return 1;
 }
 
-static int obj_valid(const TexObj* o) { return o && o->magic == TEXOBJ_MAGIC && o->data && o->w && o->h; }
-
-/* A valid object that bind_unchanged() turned down: look it up, revalidate
- * or upload, bind. */
-static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
-    uint32_t levels = 1, bytes = 0, hash, thash = 0;
+void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
+    const TexObj* o = (const TexObj*)obj;
+    const TlutObj* tl = NULL;
+    uint32_t levels = 1, bytes, hash, thash = 0;
     Entry* e;
-    XgxMap* m = &g_xgx.map[map];
-    MapBind* b = &s_bound[map];
+    XgxMap* m;
+    MapBind* b;
+    if (map >= XGX_MAX_MAPS) return;
+    m = &g_xgx.map[map];
+    b = &s_bound[map];
+    if (!o || o->magic != TEXOBJ_MAGIC || !o->data || !o->w || !o->h) {
+        m->tex = 0;
+        b->frame = 0;
+        g_xgx.dirty |= XGX_DIRTY_MAPS;
+        return;
+    }
+    if (o->is_ci && o->tlut < TLUT_SLOTS) tl = &s_tlut[o->tlut];
+    if (bind_unchanged(map, o)) {
+        s_st_fast++;
+        return;
+    }
     if (o->mipmap) {
         uint32_t w = o->w, h = o->h;
         levels = 1;
@@ -703,17 +684,14 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
 #ifdef XGX_DEBUG_NOMIP
     levels = 1;
 #endif
-    /* the GX size (never 0: w and h are) only when the texels are hashed or
-     * uploaded, not for a lookup that finds a texture already checked */
+    bytes = GXGetTexBufferSize(o->w, o->h, o->fmt, o->mipmap, (u8)levels);
     e = find(o->data, o->w, o->h, o->fmt, (uint8_t)levels, tl ? tl->data : NULL);
     if (e && !e->efb && tex_due(e)) {
-        EntryCold* c = cold_of(e);
-        int quick = c->stable >= TEX_STABLE, texels;
-        bytes = GXGetTexBufferSize(o->w, o->h, o->fmt, o->mipmap, (u8)levels);
+        int quick = e->stable >= TEX_STABLE, texels;
         hash = quick ? quick_hash(o->data, bytes) : hash_bytes(o->data, bytes);
-        texels = hash != (quick ? c->qhash : c->hash);
+        texels = hash != (quick ? e->qhash : e->hash);
         if (tl) thash = hash_bytes(tl->data, (tl->entries ? tl->entries : 256) * 2);
-        if (texels || thash != c->tlut_hash) {
+        if (texels || thash != e->tlut_hash) {
             if (texels) s_st_chg_data++;
             else s_st_chg_tlut++;
             if (!s_chg_logged) {
@@ -723,14 +701,12 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
             }
             drop(e);
             e = NULL;
-        } else if (c->stable < TEX_STABLE) {
-            c->stable++;
+        } else if (e->stable < TEX_STABLE) {
+            e->stable++;
         }
     }
     if (!e) {
         uint32_t tex;
-        EntryCold* c;
-        if (!bytes) bytes = GXGetTexBufferSize(o->w, o->h, o->fmt, o->mipmap, (u8)levels);
         if (s_count == CACHE_MAX) evict_one();
         tex = upload(o, tl, levels, bytes);
         if (!tex) {
@@ -755,15 +731,14 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
             return;
         }
         e = entry_add(o->data);
-        c = cold_of(e);
         e->w = o->w;
         e->h = o->h;
         e->fmt = o->fmt;
         e->levels = (uint8_t)levels;
         e->tlut_data = tl ? tl->data : NULL;
-        c->hash = hash_bytes(o->data, bytes);
-        c->qhash = quick_hash(o->data, bytes);
-        c->tlut_hash = tl ? hash_bytes(tl->data, (tl->entries ? tl->entries : 256) * 2) : 0;
+        e->hash = hash_bytes(o->data, bytes);
+        e->qhash = quick_hash(o->data, bytes);
+        e->tlut_hash = tl ? hash_bytes(tl->data, (tl->entries ? tl->entries : 256) * 2) : 0;
         e->tex = tex;
         e->checked = s_frame;
     }
@@ -782,7 +757,7 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
         nm.min_filter = o->min_f;
         nm.mag_filter = o->mag_f;
         nm.lod_bias = o->lod_bias;
-        if (!words_same(m, &nm, sizeof nm / 4)) {
+        if (memcmp(m, &nm, sizeof nm) != 0) {
             *m = nm;
             g_xgx.dirty |= XGX_DIRTY_MAPS;
         }
@@ -791,24 +766,6 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
     b->tlut_data = tl ? tl->data : NULL;
     b->tex = e->tex;
     b->frame = s_frame;
-}
-
-void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
-    const TexObj* o = (const TexObj*)obj;
-    const TlutObj* tl;
-    if (map >= XGX_MAX_MAPS) return;
-    if (!obj_valid(o)) {
-        g_xgx.map[map].tex = 0;
-        s_bound[map].frame = 0;
-        g_xgx.dirty |= XGX_DIRTY_MAPS;
-        return;
-    }
-    tl = tlut_of(o);
-    if (bind_unchanged(map, o, tl)) {
-        s_st_fast++;
-        return;
-    }
-    bind_new(map, o, tl);
 }
 
 /* the texture the last EFB copy to `dest` made, for xgx_tex_from_efb to refill */
@@ -962,17 +919,9 @@ GXBool GXGetTexObjMipMap(const GXTexObj* obj) { return ((const TexObj*)obj)->mip
 
 void GXLoadTexObj(GXTexObj* obj, GXTexMapID id) {
     const TexObj* o = (const TexObj*)obj;
-    if (id < XGX_MAX_MAPS && obj_valid(o)) {
-        const TlutObj* tl = tlut_of(o);
-        /* unchanged: no flush, so a waiting batch can still be continued */
-        if (bind_unchanged(id, o, tl)) {
-            s_st_fast++;
-            return;
-        }
-        /* gx_tex_bind would ask bind_unchanged() again: the flush draws a
-         * batch and touches nothing it reads */
-        gx_vtx_flush();
-        bind_new(id, o, tl);
+    /* unchanged: no flush, so a waiting batch can still be continued */
+    if (id < XGX_MAX_MAPS && o && o->magic == TEXOBJ_MAGIC && o->data && o->w && o->h && bind_unchanged(id, o)) {
+        s_st_fast++;
         return;
     }
     gx_vtx_flush();

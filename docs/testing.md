@@ -16,6 +16,8 @@ tools/xbox/test_anim_mtx.py      # HSD keyframe interpreter, HSD_MtxSRT, envelop
 tools/xbox/test_audio_mix.py     # src/pc/audio.c's voice mixer (block decoder, SSE1), output clamp and reverb vs the code before
 tools/xbox/test_mplib.py         # stage collision's line rejects (mplib.c) vs the line tests before them, random stages [rounds]
 tools/xbox/test_pobj_mtx.py      # PObjSetupMtx (envelope memo, prefetches), SSE HSD_MtxInverseTranspose vs upstream
+tools/xbox/test_tex_cache.py     # gx_tex.c's texture cache and binds vs the file before the entry split: the same trace
+tools/xbox/test_dl_cull.py       # gx_dl_culled's box test with clip planes kept per projection vs planes per box
 ```
 
 CI (`.github/workflows/build.yml`, started by hand; it also builds the
@@ -70,6 +72,37 @@ reflection and highlight texgens, a model node matrix, dirty joints) through
 both: every GX matrix load (slot and the 12 words), `GXSetCurrentMtx`,
 envelope-blend count and joint update in order, the matrix marks, the
 joints and the matrix-load count must agree.
+
+`test_tex_cache.py` guards the texture cache of the GX front end
+(`xbox/src/sdk/gx/gx_tex.c`) against `tests/xbox/gx_tex_ref.c`, the file
+before its entries were split into a hot 32-byte line and the hashes, and
+before the bind path lost its second `bind_unchanged()`, its `memcmp`
+calls and the eager `GXGetTexBufferSize`. It builds `tests/xbox/test_tex_cache.c`
+twice, around each file, with a back-end stub whose texture pool fills up
+(and grows once, as the overflow pool does). Both drive the same seeded
+4000 frames: HSD-shaped materials (one to three maps, rebound for each
+PObj, sometimes through a texture object that differs in one sampler
+setting), all eleven formats with mipmaps and palettes, textures that
+share data under another key or collide in a bucket, EFB copies (refilled
+in place, dropped, bound as textures), texel and palette changes,
+invalid objects and maps, scene changes, a burst of small textures past the
+2048 entries, a texture larger than the pool, and quiet stretches where
+textures pass the 120 revalidations. Everything the rest of the port sees
+is folded into a trace (back-end creates with their texels, destroys,
+flushes, log lines, the eight maps and the dirty bits after every call, the
+cache's entries, chains, bind memo and counters at every frame end), and
+the two runs must print the same checkpoints.
+
+`test_dl_cull.py` checks `xbox/src/sdk/gx/gx_cull.h`, `gx_dl_culled`'s box
+test with the five clip planes made once per projection (`gx_proj_gen`,
+counted by `GXInit` and `GXSetProjection`, the only writers of
+`g_xgx.proj`), against `tests/xbox/dl_cull_ref.c`, the planes made for
+every box, on the SDK's float flags: 12M boxes against perspective,
+off-centre and orthographic projections shaped as `GXSetProjection`'s and
+random ones, changed every few boxes (sometimes by one ulp, a sign or a
+zero's sign), joint-like and random model-view matrices, then zeros,
+denormals, infinities and NaNs anywhere. Every answer must agree and the
+planes have the same bits (a NaN only has to stay a NaN).
 
 `test_audio_mix.py` does the same for the software AX mixer: it builds
 `src/pc/audio.c` (with the Xbox's SDL3 shim and stubs) next to
