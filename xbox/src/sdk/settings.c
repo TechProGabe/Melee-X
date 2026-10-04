@@ -5,7 +5,7 @@
  *   widescreen = 1      ; 16:9 at 480 when the dashboard is set to widescreen
  *   fps = 1             ; frame-rate counter in the top-left corner
  *   [system]
- *   ram128 = 0          ; 1: use all 128 MB on an upgraded console (untested)
+ *   screenshots = 0     ; BACK saves shotNN.bmp (default on in test builds)
  *   led_effects = 0     ; front LED effects (xbox/src/hw/xhw_led.c); off by
  *                       ; default: a modchip that drives the LED fights it
  *   [input]
@@ -25,7 +25,8 @@
  * or a power cut leaves the old file. A settings.tmp found without a
  * settings.ini is taken if it is complete: a save whose rename was cut off
  * after settings.ini had been deleted. The writer regenerates the whole
- * file: comments and keys it doesn't know are not kept. */
+ * file: comments and keys it doesn't know are not kept, v52's [system]
+ * ram128 among them (128 MB consoles always run in 64 MB now: boot.c). */
 #include <dolphin/pad.h>
 #include <ctype.h>
 #include <errno.h>
@@ -117,8 +118,9 @@ static char* trim(char* s) {
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 static int pct(float f) { return (int)(f * 100.0f + 0.5f); }
 
+/* SAW_RAM128: an old file's ram128 = 1, only logged (the key is gone) */
 enum { SAW_FPS = 1, SAW_PROGRESSIVE = 2, SAW_RAM128 = 4, SAW_END = 8, SAW_LED = 16 };
-#define SAW_KEYS (SAW_FPS | SAW_PROGRESSIVE | SAW_RAM128 | SAW_LED)   /* a file without one of these is rewritten */
+#define SAW_KEYS (SAW_FPS | SAW_PROGRESSIVE | SAW_LED)   /* a file without one of these is rewritten */
 #define END_MARK "; end of settings"   /* the writer's last line: the file is whole */
 
 /* the file's keys over the defaults into *st; returns the SAW_* found */
@@ -150,7 +152,7 @@ static int parse(FILE* f, xsdk_settings* st) {
             else if (_stricmp(key, "widescreen") == 0) st->widescreen = atoi(val) != 0;
             else if (_stricmp(key, "fps") == 0) st->fps = atoi(val) != 0, saw |= SAW_FPS;
         } else if (_stricmp(section, "system") == 0) {
-            if (_stricmp(key, "ram128") == 0) st->ram128 = atoi(val) != 0, saw |= SAW_RAM128;
+            if (_stricmp(key, "ram128") == 0) saw |= atoi(val) != 0 ? SAW_RAM128 : 0;
             else if (_stricmp(key, "screenshots") == 0) st->shots = atoi(val) != 0;
             /* not "led": v43-v48 wrote led = 1 as the default, and that
              * line is ignored so the effects start off for everyone */
@@ -175,7 +177,7 @@ static int parse(FILE* f, xsdk_settings* st) {
 int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
     int p, i;
     if (a->video_720p != b->video_720p || a->progressive != b->progressive || a->widescreen != b->widescreen ||
-        a->fps != b->fps || a->ram128 != b->ram128 || a->shots != b->shots || a->led != b->led ||
+        a->fps != b->fps || a->shots != b->shots || a->led != b->led ||
         pct(a->rumble) != pct(b->rumble))
         return 0;
     for (p = 0; p < 4; p++) {
@@ -192,9 +194,9 @@ int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
 static void log_summary(const char* what) {
     const xsdk_settings* st = &g_xsdk_settings;
     const xsdk_port_settings* p1 = &st->port[0];
-    xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, ram128 %d, screenshots %d, led %d, "
+    xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, screenshots %d, led %d, "
              "rumble %d, port 1 dead zones %d/%d, trigger click %d",
-             what, st->video_720p, st->progressive, st->widescreen, st->fps, st->ram128, st->shots, st->led,
+             what, st->video_720p, st->progressive, st->widescreen, st->fps, st->shots, st->led,
              pct(st->rumble),
              pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click);
 }
@@ -241,12 +243,8 @@ void xsdk_settings_load(void) {
     saw = parse(f, &g_xsdk_settings);
     fclose(f);
     xhw_logf("[SETTINGS] loaded %s", p);
-    /* a hand-edited ram128 = 1 on a 64 MB console: off (written as 0 by
-     * the next save) */
-    if (g_xsdk_settings.ram128 && !xhw_mem_has_upper()) {
-        g_xsdk_settings.ram128 = 0;
-        xhw_logf("[SETTINGS] ram128 = 1 ignored: this console has 64 MB");
-    }
+    /* the line stays until the next save, which doesn't write it */
+    if (saw & SAW_RAM128) xhw_logf("[SETTINGS] ram128 = 1 ignored: 128 MB consoles run in 64 MB");
     log_summary("in use");
     if ((saw & SAW_KEYS) != SAW_KEYS)
         xsdk_settings_save();   /* add the missing lines */
@@ -264,11 +262,10 @@ static void write_all(FILE* f, const xsdk_settings* st) {
     fprintf(f, "; BACK on the title screen opens a menu for the settings above the buttons.\n");
     fprintf(f, "[video]\n720p = %d\nprogressive = %d\nwidescreen = %d\nfps = %d\n\n", st->video_720p, st->progressive,
             st->widescreen, st->fps);
-    fprintf(f, "; ram128 = 1 uses the RAM above 64 MB on an upgraded console (untested; off: it runs as 64 MB).\n");
     fprintf(f, "; screenshots = 1: BACK saves a screenshot (shotNN.bmp, next to this file).\n");
     fprintf(f, "; led_effects = 1: the front LED flashes on KOs, in the last seconds and on GAME!.\n");
     fprintf(f, "; Leave it 0 on a console with a modchip that drives the LED (Kronos and similar).\n");
-    fprintf(f, "[system]\nram128 = %d\nscreenshots = %d\nled_effects = %d\n\n", st->ram128, st->shots, st->led);
+    fprintf(f, "[system]\nscreenshots = %d\nled_effects = %d\n\n", st->shots, st->led);
     fprintf(f, "[input]\nrumble = %d\n\n", pct(st->rumble));
     for (port = 0; port < 4; port++) {
         const xsdk_port_settings* ps = &st->port[port];

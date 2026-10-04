@@ -254,7 +254,8 @@ Tags (switch-only tags such as `[EFB]`, `[DRAW]`, `[VPT]`, `[PBCHECK]`,
 
 - `[MEM] boot`, `[MEM] after nv2a`: free RAM, committed MEM1 and ARAM (low
   while loading: the 64 MB budget, `docs/architecture.md`). `[MEM] 128 MB
-  console: running in 64 MB` (`settings.ini` `ram128 = 0`). Test builds:
+  console: running in 64 MB` (every boot on a 128 MB console; no setting
+  since v53). Test builds:
   `[MEM] lazy <base>:` at scene leave, committed 64 KB chunks per 4 MB.
 - `[DVD] GALE01 rev 2, N FST entries`: the image was accepted.
 - `[SCENE] enter/leave: mode M state S scene K` and its `[MEM] scene` line:
