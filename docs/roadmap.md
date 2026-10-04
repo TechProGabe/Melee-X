@@ -114,8 +114,8 @@ Fix order (2026-10-04):
    has no depth). Repro: `MELEE_BOOT_SCENE=classic`,
    `MELEE_CLASSIC_STAGE_OVERRIDE=8`, `MELEE_CLASSIC_TEAM=kirby|jiggly`,
    shots at frames 20-92 (`-DXHW_VIDEO_480_BPP=16` for the 720p path).
-   Confirm on the console at 720p; if 480 still looks wrong there, ask for
-   a photo.
+   Confirmed on the console (user, 2026-10-04: the Team Jigglypuff card
+   is right on v53).
 8. Fixed for v53: **128 MB consoles always in 64 MB** (user, 2026-10-02).
    `[system] ram128` and the menu's "Use 128 MB RAM" row are gone,
    `xhw_mem_hold_upper` runs at every boot; old files' `ram128` lines are
@@ -164,17 +164,22 @@ Fix order (2026-10-04):
 
 Other open:
 
-- Rainbow Cruise ship flicker (v48, 720p, looks like shadows): likely
-  Z16 depth (item 11). In xemu at 720p with Z16, pale slivers of a far
-  layer show through the hill behind the ship's prow and the deck rail's
-  edge rows change (~550-1100 pixels a shot, 3 lockstep shots); with
-  v53's Z24S8 they are gone and the 16-bit shots match the 32-bit
-  build's. Confirm on the console; if it still flickers, try
-  `-DXGX_COPY_FIX=0`, then the shadow-map copy/clear order.
+- Rainbow Cruise flicker (v48, 720p, looks like shadows): **still
+  flickers on the console with v53's Z24S8** (user, 2026-10-04:
+  "flicker/flashing"), so not (only) depth precision; known issue for the
+  v54 RC, fix after. In xemu at 720p with Z16, pale slivers of a far
+  layer showed through the hill behind the ship's prow and the deck
+  rail's edge rows changed; Z24S8 removed those, but xemu shows single
+  frames, not the flicker. Next: BACK shots on the console mid-flicker;
+  try `-DXGX_COPY_FIX=0`, then the shadow-map copy/clear order (shadows
+  are EFB copies; a copy bound before the frame's copy, as Stadium's
+  screen was, would flash a frame).
 - Front LED vs modchips (Kronos; needed a Cerbios recovery): off by
   default; before turning it on again, find what the chip does with SMC
   LED registers 0x07/0x08.
-- Credits go black now and then (issue #5, not reproduced).
+- Credits go black now and then (issue #5, not reproduced): the credits
+  and the ending movie played fine on the console with v53 (user,
+  2026-10-04); close if it doesn't come back.
 - Fox costs ~10 fps vs a mixed 4-player match (v43-era): twice Mario's
   PObjs, more material switches; reflection skip since v43. Status unknown
   since the frame-rate work.
