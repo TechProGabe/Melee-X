@@ -103,7 +103,6 @@ progressive = 1     ; 0: 480i even where the dashboard allows 480p
 widescreen = 1      ; 16:9 at 480 when the dashboard is set to widescreen
 fps = 0             ; frame-rate counter; default 1 in test builds (XHW_TEST_BUILD)
 [system]
-ram128 = 0          ; 1: use the RAM above 64 MB on an upgraded console (untested)
 screenshots = 0     ; BACK saves shotNN.bmp; default 1 in test builds
 led_effects = 0     ; front LED effects ("Front LED")
 [input]
@@ -115,10 +114,12 @@ a = A               ; Xbox button = GameCube button (A B X Y Z L R START UP DOWN
 b = X               ; x = B, y = Y, white/black = Z, back/lstick/rstick = NONE, start, d-pad as is
 ```
 
-A file missing `fps`, `progressive`, `ram128` or `led_effects` is rewritten
-with them added. The old key `led` (v43-v48 wrote 1) is ignored. On a 64 MB
-console (`xhw_mem_has_upper`) `ram128 = 1` is ignored at boot and written as
-0 by the next save.
+A file missing `fps`, `progressive` or `led_effects` is rewritten with them
+added. The old key `led` (v43-v48 wrote 1) is ignored. So is `[system]
+ram128` (v52 and older): 128 MB consoles always run in 64 MB
+(`xhw_mem_hold_upper` at every boot, `docs/decisions.md`); a `ram128 = 1`
+logs `[SETTINGS] ram128 = 1 ignored`, the line stays until the next save
+and is not written again. A file without it is not rewritten for that.
 
 Writing (`settings.c`): `settings.tmp`, ending in `; end of settings`, is
 flushed, read back, and renamed over `settings.ini` (`xhw_replace_file`)
@@ -142,7 +143,6 @@ reset still works.
 | Widescreen (16:9) | On, Off (`On -> Off` at 480 on a 4:3 dashboard) | restart |
 | Frame-rate counter, BACK screenshots | On, Off | at once |
 | Front LED effects | On, Off | at once (On: a 1.5 s sweep; Off: LED handed back) |
-| Use 128 MB RAM | On, Off; greyed "Off (64 MB console)" on 64 MB | restart |
 | Rumble | Off, 25-100% | at once, with a pulse |
 | Controller | Port 1-4 for the three rows below | |
 | Stick / C-stick dead zone | 0-60%, steps of 5, live readout | on close |
@@ -151,11 +151,18 @@ reset still works.
 | Save and close | writes the file (B or BACK too) | |
 
 Every controller drives it by raw buttons, so a remapped pad still works.
+Buttons already held when the title comes back (more than 30 retraces
+since its last frame) are not presses; a held direction repeats after 18
+retraces, then every 5. Both count retraces since v53, not calls: the
+title's frame function runs once per game tick, and a slow title (xemu,
+~5 retraces a frame, the ticks then caught up back to back) lost presses
+and repeated held directions within a few retraces.
 Restart-only values get a `*` while they differ from the running ones;
 closing saves only when something changed. Button mapping is file-only.
 The platform draws the panel over the finished frame (`docs/renderer.md`):
-Melee's menus are models with prebaked text. It is 18 rows, 91% of the
-height at 720p; a new row has to replace one to stay TV-safe.
+Melee's menus are models with prebaked text. It is 17 rows since v53 (the
+128 MB row is gone); 18 rows were 91% of the height at 720p, so one more row
+still fits TV-safe and a second has to replace one.
 
 ## Front LED (`xhw_led.c`)
 

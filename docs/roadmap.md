@@ -98,9 +98,14 @@ Fix order (2026-10-04):
    stated). Z-texture mask path. Repro: `MELEE_BOOT_SCENE=classic`,
    `MELEE_CLASSIC_STAGE_OVERRIDE=8`, `MELEE_CLASSIC_TEAM=kirby`, 480 32-bit
    and 720p 16-bit; ask for build, mode, photo.
-8. **128 MB consoles always in 64 MB** (user, 2026-10-02): drop `[system]
-   ram128` and the menu row, keep `xhw_mem_hold_upper` unconditional,
-   ignore old lines; README, platform.md, decisions.md.
+8. Fixed for v53: **128 MB consoles always in 64 MB** (user, 2026-10-02).
+   `[system] ram128` and the menu's "Use 128 MB RAM" row are gone,
+   `xhw_mem_hold_upper` runs at every boot; old files' `ram128` lines are
+   ignored and not written again (decisions.md, platform.md). The menu's
+   press and repeat timing now counts retraces (a slow title in xemu lost
+   or repeated presses); `scenarios/settings` passes in xemu with a v52
+   `ram128 = 1` file staged. To check on a 128 MB console: `[MEM] 128 MB
+   console: running in 64 MB` in boot.log.
 9. **Silent boot after a crash or a power cycle** (`AC97 stuck: civ 0 lvi
    6`, cold resets freezing the game each ~3 s; seen on console A after a
    power-off, dashboard, launch; log `C:/xemu/hw/logs-audio-20261004-1153`).
@@ -169,6 +174,7 @@ Other open:
 - No sound after Save and restart (v47): AC97 idled before a relaunch (v48).
 - 720p at ~7.5 fps and Z16 z-fighting (v38-v41): GPU copies into R5G6B5,
   Z16 depth remap (decisions.md); 720p default since v45.
+- 128 MB consoles always run in 64 MB, no `ram128` setting (v53, item 8).
 
 ## Next
 

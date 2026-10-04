@@ -3,32 +3,37 @@
 # Build with -DXHW_AUTOPAD=1 (and -DXSDK_SETTINGS_RESET for a first boot);
 # read [MENU] and [SETTINGS] in the serial log. The restart relaunches
 # default.xbe, which runs this script again: stop the run on the second
-# boot's [SETTINGS] line or after it.
+# boot's [SETTINGS] line or after it (MX_SHOTS=7: its first shot).
+# Presses are held 12 retraces, 30 apart: the title with the menu up runs
+# at ~12 fps in xemu (5 retraces a frame), and a 6-retrace press or a gap
+# under one frame gets lost or merged there.
+# Rows (v53, no 128 MB row): Video output, Widescreen, Frame-rate counter,
+# BACK screenshots, Front LED effects, Rumble, Controller, Stick dead zone,
+# C-stick dead zone, Trigger click, Save and restart, Save and close.
 env MELEE_BOOT_SCENE=title
 env MELEE_NO_ATTRACT=1
 400 SHOT            # title with the hint line
-430 BACK            # open
-470 SHOT            # the menu
-490 LEFT            # Video output: 480p -> 480i
-510 DOWN
-530 DOWN            # Frame-rate counter
-550 A               # on -> off (a test build's default is on), live
-570 DOWN            # BACK screenshots
-580 DOWN            # Front LED effects
-590 A               # on -> off (the LED is the SMC's on the title: no write)
-600 A               # off -> on: the preview sweep, [LED] ROGO then [LED] SMC
-610 DOWN
-620 DOWN            # Rumble
-635 LEFT            # 100% -> 75%
-650 DOWN
-665 DOWN            # Stick dead zone (port 1)
-680 RIGHT           # 20% -> 25%
-700 SHOT            # changed rows, restart mark, no counter
-720 B               # save and close
-750 SHOT            # hint line: saved, restart to apply
-800 BACK            # open again: the values stayed
-840 SHOT
-860 UP              # Save and close
-880 UP              # Save and restart
-900 SHOT
-920 A               # restart
+430 BACK for 12     # open
+480 SHOT            # the menu
+510 LEFT for 12     # Video output: 720p -> 480p (xemu's dashboard: "480p -> 480i")
+540 DOWN for 12     # Widescreen
+570 DOWN for 12     # Frame-rate counter
+600 A for 12        # on -> off (a test build's default is on), live
+630 DOWN for 12     # BACK screenshots
+660 DOWN for 12     # Front LED effects
+690 A for 12        # off -> on: the preview sweep, [LED] ROGO then [LED] SMC
+720 A for 12        # on -> off (LED handed back to the SMC)
+750 DOWN for 12     # Rumble
+780 LEFT for 12     # 100% -> 75%
+810 DOWN for 12     # Controller
+840 DOWN for 12     # Stick dead zone (port 1)
+870 RIGHT for 12    # 20% -> 25%
+900 SHOT            # changed rows, restart mark, no counter
+930 B for 12        # save and close
+980 SHOT            # hint line: saved, restart to apply
+1010 BACK for 12    # open again: the values stayed
+1060 SHOT
+1090 UP for 12      # Save and close
+1120 UP for 12      # Save and restart
+1150 SHOT
+1180 A for 12       # restart

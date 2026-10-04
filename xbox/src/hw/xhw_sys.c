@@ -556,11 +556,11 @@ uint32_t xhw_mem_free_kb(void) {
 
 /* Every console these builds were tested on has 64 MB, and the two GPU
  * faults reported mid-match (LIMIT_COLOR, issue #5 and the v2 report after
- * it) both came from a 128 MB console. Until that is understood, the RAM
- * above 64 MB is allocated here once, before anything else is, and never
- * given back: the kernel and the game then only get pages in the low
- * 64 MB. Big blocks first, then smaller ones for what is left between the
- * kernel's own allocations up there. */
+ * it) both came from a 128 MB console. So the RAM above 64 MB is allocated
+ * here at every boot (no setting since v53), before the game's own memory
+ * is, and never given back: the kernel and the game then only get pages in
+ * the low 64 MB. Big blocks first, then smaller ones for what is left
+ * between the kernel's own allocations up there. */
 /* the kernel's count of physical pages: more than 64 MB is a 128 MB board */
 int xhw_mem_has_upper(void) {
     MM_STATISTICS st;

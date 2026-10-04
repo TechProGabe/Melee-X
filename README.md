@@ -20,7 +20,7 @@ The Xbox side grew out of [OpenCrossing-Xbox](https://github.com/GabeConway/Open
 
 ## What you need
 
-- A modded original Xbox (softmod or modchip) that runs homebrew. A stock 64 MB console is fine. On a console upgraded to 128 MB, Melee-X uses only 64 MB unless you turn on `ram128` (see Settings).
+- A modded original Xbox (softmod or modchip) that runs homebrew. A stock 64 MB console is fine. On a console upgraded to 128 MB, Melee-X uses only the first 64 MB, the setup it was tested on.
 - A way to copy files to it. Usually that's FTP from your dashboard (UnleashX, XBMC4Gamers, EvolutionX and friends all have a server built in).
 - A disc image of **Super Smash Bros. Melee, NTSC-U, version 1.02** (game ID `GALE01`, revision 2), dumped from your own disc. `.iso`, `.gcm` and `.ciso` all work, and the filename doesn't matter. PAL and Japanese copies won't boot. The 1.00 and 1.01 revisions start, but only 1.02 has been tested.
 - A controller. The Duke and the Controller S both work.
@@ -117,7 +117,6 @@ Press **Back** on the title screen ("Press Start") and the settings menu opens. 
 | Frame-rate counter | shows the fps in the top left corner, right away. Off by default |
 | BACK screenshots | when on, pressing Back saves a screenshot to `E:\UDATA\4d580001\shotNN.bmp`. Off by default. Handy for bug reports |
 | Front LED effects | the front light flashes on KOs, in the last seconds and on GAME!. Off by default. If something else controls your front LED, such as a Kronos modchip, it's best to leave this off |
-| Use 128 MB RAM | only for consoles upgraded to 128 MB. On a stock 64 MB Xbox it's locked off, so you can't break anything |
 | Rumble | off, or 25% to 100% |
 | Controller, dead zones, trigger click | pick a port, then set its stick dead zones and how far the triggers go in before they count as a full press |
 | Save and restart | saves and relaunches Melee-X, so video changes kick in |
@@ -134,9 +133,8 @@ Everything the menu changes lives in `E:\UDATA\4d580001\settings.ini`, and you c
 | | `progressive` | 0 forces 480i even when your dashboard allows 480p |
 | | `widescreen` | 1 (the default) draws 16:9 at 480i/480p, as long as the dashboard is set to widescreen too |
 | | `fps` | 1 shows a frame counter in the top left corner (off by default) |
-| `[system]` | `ram128` | 1 lets a console upgraded to 128 MB use all of it. Off by default: Melee-X then runs in the first 64 MB, the setup it was tested on. Ignored on a 64 MB console |
-| | `screenshots` | 1 makes Back save a screenshot (`shotNN.bmp` in the same folder). Off by default |
-| | `led_effects` | 1 lets matches play with the front light; 0 (the default) leaves it to the Xbox. Older files' `led` line is ignored |
+| `[system]` | `screenshots` | 1 makes Back save a screenshot (`shotNN.bmp` in the same folder). Off by default |
+| | `led_effects` | 1 lets matches play with the front light; 0 (the default) leaves it to the Xbox. Older files' `led` line is ignored, and so is their `ram128` line (128 MB consoles always run in 64 MB now) |
 | `[input]` | `rumble` | rumble strength in percent, 0 turns it off |
 | `[port1]` to `[port4]` | `stick_deadzone`, `cstick_deadzone` | stick dead zones in percent |
 | | `trigger_click` | how far (0-255) a trigger goes in before it counts as a full L/R press |
