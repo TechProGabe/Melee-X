@@ -83,6 +83,8 @@ void xhw_error_screen(const char* title, const char* const* lines);
  * reboot into the next XBE doesn't reset them; OpenCrossing traps.md). */
 void xhw_audio_shutdown(void);
 void xhw_pad_shutdown(void);
+/* xhw_pad.c: events waiting in SDL's queue (nothing reads them) */
+uint32_t xhw_pad_events_queued(void);
 
 /* xhw_led.c: the front LED back to the SMC. shutdown waits for the write
  * (leaving the XBE); release doesn't (crash: for good; hang report: until
