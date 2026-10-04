@@ -381,6 +381,9 @@ Game fixes:
   SSM that overflows its bank is dropped without its callback (it was
   requeued forever); `lbaudio_ax.c` (`lbAudioAx_80023B24`, the sound test)
   waits for loads in flight before emptying bank 2.
+- `src/melee/gr/granime.c` (`grAnime_801C8318`): the AObj that
+  `fn_801C82E8` longjmps back with is a `volatile` local (clang returned
+  NULL, so stage "animation ended" checks never fired: Kraid froze).
 
 Speed (same results, bit for bit where a test is named):
 - HSD animation and matrices (`test_anim_mtx.py`, `anim_mtx_ref.c`; a NaN
