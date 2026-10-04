@@ -390,6 +390,41 @@ tiles` reads all eight regions back, their compression words and the tag
 count. xemu ignores tile regions; only the console can say which settings
 are faster (and that the picture stays the same).
 
+### State trims
+
+`-DXGX_TRIM=<bits>` (test builds: `env MX_TRIM=`; default 0) has
+`emit_fixed` send pixel state that can't change a pixel as the cheaper
+state with the same result, so the GPU does less per pixel:
+
+- 1: GX blending with ONE, ZERO (add) is `src * 1 + dst * 0`, the source
+  in every channel: blending off, no framebuffer read.
+- 2: an alpha test whose compare, as sent after the GX pair is folded,
+  passes every alpha 0-255 (ALWAYS, GEQUAL 0, LEQUAL 255): off. The
+  Z-texture mask's GREATER 0 is never one; a pair `emit_fixed` can't fold
+  sends its first compare, and only that compare is looked at.
+- 4: a depth test with ALWAYS and no depth write: off. It can't reject or
+  write, and pbkit's stencil (on, ALWAYS, KEEP for every outcome) passes
+  its result nowhere. Not with `-DXGX_DEPTH_CULL=1`, where the near/far
+  cull might depend on the test being on.
+- 8: a draw that writes nothing (colour, alpha and depth writes all off) is
+  not sent; its state is, so the shadows still hold what the GPU has.
+
+The blend factors, alpha function and reference and depth function stay as
+they were sent while their test or blending is trimmed: the SETF shadows
+hold what was sent, and the next draw that turns one back on compares
+against them. Test builds (`XHW_AUTOPAD`, `XHW_PROF`; `-DXGX_TRIM_STATS`
+overrides) log every `XGX_STATS_EVERY` frames how many draws each trim
+applies to, with its bit on or off, and the eight most drawn blend and
+alpha-test settings:
+
+```
+[TRIM] per 600 frames: draws D | blend-identity a | alpha-always b | z-always c | no-op d
+[TRIM] blend by draws (type/src/dst/logic): 1/4/5/0 n, ...
+[TRIM] alpha test by draws (comp0/ref0/op/comp1/ref1): 7/0/0/7/0 n, ...
+```
+
+Settings past the sixteenth seen in an interval count as `other`.
+
 ## Vertex programs (`nv2a_vp.c`)
 
 Each transform/lighting/texgen configuration (`VpKey`) gets a generated

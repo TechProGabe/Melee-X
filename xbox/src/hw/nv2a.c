@@ -46,6 +46,7 @@ void ocx_pb_layout(unsigned* out);        /* tools/xbox/patch_pbkit.py */
 /* GX values used here (dolphin headers are not on the hw include path) */
 enum { GX_CULL_NONE, GX_CULL_FRONT, GX_CULL_BACK, GX_CULL_ALL };
 enum { GX_BM_NONE, GX_BM_BLEND, GX_BM_LOGIC, GX_BM_SUBTRACT };
+enum { GX_BL_ZERO, GX_BL_ONE };
 enum { GX_AOP_AND, GX_AOP_OR, GX_AOP_XOR, GX_AOP_XNOR };
 enum { GX_NEVER, GX_LESS, GX_EQUAL, GX_LEQUAL, GX_GREATER, GX_NEQUAL, GX_GEQUAL, GX_ALWAYS };
 enum { GX_CLAMP, GX_REPEAT, GX_MIRROR };
@@ -1174,6 +1175,22 @@ static void pb_budget(void) {
 #define XGX_STATS_EVERY 600   /* [NV2A] frame line every N presents */
 #endif
 
+/* State trims and their [TRIM] census (emit_fixed); the census is on in
+ * test builds */
+#ifndef XGX_TRIM
+#define XGX_TRIM 0
+#endif
+#ifndef XGX_TRIM_STATS
+#if (defined(XHW_AUTOPAD) && XHW_AUTOPAD) || (defined(XHW_PROF) && XHW_PROF)
+#define XGX_TRIM_STATS 1
+#else
+#define XGX_TRIM_STATS 0
+#endif
+#endif
+#if XGX_TRIM_STATS
+static void trim_report(void);
+#endif
+
 /* Draw census (-DXGX_CENSUS=1, docs/fps-plan.md step 0.3): draws, vertices
  * and what changed before them, per pass and per owner, from the tag the
  * game's render paths keep (xbox/include/game/xgx_probe.h). A [CENSUS]
@@ -1426,6 +1443,9 @@ void xgx_present(int black) {
                  s_st_dirty[10], s_st_dirty[11], s_st_dirty[12]);
         memset(s_st_dirty, 0, sizeof s_st_dirty);
         s_st_draws = s_st_dirty_none = s_st_dirty_mtx = 0;
+#if XGX_TRIM_STATS
+        trim_report();
+#endif
 #if XGX_CENSUS
         census_report();
 #endif
@@ -2184,17 +2204,142 @@ static uint32_t blend_factor(uint32_t gx, int is_src) {
 
 static void emit_fog(const XgxState* st);
 
+/* State trims (-DXGX_TRIM=<bits>, default 0; test builds also take "env
+ * MX_TRIM=n" from the autopad script): pixel state that can't change a
+ * pixel is sent as the cheaper state with the same result, so the GPU does
+ * less per pixel. Each bit is an identity on the NV2A's 8-bit pipeline:
+ *   1 GX_BM_BLEND with ONE, ZERO (add): src * 1 + dst * 0 is src, every
+ *     channel alpha included, so blending is off (no framebuffer read)
+ *   2 an alpha test, as sent after folding the GX pair, that passes every
+ *     alpha 0-255 (ALWAYS, GEQUAL 0, LEQUAL 255): off. The Z-texture mask's
+ *     GREATER 0 is never one
+ *   4 a depth test with ALWAYS and no depth write: off. It can't reject,
+ *     and pbkit's stencil (ALWAYS, KEEP on every outcome) never sees it;
+ *     not with -DXGX_DEPTH_CULL, whose near/far cull may need it on
+ *   8 a draw that writes nothing (no colour, alpha or depth write; stencil
+ *     KEEP) is not sent; its state is, so the shadows stay what the GPU has
+ * SETF's shadows hold what was sent: a trimmed draw leaves the blend
+ * factors and the alpha and depth functions as the GPU has them, and the
+ * next draw that turns one back on compares against those. Test builds
+ * count the draws each trim applies to, on or off, and the most common
+ * blend and alpha-compare settings: [TRIM] lines every XGX_STATS_EVERY. */
+enum { TRIM_BLEND = 1, TRIM_ALPHA = 2, TRIM_Z = 4, TRIM_NOOP = 8 };
+static int s_trim = XGX_TRIM;
+static uint32_t s_trim_can;   /* the trims the current pixel state allows (emit_fixed) */
+
+#if XGX_TRIM_STATS
+#define TRIM_HIST 16   /* settings counted apart; slot TRIM_HIST holds the rest */
+typedef struct {
+    uint32_t key, draws;
+} TrimHist;
+static uint32_t s_tr_n[5];   /* draws, then draws per trim bit */
+static TrimHist s_tr_blend[TRIM_HIST + 1], s_tr_alpha[TRIM_HIST + 1];
+static int s_tr_nblend, s_tr_nalpha, s_tr_bslot = TRIM_HIST, s_tr_aslot = TRIM_HIST;
+static uint32_t s_tr_bkey = 0xFFFFFFFFu, s_tr_akey = 0xFFFFFFFFu;   /* the current settings */
+
+static int trim_slot(TrimHist* h, int* n, uint32_t key) {
+    int i;
+    if (key == 0xFFFFFFFFu) return TRIM_HIST;
+    for (i = 0; i < *n; i++)
+        if (h[i].key == key) return i;
+    if (*n == TRIM_HIST) return TRIM_HIST;
+    h[*n].key = key;
+    h[*n].draws = 0;
+    return (*n)++;
+}
+
+/* emit_fixed: the settings' slots, looked up only when they change */
+static void trim_keys(const XgxState* st) {
+    uint32_t bk = (st->blend_type & 0xFF) | (st->blend_src & 0xFF) << 8 | (st->blend_dst & 0xFF) << 16 |
+                  (st->blend_logic & 0xFF) << 24;
+    uint32_t ak = (st->alpha_comp0 & 7) | (st->alpha_ref0 & 0xFF) << 8 | (st->alpha_op & 3) << 16 |
+                  (st->alpha_comp1 & 7) << 20 | (st->alpha_ref1 & 0xFF) << 24;
+    if (bk != s_tr_bkey) s_tr_bslot = trim_slot(s_tr_blend, &s_tr_nblend, s_tr_bkey = bk);
+    if (ak != s_tr_akey) s_tr_aslot = trim_slot(s_tr_alpha, &s_tr_nalpha, s_tr_akey = ak);
+}
+
+static void trim_count(void) {
+    uint32_t b;
+    s_tr_n[0]++;
+    for (b = s_trim_can; b; b &= b - 1) s_tr_n[1 + __builtin_ctz(b)]++;
+    s_tr_blend[s_tr_bslot].draws++;
+    s_tr_alpha[s_tr_aslot].draws++;
+}
+
+/* the 8 slots with the most draws, most first */
+static int trim_top(const TrimHist* h, int* top) {
+    uint32_t used = 0;
+    int k, i;
+    for (k = 0; k < 8; k++) {
+        int best = -1;
+        for (i = 0; i <= TRIM_HIST; i++)
+            if (!(used >> i & 1) && h[i].draws && (best < 0 || h[i].draws > h[best].draws)) best = i;
+        if (best < 0) break;
+        used |= 1u << best;
+        top[k] = best;
+    }
+    return k;
+}
+
+static void trim_report(void) {
+    char buf[512];
+    int top[8], k, i, n;
+    xhw_logf("[TRIM] per %u frames: draws %u | blend-identity %u | alpha-always %u | z-always %u | no-op %u",
+             XGX_STATS_EVERY, s_tr_n[0], s_tr_n[1], s_tr_n[2], s_tr_n[3], s_tr_n[4]);
+    k = trim_top(s_tr_blend, top);
+    n = snprintf(buf, sizeof buf, "[TRIM] blend by draws (type/src/dst/logic):");
+    for (i = 0; i < k; i++) {
+        const TrimHist* h = &s_tr_blend[top[i]];
+        const char* sep = i ? ", " : " ";
+        if (top[i] == TRIM_HIST) n += snprintf(buf + n, sizeof buf - (size_t)n, "%sother %u", sep, h->draws);
+        else
+            n += snprintf(buf + n, sizeof buf - (size_t)n, "%s%u/%u/%u/%u %u", sep, h->key & 0xFF,
+                          h->key >> 8 & 0xFF, h->key >> 16 & 0xFF, h->key >> 24, h->draws);
+    }
+    xhw_log(buf);
+    k = trim_top(s_tr_alpha, top);
+    n = snprintf(buf, sizeof buf, "[TRIM] alpha test by draws (comp0/ref0/op/comp1/ref1):");
+    for (i = 0; i < k; i++) {
+        const TrimHist* h = &s_tr_alpha[top[i]];
+        const char* sep = i ? ", " : " ";
+        if (top[i] == TRIM_HIST) n += snprintf(buf + n, sizeof buf - (size_t)n, "%sother %u", sep, h->draws);
+        else
+            n += snprintf(buf + n, sizeof buf - (size_t)n, "%s%u/%u/%u/%u/%u %u", sep, h->key & 7,
+                          h->key >> 8 & 0xFF, h->key >> 16 & 3, h->key >> 20 & 7, h->key >> 24, h->draws);
+    }
+    xhw_log(buf);
+    memset(s_tr_n, 0, sizeof s_tr_n);
+    memset(s_tr_blend, 0, sizeof s_tr_blend);
+    memset(s_tr_alpha, 0, sizeof s_tr_alpha);
+    s_tr_nblend = s_tr_nalpha = 0;
+    /* the current settings keep a slot: emit_fixed looks them up only on a change */
+    s_tr_bslot = trim_slot(s_tr_blend, &s_tr_nblend, s_tr_bkey);
+    s_tr_aslot = trim_slot(s_tr_alpha, &s_tr_nalpha, s_tr_akey);
+}
+#endif
+
 static void emit_fixed(const XgxState* st) {
     int x0, y0, x1, y1;
+    uint32_t can = 0;
+#if !(defined(XGX_DEPTH_CULL) && XGX_DEPTH_CULL)   /* there the depth range culls: unknown without the test */
+    if (st->z_enable && (st->z_func & 7) == GX_ALWAYS && !st->z_update) can |= TRIM_Z;
+#endif
+    if (!st->color_update && !st->alpha_update && !st->z_update) can |= TRIM_NOOP;
+    if (st->blend_type == GX_BM_BLEND && st->blend_src == GX_BL_ONE && st->blend_dst == GX_BL_ZERO) can |= TRIM_BLEND;
 #ifdef XGX_DEBUG_NOZ
     SETF(0, NV097_SET_DEPTH_TEST_ENABLE, 0);
 #else
-    SETF(0, NV097_SET_DEPTH_TEST_ENABLE, st->z_enable ? 1 : 0);
+    SETF(0, NV097_SET_DEPTH_TEST_ENABLE, st->z_enable && !(s_trim & can & TRIM_Z) ? 1 : 0);
 #endif
     SETF(1, NV097_SET_DEPTH_FUNC, 0x200 + (st->z_func & 7));
     SETF(2, NV097_SET_DEPTH_MASK, st->z_update ? 1 : 0);
     switch (st->blend_type) {
         case GX_BM_BLEND:
+            if (s_trim & can & TRIM_BLEND) {   /* the factors stay as sent (SETF) */
+                SETF(3, NV097_SET_BLEND_ENABLE, 0);
+                SETF(7, NV097_SET_LOGIC_OP_ENABLE, 0);
+                break;
+            }
             SETF(3, NV097_SET_BLEND_ENABLE, 1);
             SETF(4, NV097_SET_BLEND_FUNC_SFACTOR, blend_factor(st->blend_src, 1));
             SETF(5, NV097_SET_BLEND_FUNC_DFACTOR, blend_factor(st->blend_dst, 0));
@@ -2261,12 +2406,23 @@ static void emit_fixed(const XgxState* st) {
             fn = GX_GREATER;
             ref = 0;
         }
+        /* what is sent can't fail on an 8-bit alpha (the function and
+         * reference stay as sent: SETF) */
+        fn &= 7;
+        if (en && (fn == GX_ALWAYS || (fn == GX_GEQUAL && ref == 0) || (fn == GX_LEQUAL && ref == 255))) {
+            can |= TRIM_ALPHA;
+            if (s_trim & TRIM_ALPHA) en = 0;
+        }
         SETF(15, NV097_SET_ALPHA_TEST_ENABLE, en);
         if (en) {
-            SETF(16, NV097_SET_ALPHA_FUNC, 0x200 + (fn & 7));
+            SETF(16, NV097_SET_ALPHA_FUNC, 0x200 + fn);
             SETF(17, NV097_SET_ALPHA_REF, ref);
         }
     }
+    s_trim_can = can;
+#if XGX_TRIM_STATS
+    trim_keys(st);
+#endif
     /* the front end clears dirty after each draw: only a changed GXSetFog gets here */
     if ((st->dirty & XGX_DIRTY_FOG) || s_fog_force) emit_fog(st);
 }
@@ -2965,6 +3121,17 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     if (d & DIRTY_FIXED) emit_fixed(st);
     if (d & DIRTY_UNITS) emit_textures(st, s_d_unit_map, s_d_nunits);
     if (d & (DIRTY_UNITS | XGX_DIRTY_TEVREG)) emit_combiners(st, s_d_rp, (d & XGX_DIRTY_TEVREG) != 0);
+#if XGX_TRIM_STATS
+    trim_count();
+#endif
+    if (s_trim & s_trim_can & TRIM_NOOP) {   /* writes nothing: its state is sent, the arrays and draw not */
+        if (P - s_pb_mark >= PB_KICK) pb_close();
+        s_draws++;
+        s_st_draws++;
+        s_st_prim[(prim >> 3) & 7]++;
+        xhw_perf_leave(pf);
+        return;
+    }
 
     /* The vertices are at s_draw_base (xgx_vtx_alloc or xgx_vtx_use). The
      * arrays point at the start of the ring or of the vertex pool, and the
@@ -3708,6 +3875,13 @@ int xgx_init(void) {
     while (!pool_init(&s_vb, vb_pool_bytes) && vb_pool_bytes > VB_POOL_MIN) vb_pool_bytes -= 1024u * 1024;
     if (!s_vb.base) xhw_logf("[NV2A] no memory for the %u KB vertex cache", vb_pool_bytes / 1024);
     tiles_setup();
+#if defined(XHW_AUTOPAD) && XHW_AUTOPAD
+    {
+        const char* e = getenv("MX_TRIM");
+        if (e) s_trim = (int)strtol(e, NULL, 0);
+    }
+#endif
+    if (s_trim) xhw_logf("[NV2A] state trims %d (XGX_TRIM)", s_trim);
     pb_show_front_screen();
     s_fbw = (int)pb_back_buffer_width();
     s_fbh = (int)pb_back_buffer_height();
