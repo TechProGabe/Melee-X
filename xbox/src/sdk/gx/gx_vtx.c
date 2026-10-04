@@ -53,8 +53,10 @@ static struct {
     uint8_t* base;       /* back-end vertex memory */
     uint8_t* cur;        /* current vertex */
     int cursor;          /* next slot within the vertex */
-    float pos_carry[3];   /* GXPosition2f32 components not yet a whole XYZ position */
+    float pos_carry[3];   /* position components not yet a whole position */
     int npos_carry;
+    float tc_carry[2];    /* GXTexCoord1f32 components not yet a whole ST pair */
+    int ntc_carry;
 } B;
 
 static void sig_recompute(void);
@@ -266,6 +268,9 @@ static uint32_t copy_prim(uint8_t* dst, const uint8_t* src, uint32_t prim, uint3
 static uint8_t* s_stage;
 static uint32_t s_stage_cap;
 static uint32_t s_st_imm_batches, s_st_imm_joined;
+/* batches that ended with fewer vertices than GXBegin announced: writes
+ * that didn't fit the vertex descriptor (issue #7: every particle) */
+static uint32_t s_st_imm_short;
 
 /* room for `bytes` in the staging buffer (its contents kept); 0: too big */
 static int stage_reserve(uint32_t bytes) {
@@ -320,6 +325,7 @@ static void begin_batch(uint32_t prim, int vtxfmt, uint32_t n) {
             B.open = 1;
             B.pending = 0;
             B.npos_carry = 0;
+            B.ntc_carry = 0;
             memset(B.cur, 0, s);
             s_st_imm_joined++;
             return;
@@ -336,11 +342,13 @@ static void begin_batch(uint32_t prim, int vtxfmt, uint32_t n) {
     B.cur = B.base;
     B.open = 1;
     B.npos_carry = 0;
+    B.ntc_carry = 0;
     if (B.base) memset(B.base, 0, s);
 }
 
 static void end_batch(void) {
     B.open = 0;
+    if (B.base && B.done < B.expected) s_st_imm_short++;
     if (!B.base || B.done == 0) return;
     if (B.done == B.expected && list_prim(B.prim, B.done)) B.pending = 1;
     else draw_batch();
@@ -439,13 +447,23 @@ void GXPosition3u8(u8 x, u8 y, u8 z) { float f[3] = { q(x, GX_VA_POS), q(y, GX_V
 void GXPosition3s8(s8 x, s8 y, s8 z) { float f[3] = { q(x, GX_VA_POS), q(y, GX_VA_POS), q(z, GX_VA_POS) }; imm_floats(GX_VA_POS, f, 3); }
 /* The GX FIFO takes components as a stream, so code that writes an XYZ
  * format's positions as pairs (HSD's shadow background quad: 12 floats in
- * six GXPosition2f32 calls) still makes whole vertices. Collect them. */
+ * six GXPosition2f32 calls) still makes whole vertices. Collect them (two
+ * for an XY format, three for XYZ). */
 static void pos_stream(float v) {
+    int need = g_gx.vat[B.vtxfmt][GX_VA_POS].cnt == GX_POS_XYZ ? 3 : 2;
     B.pos_carry[B.npos_carry++] = v;
-    if (B.npos_carry == 3) {
+    if (B.npos_carry >= need) {
+        if (need == 2) B.pos_carry[2] = 0;
         imm_floats(GX_VA_POS, B.pos_carry, 3);
         B.npos_carry = 0;
     }
+}
+
+/* The slot the FIFO's next bytes belong to: the raw writers (GXCmd1u8,
+ * GXTexCoord1f32 used as a plain f32 write) fill whatever comes next. */
+static const Slot* cur_slot(void) {
+    if (!B.open || !B.base || B.done >= B.expected || B.cursor >= B.plan.n) return NULL;
+    return &B.plan.slot[B.cursor];
 }
 
 static int pos_streams(void) { return B.open && g_gx.vat[B.vtxfmt][GX_VA_POS].cnt == GX_POS_XYZ; }
@@ -527,13 +545,31 @@ void GXTexCoord2u16(u16 s, u16 t) { imm_tex(tq(s), tq(t)); }
 void GXTexCoord2s16(s16 s, s16 t) { imm_tex(tq(s), tq(t)); }
 void GXTexCoord2u8(u8 s, u8 t) { imm_tex(tq(s), tq(t)); }
 void GXTexCoord2s8(s8 s, s8 t) { imm_tex(tq(s), tq(t)); }
-/* With no texture coordinate in the vertex, the floats are the next
- * position components: the Classic team card primes its depth plane with
- * a position-only quad written as twelve GXTexCoord1f32 (fn_80185408), and
- * without its positions the card's Z-texture tiles had nothing to test
- * against. */
+/* GXTexCoord1f32 is a plain f32 write to the FIFO: the float is the next
+ * component of whatever attribute comes next in the vertex. The Classic
+ * team card primes its depth plane with a position-only quad written as
+ * twelve GXTexCoord1f32 (fn_80185408); HSD's particles (psdisp.c) write
+ * billboard positions as three of them ahead of a TEX0 index, and their
+ * form vertices' S and T as two. Taking each call as a whole texture
+ * coordinate dropped every textured particle. */
 void GXTexCoord1f32(f32 s) {
+    const Slot* sl = cur_slot();
     int a;
+    if (sl && sl->type == GX_DIRECT) {
+        if (sl->attr == GX_VA_POS && sl->fmt.type == GX_F32) {
+            pos_stream(s);
+            return;
+        }
+        if (sl->attr >= GX_VA_TEX0 && sl->attr <= GX_VA_TEX7 && sl->fmt.type == GX_F32) {
+            B.tc_carry[B.ntc_carry++] = s;
+            if (B.ntc_carry >= comp_count(sl)) {
+                if (B.ntc_carry < 2) B.tc_carry[1] = 0;
+                B.ntc_carry = 0;
+                imm_tex(B.tc_carry[0], B.tc_carry[1]);
+            }
+            return;
+        }
+    }
     for (a = GX_VA_TEX0; a <= GX_VA_TEX7; a++)
         if (g_gx.desc[a] != GX_NONE) break;
     if (a > GX_VA_TEX7 && g_gx.desc[GX_VA_POS] == GX_DIRECT && pos_streams()) {
@@ -556,9 +592,18 @@ void GXTexCoord1x16(u16 i) {
 }
 void GXTexCoord1x8(u8 i) { GXTexCoord1x16(i); }
 
-/* GXCmd1u8 inside a batch is a matrix index (PNMTXIDX, TEXnMTXIDX) */
+/* GXCmd1u8 inside a batch is a matrix index (PNMTXIDX, TEXnMTXIDX), or the
+ * index of an INDEX8 attribute when that comes next: HSD's particle
+ * billboards (psdisp.c) write TEX0's index into the corner table this way. */
 void GXCmd1u8(const u8 x) {
-    const Slot* s = next_slot(1, 0);
+    const Slot* s = cur_slot();
+    if (s && s->attr > GX_VA_TEX7MTXIDX && s->type == GX_INDEX8) {
+        B.cursor++;
+        fetch_indexed(s, x, B.cur);
+        after_attr();
+        return;
+    }
+    s = next_slot(1, 0);
     if (!s) return;
     if (s->dst >= 0) {
         float f = (float)x;
@@ -1727,12 +1772,13 @@ void gx_vtx_frame_end(void) {
         xhw_logf("[DLC] %d of %d lists (%d dynamic, %u KB; %d volatile), vertex pool %u of %u KB free | per %u: %u "
                  "cached calls, %u builds (%u after a format/array change, %u after a content change; %u batches "
                  "joined), %u dynamic calls (%u array fetches, %u builds), %u decoded | immediate: %u batches, %u "
-                 "joined",
+                 "joined, %u short",
                  s_dlc_n, DLC_MAX, dyn, s_dyn_bytes / 1024, vol, xgx_vbuf_pool_free_kb(), xgx_vbuf_pool_kb(),
                  XGX_STATS_EVERY, s_st_dl_hits, s_st_dl_builds, s_st_chg_sig, s_st_chg_data, s_st_dl_joined,
-                 s_st_dyn_calls, s_st_dyn_fetch, s_st_dyn_builds, s_st_dl_direct, s_st_imm_batches, s_st_imm_joined);
+                 s_st_dyn_calls, s_st_dyn_fetch, s_st_dyn_builds, s_st_dl_direct, s_st_imm_batches, s_st_imm_joined,
+                 s_st_imm_short);
         s_st_dl_hits = s_st_dl_builds = s_st_dl_direct = s_st_dyn_calls = s_st_dyn_fetch = s_st_dyn_builds = 0;
-        s_st_chg_sig = s_st_chg_data = s_st_dl_joined = s_st_imm_batches = s_st_imm_joined = 0;
+        s_st_chg_sig = s_st_chg_data = s_st_dl_joined = s_st_imm_batches = s_st_imm_joined = s_st_imm_short = 0;
         {
             char line[256];
             int n = 0;
