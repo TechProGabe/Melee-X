@@ -429,9 +429,9 @@ pattern), it just isn't planned.
 **D3. Discovery by IPv4 UDP broadcast; DHCP with AutoIP fallback; the
 network starts when the LAN lobby opens.** F4 rules mDNS out on the stock
 driver and library. Each console in the lobby broadcasts one announce a
-second, and at once on entering, to 255.255.255.255 and the subnet's
-broadcast address on UDP 41001; the game socket is UDP 41000 (upstream's
-default, `net.c:2038`). The announce is upstream's TXT record as one text
+second, and at once on entering, to 255.255.255.255 on UDP 41001 (the
+limited broadcast only, D14 rule 8); the game socket is UDP 41000
+(upstream's default, `net.c:2038`). The announce is upstream's TXT record as one text
 line (`v rev disc id name port players state gen host peer offer`;
 `players` is D5's 1 or 2), parsed by the
 same strict rules; the election is upstream's (lowest id among the ready
@@ -581,8 +581,110 @@ of synced input, up to five a present. Time-sync skips and advances are
 off by default (they assume the pin); lockstep's own back-pressure keeps
 two consoles together, and their clocks differ by parts per million.
 
-**D13. The four internet entries of the ONLINE menu are refused on the
-Xbox** (deny sound, "Not available"); only LAN PLAY enters `GM_ONLINE`.
+**D13. The internet entries are removed from the menu** (the user,
+2026-10-04). Direct Connect, Ranked, Unranked and Profile are not shown on
+the Xbox; the ONLINE submenu becomes LAN PLAY alone (or the main menu's
+ONLINE entry leads straight to the LAN lobby, whichever is the smaller
+`PORT:` edit in `mnonline.c`/`mnmain.c`; phase 3 picks and records it).
+Until phase 3 lands, the ONLINE entry on `dev` leads nowhere (the
+`PORT:` bail, F1); hiding it before then is an offline menu change, so it
+is the user's call (open question 3). Only LAN PLAY enters `GM_ONLINE`.
+
+**D14. Network conduct: what the console sends on someone's LAN, and the
+standards it keeps** (the user, 2026-10-04: "airtight", no harm to the
+network). Every rule below is enforced in code, checked by a host test or
+by `net_audit.py` on a capture, and any departure is a stop-and-ask.
+
+1. *Off means silent.* An offline boot never starts the NIC: no DHCP, no
+   ARP, nothing (G0's "no `[NET]` line" plus a capture of an offline boot
+   with no frame from the console's MAC). Every way out of the XBE stops
+   the NIC before `XLaunchXBE` (R4).
+2. *Link layer.* The console's own MAC from the EEPROM. The second xemu
+   EEPROM gets a locally administered unicast MAC (IEEE 802: U/L bit set,
+   I/G bit clear; `eeprom_mac.py`).
+3. *ARP and address conflicts* (RFC 826, RFC 5227): lwIP's ACD is on at
+   the pin for DHCP addresses and AutoIP (`LWIP_DHCP_DOES_ACD_CHECK`,
+   `LWIP_ACD` defaults, `opt.h:955`, `:1059`). An address that fails the
+   check is never used: a DHCP address is declined (DHCPDECLINE, RFC 2131
+   §3.1.5), a link-local one replaced. A conflict found later (another
+   host claims our address) is defended or given up as RFC 5227 §2.4 says
+   (lwIP's ACD), and the lobby shows "Address conflict".
+4. *DHCP* (RFC 2131, RFC 2132): lwIP's client, unchanged, with nxdk's
+   XDK-style client identifier (`lwipopts.h:474-479`); its own
+   retransmission backoff. Link down then up: `dhcp_network_changed`
+   (INIT-REBOOT, RFC 2131 §3.2). A manual address from the console's
+   configuration sector is used as is, with the ACD check first. The lease
+   is not released at exit (RFC 2131 allows it; the dashboard reuses it).
+5. *Link-local* (RFC 3927): AutoIP only without a manual address and with
+   no lease after 4 s; lwIP's probe and announce timing untouched;
+   addresses in 169.254.1.0-169.254.254.255 only. DHCP keeps trying; a
+   lease that arrives is used for every new session and announce, a
+   running session ends on the address it started on (RFC 3927 §1.9).
+6. *IPv4 only* (the user: IPv6 is out of scope). The netif is never given
+   an IPv6 address, which is lwIP's default when nobody asks for one, so
+   the console sends no IPv6; no extra work beyond not enabling it. No
+   IGMP, no multicast.
+7. *UDP* (RFC 768, RFC 8085): checksums generated and checked (lwIP
+   defaults, `opt.h:2386`, `:2421`). Fixed ports, the same for source and
+   destination: 41000 game, 41001 discovery, both in the IANA registered
+   range and unassigned (40854-41110 is free in the registry, checked
+   2026-10-04). No datagram over 1200 bytes (`xhw_udp_send` refuses it; the
+   largest is D5's 603-byte input packet), so nothing is ever fragmented
+   (RFC 8085 §3.2). IP TTL 1 on every datagram we send: the game is
+   link-local by design, and a datagram that would need a router dies at
+   the first one.
+8. *Broadcast* (RFC 919, RFC 922, RFC 1812 §5.3.5): discovery uses the
+   limited broadcast 255.255.255.255 only, never the subnet's directed
+   broadcast (on one link it reaches the same hosts; a router configured to
+   forward directed broadcasts, RFC 2644, could carry it further). One
+   announce a second, one more on entering the lobby, never more than two
+   in any second, under 200 bytes, only while the lobby is open and the
+   address is up; nothing is broadcast in a match. A broadcast is never
+   answered by a broadcast, and nothing answers a datagram with more bytes
+   than it carried until the handshake has seen both sides (no
+   amplification).
+9. *Who we talk to.* Only on-link peers: a source or destination outside
+   our subnet (or outside 169.254/16 when we are link-local) is dropped,
+   `MELEE_LAN_DIRECT` included. Datagrams from our own address, from
+   0.0.0.0, a broadcast or multicast source, port 0, or of the wrong length
+   or magic are dropped before any parser sees them. Unicast goes only to
+   an address that announced itself or opened a session; after a session
+   ends (BYE, timeout, desync) nothing more is sent to that peer.
+10. *Rates and the circuit breaker* (RFC 8085 §3.1, RFC 8084). A session
+    sends one input packet a tick (≤ 5 a present, ~60 a second), acks, the
+    reliable lane and keep-alives; ~40 KB/s each way at 2+2. Changes from
+    upstream (`PORT:` edits in phase 1): keep-alives while the game thread
+    is inside a load go out at 10 a second, not every 7 ms (`net.c:404-439`;
+    the peer's silence limit is 3 s); the reliable lane's fixed 250 ms
+    resend (`net_reliable.c:44`) backs off exponentially to 2 s; the
+    mid-frame resend after a loss stays as upstream (at most one per 7 ms).
+    Independently of the engine, `xhw_net.c` enforces a ceiling per socket
+    (token bucket: 250 datagrams and 256 KB a second, bursts of 32): excess
+    is dropped and counted (`[NET] tx governor dropped N`), so no engine bug
+    can flood a LAN. The silence limits (3 s, then 3 s of resume) are the
+    breaker that stops a session talking to a peer that has gone.
+11. *Everything else lwIP does* stays standard: ICMP echo replies and port
+    unreachables (RFC 1122 §3.2.2), TCP resets to connection attempts (no
+    listener is ever opened).
+
+Verification, in the phases' gates: `tools/xbox/net_audit.py <pcap>` (phase
+0B; standard library only) checks a capture against rules 1-10: per-source
+rates in every one-second window and the governor never reached in normal
+play, sizes, no IP fragments, TTL 1, broadcast only to
+255.255.255.255:41001 at most twice a second, no multicast or IGMP frame
+from a console's MAC, IP and UDP checksums valid, ARP probe and announce
+timing for AutoIP (RFC 3927 §2.2) and ACD (RFC 5227 §2.1), the DHCP
+exchange well formed, nothing to a peer after its BYE or timeout.
+Captures come from `tools/xbox/xemu_tap.py` (phase 0B: a relay between the
+pair's two UDP tunnel endpoints that forwards each Ethernet frame and
+writes it to a pcap; no driver needed) and on the hardware from Windows'
+own `pktmon` on the PC, on the same switch (an administrator prompt, the
+user's: `pktmon start --capture`, `pktmon stop`, `pktmon etl2pcap`); it
+sees broadcasts, ARP, DHCP and the console's traffic to `lan_probe.py`.
+A host fuzz test (`test_net_fuzz.py`, phases 1 and 3) feeds random and
+mutated datagrams to every parser (announce, input, ack, reliable,
+handshake): no crash, no read out of bounds (built with
+`-fsanitize=address,undefined`), no state change from a rejected one.
 
 ## Architecture
 
@@ -706,16 +808,24 @@ Work:
    `tools/xbox/eeprom_mac.py` to make the second EEPROM from a copy of the
    user's with another MAC and a fixed checksum. The second HDD image and
    EEPROM stay in `C:\xemu\b`.
-4. `tools/xbox/console2.py`: `stage|deploy|pull vNN` for consoles A and B
+4. Network conduct (D14), all of it that lives in the hw layer: TTL 1,
+   the 1200-byte limit, the on-link and source filters, the transmit
+   governor, ACD results acted on, `dhcp_network_changed` on link up.
+   `tools/xbox/net_audit.py` and `tools/xbox/xemu_tap.py`;
+   `tests/xbox/test_net_gov.c` (the token bucket and the filters against
+   a model).
+5. `tools/xbox/console2.py`: `stage|deploy|pull vNN` for consoles A and B
    (`MX_FTP_HOST`, `MX_FTP_HOST_B`), logs into `logsNN-a`, `logsNN-b`.
 
 Files: `xbox/src/hw/xhw_net.c`, `xhw_netprobe.c` (new), `xhw_main.c`,
+`tools/xbox/net_audit.py`, `xemu_tap.py`, `tests/xbox/test_net_gov.c`,
+`tools/xbox/test_net_gov.py`,
 `xhw_sys.c` (log tee), `xbox/include/xhw.h`, `xbox/CMakeLists.txt` (lwIP
 include paths for `mx_hw`, `libnxdk_net.lib`), `tests/xbox/test_net_ring.c`,
 `tools/xbox/test_net_ring.py`, `xemu_pair.sh`, `eeprom_mac.py`,
 `lan_probe.py`, `lan_logd.py`, `console2.py`, `scenarios/netprobe`,
 `.github/workflows/build.yml` (the new host test).
-Switches: `env MX_NETPROBE`, `env MX_LOG_UDP`. Docs owed: `platform.md` (a
+Switches: `env MX_NETPROBE`, `MX_NETPROBE_FLOOD`, `env MX_LOG_UDP`. Docs owed: `platform.md` (a
 "Network" section), `testing.md` (switches, "Two xemu instances", "Two
 consoles"), `decisions.md` (D3, D11), `toolchain.md` (the link line),
 `architecture.md` (memory table), `LICENSE.md` (lwIP's BSD and nvnetdrv's
@@ -732,6 +842,14 @@ Gate:
   169.254.` within 5 s of `[NETP] link up`. If the tunnel doesn't work,
   try the pcap back end on a loopback adapter, record which worked, and if
   neither does say so here: pair gates then move to console sessions.
+- Host: `python3 tools/xbox/test_net_gov.py`; `net_audit.py` against
+  hand-made pcaps, one per rule, each rule's violation caught.
+- xemu pair through `xemu_tap.py`: `net_audit.py` clean over the whole
+  run (AutoIP probe/announce, ARP, beacons, pings), and an offline boot
+  through the tap with no frame from its MAC (D14 rule 1). A probe run
+  with `env MX_NETPROBE_FLOOD=1` (test builds: the probe tries 2000
+  datagrams a second) shows `[NET] tx governor dropped` and a capture
+  that never exceeds the ceiling.
 - Relaunch: a `NEXT` chain of two folders with the probe on boots the
   second cleanly in xemu.
 
@@ -758,6 +876,11 @@ answer it:
 | audio with the NIC interrupting (one `[AUDIO] AC97 polled` line, the user's ear) | A | xemu uses the APU path |
 | return to the dashboard and the next boot after the NIC ran | A | xemu forgives a running device |
 
+Network conduct on the real LAN: the user runs `pktmon` on the PC during
+part 1's probe run and part 2 (five-line instruction in the hand-over),
+then `net_audit.py` on both captures must be clean: DHCP with the real
+router, ARP and ACD, broadcasts, the probe's unicast to `lan_probe.py`.
+
 Results go into F4-F6 and the Status table; D11's conditions and D2's
 numbers are settled here.
 
@@ -778,7 +901,9 @@ Work:
    nonces from the tick/TSC/MAC mix; the wait loop blocks on
    `xhw_udp_wait` and calls the Xbox hook (watchdog, overlay later);
    `pc_net_rumble_command` stays `pad.c`'s; time sync measures only (D12);
-   a lockstep-only build takes the lockstep delay in fights too.
+   a lockstep-only build takes the lockstep delay in fights too; D14
+   rule 10's two rate changes (keep-alives at 10 a second during loads,
+   the reliable lane's backoff).
 4. Two players a console (D5), in the same edits: the peer index split from
    the port map (`net.port_base`, `net.count`), two-pad rings and
    `write_head` through the map, `capture_local_sample` from physical
@@ -800,7 +925,9 @@ Work:
    Scenario `netloop`: `MELEE_BOOT_SCENE=vs`, `cpu4`, Green Greens, 60 s.
    Scenario `netloop2`: Green Greens, 60 s, `MX_NET_LOCAL=2`, ports 1-2
    human and scripted by autopad, ports 3-4 the mirror's copies of them.
-7. Host tests from upstream's fixtures, built against the imported files:
+7. `test_net_fuzz.py` (D14): the engine's receive path and parsers under
+   random and mutated datagrams, with the sanitizers.
+8. Host tests from upstream's fixtures, built against the imported files:
    `test_net_reliable.py`, `test_net_handshake.py`, `test_net_sfx.py`; and
    `test_net_wire.py` (ours): the two-pad entry encodes and decodes for
    counts 1 and 2 and every port map of D5, a truncated or over-long
@@ -910,8 +1037,8 @@ Work:
 2. Game side, `PORT:` edits: the lobby bail narrowed to the non-LAN kinds
    (`gmonlinemode.c:816-825`), the lobby's status line from the Xbox's
    network state where upstream speaks of mDNS and Direct Connect
-   (`gmonlinemode.c:752-768`), the four internet entries refused
-   (`mnonline.c:67-94`), `MELEE_BOOT_SCENE=lan` (`gmboot.c`). For D5: the
+   (`gmonlinemode.c:752-768`), the four internet entries removed from the
+   menu (D13, `mnonline.c:67-94`), `MELEE_BOOT_SCENE=lan` (`gmboot.c`). For D5: the
    CSS's human doors from the session's port map (`onEnterLobby`'s fixed
    two, `gmonlinemode.c:173-178`, set again at session start), the lobby
    row with each peer's player count, the HUD line with port sets
@@ -1023,6 +1150,9 @@ Gate:
   within a second; the unplug: no desync, the match ends. No `[WDOG]`
   line in any of them.
 - `[CARD] image hash` equal before and after a session.
+- Every pair run of this phase through `xemu_tap.py`: `net_audit.py`
+  clean, and after each failure nothing more sent to the gone peer; the
+  governor never reached.
 - **Two consoles (S3, the user and a second player present, four
   controllers, ~60 min; A at 720p, B at 480i):** discovery under 5 s on
   both; matches with a rematch at the default delay with no desync
@@ -1053,7 +1183,8 @@ the logged runs): every line of the Goal with B at 480i and A at 720p,
 then A at 480p, and once A at 480i too; each of 1+1, 2+2 teams, 2+2 free
 for all, 2+1 and 1+2 at least once; once on a crossover cable with no
 router; a 30-minute soak of 2v2 rematches with no desync, free memory flat
-and above 5 MB; G0 on the release configuration in xemu.
+and above 5 MB; G0 on the release configuration in xemu; `net_audit.py` clean on a `pktmon`
+capture of a 2+2 session and of the lobby, with the release XBE.
 
 Two players a console is not a phase of its own: D5 puts it in phases 1,
 3, 4 and 5 (the former phase 6).
@@ -1101,6 +1232,7 @@ Two players a console is not a phase of its own: D5 puts it in phases 1,
 | R18 | four fighters run slower than two, more ticks per present, more stalls | 2v2 feels worse than 1v1, or needs delay 3 | phase 4's table for 2+2; delay per session (the host's `[lan] delay`) |
 | R19 | the online CSS assumes two human doors somewhere phase 3 doesn't see | a 2+2 CSS that misbehaves or desyncs | `lan22` and `lan21` in the pair before S3; `lan_diff.py` on CSS frames |
 | R20 | thin lobby text flickers or is unreadable at 480i | B's players can't read the lobby | 480i lobby shot (phase 3); by eye on B's TV (S3); larger text if needed |
+| R21 | the console misbehaves on someone's network (a flood, a stolen address, broadcasts beyond the link) | the user's LAN disturbed; the feature unusable | D14: rules enforced in the hw layer below the engine, a transmit governor, `net_audit.py` on every pair run and on `pktmon` captures in S1, S3, S4 |
 
 ## Open questions for the user
 
@@ -1115,6 +1247,8 @@ Still open:
 2. Unlock-all in RAM during a LAN session (never saved, D9): planned as
    the default because two different saves desync on the first frame;
    the user can still say no before phase 3.
+3. D13: hide the ONLINE entry on `dev` now (it leads nowhere until phase
+   3), or leave it until LAN PLAY replaces it?
 
 ## Picking this up
 
