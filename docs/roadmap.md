@@ -74,17 +74,21 @@ Fix order (2026-10-04):
    Bill's anim end (`grAnime_801C8318` lost its AObj across `longjmp`,
    the Kraid fix); in xemu six Bills in a row now spawn, end and free
    (`scenarios/castle`).
-5. **Particles not drawn** (console, v45, 480, all particles; v43 had smoke
-   and hits: bisect v43..v45 in xemu). `psdisp.c`: blend/TEV, texture
-   format or a dropped primitive type. Same group: Adventure Corneria's
-   Arwing cutscene silent with the comm portrait frozen (v43; tester v52
-   "Slippy's frame does not move") is fixed for v53 by the grAnime fix
-   (`grAnime_801C8318` returned NULL after its longjmp, so the comm
-   window's `grAnime_801C83D0` open-anim check never fired and it never
-   reached the talk state: no text, voice or mouth anim). In xemu
-   (`scenarios/cntalk`) all three lines now play with text and talk anims
-   and a voice handle held ~100 frames each; confirm the voices on the
-   console. Trophy transition lighting dark
+5. **Particles not drawn**: fixed for v53 (needs a console check: the Fire
+   Flower's flame, hit sparks). The GX front end read `psdisp.c`'s raw
+   FIFO writes (positions as `GXTexCoord1f32`, the TEX0 index as
+   `GXCmd1u8`) as whole texture coordinates and matrix indices, so no
+   textured particle completed a vertex (xemu 4-Mario match: ~8000 short
+   batches per 600 frames before, 0 after; `renderer.md` "Immediate
+   mode"). Always so, not a v44/v45 regression; what drew in v43 were
+   model effects and untextured particles. Still open: `GXSetPointSize`/
+   `GXSetLineWidth` are no-ops, so point and line particles would draw 1
+   pixel wide (none drew in the xemu runs). Same group: Adventure
+   Corneria's Arwing cutscene silent with the comm portrait frozen (v43;
+   tester v52 "Slippy's frame does not move") is fixed for v53 by the
+   grAnime fix (the comm window's open-anim check never fired, so no text,
+   voice or mouth anim); in xemu (`scenarios/cntalk`) all three lines
+   play; confirm the voices on the console. Trophy transition lighting dark
    and a background flash (`scenarios/toy`; suspects in `nv2a_vp.c`:
    normals normalized where GX doesn't, spot cosine not clamped at 0).
 6. **100-Man freeze** (tester, RC1 = v42, 128 MB, 480): `LIMIT_ZETA` on

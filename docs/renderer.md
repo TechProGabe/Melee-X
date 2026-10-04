@@ -118,6 +118,15 @@ each one became a render pass), so draws are merged where state allows:
 Immediate mode takes position components as a stream when the format is
 XYZ (HSD's shadow quad is six `GXPosition2f32` calls); with no texture
 coordinate in the vertex, `GXTexCoord1f32` feeds it too (`fn_80185408`).
+The raw writers follow the vertex as the FIFO does: `GXTexCoord1f32` is
+the next float of whatever attribute comes next (a position component, or
+S then T of an F32 texture coordinate), and `GXCmd1u8` is the index of an
+`INDEX8` attribute when one comes next (otherwise a matrix index). HSD's
+particles (`psdisp.c`) write billboard positions as three
+`GXTexCoord1f32` and the TEX0 corner index as a `GXCmd1u8`; read as whole
+texture coordinates and matrix indices they never completed a vertex, and
+every textured particle was dropped (issue #7, v53). `[DLC]`'s `short`
+counts batches that ended with fewer vertices than `GXBegin` announced.
 `[NV2A]` lines count draws by primitive and by what changed before each.
 
 ### Pushbuffer and GPU sync

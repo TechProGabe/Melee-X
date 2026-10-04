@@ -281,7 +281,11 @@ Tags (switch-only tags such as `[EFB]`, `[DRAW]`, `[VPT]`, `[PBCHECK]`,
   draw; `per N frames: L vertex programs loaded` (`renderer.md`).
 - `[DLC]`: cached, dynamic and volatile display lists, batches, `N of 2048
   lists ... vertex pool K of 4096 KB free` (full in a long session, LRU;
-  only `uncached:`/volatile lists bypass the cache).
+  only `uncached:`/volatile lists bypass the cache). `immediate: ... N
+  short`: immediate batches that ended with fewer vertices than `GXBegin`
+  announced (writes that didn't fit the vertex descriptor, dropped);
+  should be 0 (it was ~8000 per 600 frames in a match while particles
+  were dropped, issue #7).
 - `[TEX]`: last frame's textures by format, `pool holds ...`, `N drops`
   (couldn't upload even after evicting: drawn untextured; first one gets a
   `[TEX] drop:` line), `copy dropped` (an EFB copy with no room).
