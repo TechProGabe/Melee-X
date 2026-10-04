@@ -133,6 +133,15 @@ array offsets stay fixed. Per-draw cost dominates on the console and in
 xemu (a 4-CPU match: ~2950 -> ~800 draws); the cost is 1.5x vertices for
 quads, 2-3 more per stitched strip.
 
+**Immediate mode is a typed API over a byte stream.** Each `GXPosition*`,
+`GXColor*`, `GXTexCoord*` call fills its attribute, but the raw writers
+(`GXTexCoord1f32`, `GXCmd1u8`) fill whatever the vertex descriptor puts
+next, as the GameCube FIFO would: game code uses them as plain f32/u8
+writes (HSD's particles, the Classic card's depth plane). Decoding the
+whole FIFO by bytes would be exact but slower on every call; the typed
+path plus these two cases covers what the game does, and `[DLC]`'s `short`
+count shows a batch that still doesn't fit (`renderer.md`).
+
 **Pools and GPU overlap** (`renderer.md` "CPU cost of the back end"). Each
 pushbuffer batch breaks the vertex cache (shadow-map wedges otherwise); a
 scene whose textures outgrow the pool gets an overflow pool (up to 8 MB)
