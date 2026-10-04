@@ -139,7 +139,8 @@ Fix order after RC2 (2026-10-02), details in the entries below:
    `stuck`). The log of the boot before the silent one is gone (each boot
    keeps one previous log), so how that boot ended is not on record: the
    next test build should keep the previous exit path (crash, quit to
-   dashboard, reset combo, settings restart) in the save folder.
+   dashboard, reset combo, settings restart) in the save folder. A fix is
+   in progress, paused: branch `fix-ac97-boot` (handoff.md "Paused work").
 10. The simulation isn't deterministic on the console (docs/fps-plan.md
    round 3): Fountain 4-CPU, seed 1, runs of one build part at tick
    4440-4500 into three outcomes (the random seed first), the same three in
