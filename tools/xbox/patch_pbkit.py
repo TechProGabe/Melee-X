@@ -17,9 +17,9 @@ Here:
     (an interrupt storm, decided in xbox/src/hw/nv2a.c) it stops re-enabling the
     GPU interrupt so threads can run and the watchdog can report;
   - the depth format can be set before pb_init (pb_DepthFmt no longer static,
-    Z16 sized and scaled): 720p pairs a 16-bit colour buffer with Z16, as
-    NV2x wants matching colour and depth widths (xbox/src/hw/nv2a.c); the
-    Z16 depth tile's flags can be set with -DOCX_Z16_TILE_FLAGS (default
+    Z16 sized and scaled): 720p pairs its 16-bit colour buffer with Z24S8
+    since v53, Z16 with -DXGX_Z24_16BPP=0 (xbox/src/hw/nv2a.c); the Z16
+    depth tile's flags can be set with -DOCX_Z16_TILE_FLAGS (default
     pbkit's 0x84000001);
   - ocx_pb_layout() reports the pushbuffer, framebuffers and depth buffer
     addresses for the layout line at boot;

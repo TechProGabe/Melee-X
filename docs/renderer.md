@@ -177,10 +177,12 @@ Probes (`fps-plan.md`): `-DXGX_CENSUS=1` counts draws by pass and owner
 - **The flip is `GXCopyDisp`**, where a GameCube frame ends: the EFB is
   copied to the XFB and cleared. `VIWaitForRetrace` only paces the game to
   60.000 Hz and runs the alarms (`vi.c`).
-- Framebuffers: 640x480x32 + Z24S8, or 1280x720 R5G6B5 + Z16 at 720p
-  (32-bit doesn't fit in 64 MB; `pb_DepthFmt` made settable by
-  `patch_pbkit.py`). 16-bit paths key on the bpp, so
-  `-DXHW_VIDEO_480_BPP=16` runs 480 as R5G6B5 + Z16 (720p's path in xemu).
+- Framebuffers: 640x480x32 + Z24S8, or 1280x720 R5G6B5 + Z24S8 at 720p
+  (32-bit colour doesn't fit in 64 MB; Z16 until v53 and with
+  `-DXGX_Z24_16BPP=0`, see Depth; `pb_DepthFmt` made settable by
+  `patch_pbkit.py`). 16-bit colour paths key on the bpp, depth paths on
+  the depth format, so `-DXHW_VIDEO_480_BPP=16` runs 480 as 720p does
+  (R5G6B5 + Z24S8, or + Z16 with `env MX_Z24=0`).
   Clear colours go to `pb_fill` as A8R8G8B8, which converts them.
 
 ### Tile regions
@@ -194,7 +196,8 @@ the CPU or sampled as a texture (see Z textures).
 `pb_init` puts tile 0 over the three framebuffers and tile 1 (compressed)
 over the depth buffer, pitch 2560, but writes the base word as
 `base | 2 | (flags & 1)`, while bit 0 is the enable (envytools, nouveau,
-xemu), and sets the Z24S8 format bit for the Z16 buffer too.
+xemu), and sets the Z24S8 format bit for a Z16 buffer too (right for the
+Z24S8 buffer 720p has since v53).
 `-DXGX_TILE=<bits>` (`env MX_TILE=`) re-programs them in `tiles_setup` at
 boot: 1 the Z16 format, 2 tile 0 as `base | 1`, 4 tile 0 as `base | 3`, 8 no
 Z compression; 0 leaves pbkit's setup. Default 4: console rounds
@@ -287,7 +290,21 @@ Depth is clamped to the range (`ZMIN_MAX_CONTROL` ZCLAMP_CLAMP) as on the
 GameCube, not culled (`-DXGX_DEPTH_CULL=1` culls); geometry behind the eye
 is still clipped on w.
 
-At Z16 (720p, or `-DXHW_VIDEO_480_BPP=16`) a depth step at eye distance D is
+16-bit colour (720p, `-DXHW_VIDEO_480_BPP=16`) gets Z24S8 depth too since
+v53 (`XGX_Z24_16BPP`, default 1): the NV2A takes colour and depth formats
+of different widths (nxdk_pgraph_tests runs its suites with A8R8G8B8 + Z16
+on the hardware; stock pbkit pairs R5G6B5 with Z24S8). Z16 couldn't keep
+decals in front: Pokémon Stadium's red arrowheads sit 0.25 units in front
+of the screen's frame and are drawn before it with LEQUAL, and a Z16 step
+there is ~0.5-0.7 units even with the remap below (Z24 ~0.1, the
+GameCube's), so the frame covered all but slivers of them. Cost: 1.8 MB
+more contiguous memory at 720p (the depth buffer 3.5 MB instead of 1.8)
+and twice the depth bytes a fragment, before Z compression, whose tile
+flags (32-bit) now match the format. If `pb_init` can't get the memory it
+starts again with Z16 before giving up 720p. `[NV2A] up: ... depth Z24S8`
+at boot; test builds take `env MX_Z24=0|1`.
+
+At Z16 (`-DXGX_Z24_16BPP=0`) a depth step at eye distance D is
 about D^2 / (65536 * near), ~3 units where the fighters are with Melee's
 near 0.1 / far 16384: enough to z-fight. So at Z16 depth is remapped once
 per frame: GX depth g (0..1) is stored as (g - g0) / (1 - g0), g0 being a
@@ -298,7 +315,10 @@ frame, ortho too (the match timer is depth-tested against the stage).
 Depth 1 stays; nearer than g0 clamps to 0. Clears and the Z-texture mask
 convert through the same remap (`z_store`); fog reads GX's own row
 (`s_zrow_gx`). `build_proj` collects g0 and `xgx_present` makes it the next
-frame's. Z24 is untouched; `-DXGX_Z16_DEPTH_RATIO=0` turns it off.
+frame's. Z24 is untouched; `-DXGX_Z16_DEPTH_RATIO=0` turns it off (test
+builds: `env MX_Z16_RATIO=n`). A smaller ratio (512) still left Stadium's
+arrowheads in slivers, and things nearer than far / ratio would share
+depth 0.
 
 ### Culling
 
@@ -514,7 +534,13 @@ These are the shadow-map notes too: HSD's shadow maps are EFB copies.
   `LIMIT_COLOR` on the quad's `END`). Bit 1 re-sends the retarget's pitch
   after the format (`ocx_pb_retarget_repitch`); bit 4 re-sends the copy's
   target and the retarget's DMA objects, pitch and offsets after a wait for
-  idle; bit 2 (one `CLEAR_SURFACE`) is untried. `-DXGX_COPY_STRESS=N`
+  idle; bit 2 (one `CLEAR_SURFACE`) is untried. Bit 4's pitch is each
+  surface's own (`zeta_pitch`): with Z24S8 behind 16-bit colour the depth
+  pitch is twice the colour's, and sending the colour's for both (until
+  v53, when they were always equal) addressed depth at half its pitch
+  after each copy, so the copy's depth clear and the draws after it hit
+  the wrong rows (black striped silhouettes over Fountain's sky, striped
+  and missing Kirbys on the Classic team card, in xemu). `-DXGX_COPY_STRESS=N`
   repeats each clearing copy N times to provoke faults (`env MX_COPY_FIX=`/
   `MX_COPY_STRESS=`, `scenarios/stall`; results in `roadmap.md`).
   `[NV2A] GPU stalled` dumps PGRAPH state and the last eight copies.
@@ -554,6 +580,7 @@ Renderer switches (all switches: `testing.md`):
 | `-DXGX_COPY_FIX=<bits>`, `-DXGX_COPY_STRESS=N` | EFB copy surface re-sends, copy stress |
 | `-DXGX_EFB_GPU_COPY=0` | EFB copies by CPU readback |
 | `-DXGX_TILE=<bits>`, `-DOCX_Z16_TILE_FLAGS` | tile regions |
+| `-DXGX_Z24_16BPP=0` | Z16 depth with 16-bit colour (720p) instead of Z24S8 |
 | `-DXGX_Z16_DEPTH_RATIO=<n>` | Z16 depth remap; 0 off |
 | `-DXGX_DEPTH_CULL=1` | cull depth outside the range instead of clamping |
 | `-DXGX_NO_INDIRECT=1` | indirect stages drawn direct |
