@@ -10,9 +10,18 @@ Updated 2026-10-04 (Windows PC, the frame-rate work).
 
 - **Latest release: v3** (`.github/release-notes.md`). Releases are now
   built with ThinLTO + PGO (`docs/toolchain.md` "Release", `docs/pgo.md`).
-- **On the console: v51**, a play build of `dev` after the frame-rate merge,
-  built as releases are (plain, `XBOX_LTO=1 XBOX_PGO=xbox/melee.profdata`).
-  Stage and map: `C:\xemu\hw\stage-v51`, `C:\xemu\hw\melee_x.v51.map`.
+- **On the consoles: v52** (2026-10-04), a test build (`-DXHW_PROF=1`,
+  `XBOX_LTO=1 XBOX_PGO=xbox/melee.profdata`) of `dev` with the Stadium
+  screen-copy fix, the AC97 boot fix and the full/unwritable E: handling
+  (decisions.md). Two consoles on the LAN, FTP at 192.168.158.113 and
+  192.168.158.125 (the user's "red" and "gold"). Stage and map:
+  `C:\xemu\hw\stage-v52`, `C:\xemu\hw\melee_x.v52.map`. The same build,
+  zipped with a tester README, went to a Reddit player whose settings.ini,
+  BACK shots and widescreen didn't work on v3 (E: has free space; his
+  boot.log's `[BOOT] save folder write test` and `[VIDEO] dashboard` lines
+  should say why). The xemu gate for it: `C:\xemu\rc52` (lockstep shots,
+  Stadium, Stage Clear, relaunch audio, `MX_FILL_E` runs). PGO profile not
+  retrained since gx_tex.c changed.
 - **Frame-rate work: done** (2026-10-03/04, `docs/fps-plan.md` "Outcome"):
   Fountain of Dreams 4-CPU at 720p 32.0 -> 39.9 fps with the same picture
   and simulation; ThinLTO + PGO +13%, the colour framebuffer's tile region
@@ -37,6 +46,10 @@ Updated 2026-10-04 (Windows PC, the frame-rate work).
   players each, phases 0A-5); 0A and 0B started and paused (below).
 
 ## Paused work (2026-10-04, pick up here)
+
+`fix-ac97-boot` and `fix-stadium-tex` are finished and merged (v52,
+above; their `HANDOFF-*.md` notes are in git history, the console test is
+next). The LAN branches are still paused.
 
 Four agent branches were stopped mid-work at the user's request (usage).
 Each has one local WIP commit on top of `dev` (not pushed) and a

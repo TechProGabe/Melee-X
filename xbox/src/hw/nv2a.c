@@ -1319,15 +1319,21 @@ void xgx_set_overlay(const xgx_overlay* o) {
     s_ovl_ttl = 2;   /* lingers at most one present after the last refresh */
 }
 
-/* A one-off notice (xhw_notice, xhw_internal.h), posted from any thread:
- * two lines at the top for 10 s from the first frame that shows it, in
- * place of the title screen's hint; the settings menu's panel wins. */
+/* A notice (xhw_notice, xhw.h), posted from any thread: two lines at the
+ * top for 10 s from the first frame that shows it, in place of the title
+ * screen's hint; the settings menu's panel wins. One at a time: the text
+ * isn't rewritten while a frame may be drawing it. */
 static xgx_overlay s_notice;
-static int s_notice_state;   /* 0 none, 1 posted, 2 up, 3 done */
+static int s_notice_state;   /* 0 none, 1 posted, 2 up, 3 done, 4 being written */
 static uint64_t s_notice_end;
 
 void xhw_notice(const char* line1, const char* line2) {
-    if (__atomic_load_n(&s_notice_state, __ATOMIC_ACQUIRE)) return;
+    int st = 0, done = 3;
+    if (!__atomic_compare_exchange_n(&s_notice_state, &st, 4, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE) &&
+        !__atomic_compare_exchange_n(&s_notice_state, &done, 4, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        xhw_logf("[NOTICE] dropped (another is up): %s", line1);
+        return;
+    }
     memset(&s_notice, 0, sizeof s_notice);
     s_notice.kind = XGX_OVERLAY_HINT;
     s_notice.rows = 2;

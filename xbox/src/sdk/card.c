@@ -99,23 +99,63 @@ static void gci_path(const CARDDir* d, char* out, size_t cap) {
     snprintf(out, cap, "%s\\%.2s-%.4s-%s.gci", dirp, (const char*)d->company, (const char*)d->gameName, name);
 }
 
+/* <name>.tmp for <name>.gci: the same length (FATX names are at most 42) */
+static void tmp_path(const char* gci, char* out, size_t cap) {
+    size_t n = strlen(gci);
+    snprintf(out, cap, "%.*s.tmp", (int)(n > 4 ? n - 4 : n), gci);
+}
+
+/* Written to <name>.tmp and renamed over the .gci, so a full E: or a power
+ * cut mid-write leaves the previous save as it was (recover_tmp takes a
+ * complete .tmp whose .gci is gone). 0: not saved, a notice is up and the
+ * game gets CARD_RESULT_IOERROR. */
 static int save_file(File* f) {
     u8 hdr[GCI_HEADER];
+    char tmp[sizeof f->path];
+    size_t bytes = (size_t)f->dir.length * BLOCK;
     FILE* fp;
-    int ok;
+    int ok, r = XHW_REPLACE_FAILED;
     dir_to_gci(&f->dir, hdr);
-    fp = fopen(f->path, "wb");
-    if (!fp) {
-        xhw_logf("[CARD] cannot write %s", f->path);
-        return 0;
+    tmp_path(f->path, tmp, sizeof tmp);
+    if ((fp = fopen(f->path, "rb")) != NULL) {
+        fclose(fp);
+    } else if ((fp = fopen(tmp, "rb")) != NULL) {
+        /* the .gci is gone and the .tmp holds the last save (an earlier
+         * rename that failed after the delete): it goes back first, so this
+         * write can't empty the only copy */
+        fclose(fp);
+        if (xhw_replace_file(tmp, f->path) != XHW_REPLACE_OK) {
+            xhw_logf("[CARD] FAILED to save %.32s: %s holds the last save and can't be renamed",
+                     (const char*)f->dir.fileName, tmp);
+            xhw_notice("Save failed: can't write to E: (full?).", "The previous save is unchanged.");
+            return 0;
+        }
     }
-    ok = fwrite(hdr, 1, GCI_HEADER, fp) == GCI_HEADER &&
-         fwrite(f->data, 1, (size_t)f->dir.length * BLOCK, fp) == (size_t)f->dir.length * BLOCK;
-    xhw_flush(fp);
-    fclose(fp);
-    xhw_logf("[CARD] %s %.32s (%u blocks)", ok ? "saved" : "FAILED to save", (const char*)f->dir.fileName,
-             (unsigned)f->dir.length);
-    return ok;
+    fp = fopen(tmp, "wb");
+    if (!fp) {
+        xhw_logf("[CARD] cannot write %s", tmp);
+    } else {
+        ok = fwrite(hdr, 1, GCI_HEADER, fp) == GCI_HEADER && fwrite(f->data, 1, bytes, fp) == bytes;
+        xhw_flush(fp);
+        if (ferror(fp)) ok = 0;
+        if (fclose(fp) != 0) ok = 0;
+        if (ok) r = xhw_replace_file(tmp, f->path);
+        if (r == XHW_REPLACE_FAILED) remove(tmp);
+    }
+    if (r == XHW_REPLACE_OK) {
+        xhw_logf("[CARD] saved %.32s (%u blocks)", (const char*)f->dir.fileName, (unsigned)f->dir.length);
+        return 1;
+    }
+    if (r == XHW_REPLACE_LOST_TO) {
+        xhw_logf("[CARD] FAILED to save %.32s: rename failed, %s kept for the next boot", (const char*)f->dir.fileName,
+                 tmp);
+        xhw_notice("Save not finished on E:.", "It is kept and loads the next time Melee-X starts.");
+    } else {
+        xhw_logf("[CARD] FAILED to save %.32s (%u blocks): the previous save is left as it was",
+                 (const char*)f->dir.fileName, (unsigned)f->dir.length);
+        xhw_notice("Save failed: can't write to E: (full?).", "The previous save is unchanged.");
+    }
+    return 0;
 }
 
 static File* alloc_file(void) {
@@ -154,6 +194,46 @@ static void seed_from_disc(const char* dirp) {
 }
 #endif
 
+/* A .tmp left by save_file: taken as the .gci when that is gone (the rename
+ * was cut off after the old file was deleted) and the .tmp is whole (header
+ * plus its blocks); otherwise an unfinished write, deleted. */
+static void recover_tmp(const char* dirp) {
+    static xhw_dir_entry found[CARD_MAX_FILE];   /* listed first: the folder isn't changed while it's read */
+    char pattern[128];
+    void* h;
+    xhw_dir_entry e;
+    int nfound = 0, i;
+    snprintf(pattern, sizeof pattern, "%s\\*.tmp", dirp);
+    for (h = xhw_dir_first(pattern, &e); h && nfound < CARD_MAX_FILE; h = xhw_dir_next(h, &e) ? h : NULL)
+        found[nfound++] = e;
+    if (h) while (xhw_dir_next(h, &e)) {}   /* more than a card holds: the rest wait for the next boot */
+    for (i = 0; i < nfound; i++) {
+        char tmp[160], gci[160];
+        u8 hdr[GCI_HEADER];
+        FILE* fp;
+        int whole = 0, have_gci;
+        size_t n;
+        e = found[i];
+        snprintf(tmp, sizeof tmp, "%s\\%s", dirp, e.name);
+        n = strlen(tmp);
+        snprintf(gci, sizeof gci, "%.*s.gci", (int)(n - 4), tmp);
+        if ((fp = fopen(tmp, "rb"))) {
+            whole = fread(hdr, 1, GCI_HEADER, fp) == GCI_HEADER &&
+                    e.size == GCI_HEADER + (uint32_t)rd16(hdr + 0x38) * BLOCK;
+            fclose(fp);
+        }
+        if ((fp = fopen(gci, "rb"))) fclose(fp);
+        have_gci = fp != NULL;
+        if (whole && !have_gci) {   /* the only copy: never deleted here */
+            if (xhw_replace_file(tmp, gci) == XHW_REPLACE_OK) xhw_logf("[CARD] %s taken from an unfinished save", e.name);
+            else xhw_logf("[CARD] %s: the only copy of a save, can't be renamed (left for the next boot)", e.name);
+            continue;
+        }
+        remove(tmp);
+        xhw_logf("[CARD] %s: an unfinished save, deleted", e.name);
+    }
+}
+
 static void load_all(void) {
     char dirp[96], pattern[128];
     void* h;
@@ -163,6 +243,7 @@ static void load_all(void) {
 #if XHW_AUTOPAD
     seed_from_disc(dirp);
 #endif
+    recover_tmp(dirp);
     snprintf(pattern, sizeof pattern, "%s\\*.gci", dirp);
     for (h = xhw_dir_first(pattern, &e); h; h = xhw_dir_next(h, &e) ? h : NULL) {
         char p[160];
@@ -322,7 +403,11 @@ s32 CARDCreateAsync(s32 chan, const char* name, u32 size, CARDFileInfo* fi, CARD
     if (!f->data) return finish(chan, CARD_RESULT_INSSPACE, cb);
     f->used = 1;
     gci_path(&f->dir, f->path, sizeof f->path);
-    save_file(f);
+    if (!save_file(f)) {   /* the game reports it, rather than a file that's gone after a restart */
+        free(f->data);
+        memset(f, 0, sizeof *f);
+        return finish(chan, CARD_RESULT_IOERROR, cb);
+    }
     xhw_logf("[CARD] created %s (%u blocks)", name, (unsigned)blocks);
     CARDFastOpen(chan, (s32)(f - s_files), fi);
     return finish(chan, CARD_RESULT_READY, cb);
@@ -348,11 +433,21 @@ s32 CARDRenameAsync(s32 chan, const char* old_name, const char* new_name, CARDCa
     if (n < 0) return finish(chan, CARD_RESULT_NOFILE, cb);
     if (find(new_name) >= 0) return finish(chan, CARD_RESULT_EXIST, cb);
     f = &s_files[n];
-    remove(f->path);
-    memset(f->dir.fileName, 0, CARD_FILENAME_MAX);
-    strncpy((char*)f->dir.fileName, new_name, CARD_FILENAME_MAX);
-    gci_path(&f->dir, f->path, sizeof f->path);
-    save_file(f);
+    {   /* the old file goes only once the new one is written */
+        char old_path[sizeof f->path];
+        u8 old_name[CARD_FILENAME_MAX];
+        memcpy(old_path, f->path, sizeof old_path);
+        memcpy(old_name, f->dir.fileName, CARD_FILENAME_MAX);
+        memset(f->dir.fileName, 0, CARD_FILENAME_MAX);
+        strncpy((char*)f->dir.fileName, new_name, CARD_FILENAME_MAX);
+        gci_path(&f->dir, f->path, sizeof f->path);
+        if (!save_file(f)) {
+            memcpy(f->dir.fileName, old_name, CARD_FILENAME_MAX);
+            memcpy(f->path, old_path, sizeof f->path);
+            return finish(chan, CARD_RESULT_IOERROR, cb);
+        }
+        if (_stricmp(old_path, f->path) != 0) remove(old_path);   /* FATX names ignore case: same file */
+    }
     return finish(chan, CARD_RESULT_READY, cb);
 }
 

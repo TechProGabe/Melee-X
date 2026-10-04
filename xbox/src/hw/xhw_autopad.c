@@ -29,6 +29,7 @@
  * round chains its builds this way and runs unattended; each boot keeps the
  * one before's log as boot_prev.log (docs/fps-plan.md, round 2). */
 #include <windows.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -139,6 +140,43 @@ static void parse_line(char* line) {
     s_ev[s_nev++] = e;
 }
 
+/* "env MX_FILL_E=1": E: filled to the last cluster with E:\mx_fillN.bin
+ * (FATX files stop at 4 GB), so a run sees the full-disk paths (card saves,
+ * screenshots, settings.ini, and on the boot after, boot.log in D:\). Use a
+ * throwaway copy of xemu's HDD: the image keeps the size. Without the line
+ * the files are deleted. */
+#define FILL_FILES 16
+static void fill_e(void) {
+    static char zero[64 * 1024];
+    const char* on = getenv("MX_FILL_E");
+    char path[32];
+    HANDLE h;
+    DWORD chunk = sizeof zero, w;
+    ULARGE_INTEGER free_b;
+    int i;
+    for (i = 0; i < FILL_FILES; i++) {
+        snprintf(path, sizeof path, "E:\\mx_fill%d.bin", i);
+        if (!on || strcmp(on, "1") != 0) {
+            DeleteFileA(path);
+            continue;
+        }
+        if (chunk < 512) break;   /* the disk is full */
+        h = CreateFileA(path, GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE) break;
+        SetFilePointer(h, 0, NULL, FILE_END);
+        chunk = sizeof zero;
+        while (chunk >= 512) {   /* down to the sector: FATX's clusters are 16 KB, the last one fills too */
+            if (WriteFile(h, zero, chunk, &w, NULL) && w == chunk) continue;
+            if (GetFileSize(h, NULL) >= 0xFFFF0000u) break;   /* this file is at FATX's limit: the next one */
+            chunk /= 2;
+        }
+        CloseHandle(h);
+    }
+    if (!on || strcmp(on, "1") != 0) return;
+    if (GetDiskFreeSpaceExA("E:\\", &free_b, NULL, NULL))
+        xhw_logf("[AUTOPAD] MX_FILL_E: E: filled, %u KB free", (unsigned)(free_b.QuadPart >> 10));
+}
+
 void xhw_autopad_load(void) {
     static char buf[16 * 1024];
     HANDLE h = CreateFileA("D:\\autopad.txt", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
@@ -155,6 +193,7 @@ void xhw_autopad_load(void) {
         if (!nl) break;
     }
     xhw_logf("[AUTOPAD] %d events", s_nev);
+    fill_e();
 }
 
 static volatile uint32_t s_match_tick;   /* xhw_autopad_tick: ticks since the match's first */

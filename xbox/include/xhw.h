@@ -142,6 +142,13 @@ void* xhw_dir_first(const char* pattern, xhw_dir_entry* out);
 int xhw_dir_next(void* handle, xhw_dir_entry* out);
 /* Flush a stdio FILE's data and the volume's directory entry to disk. */
 void xhw_flush(void* stdio_file);
+/* The save folder's error when it can't be written (boot.log is then in
+ * D:\ instead; xhw_sys.c), else 0. */
+unsigned xhw_log_fallback(void);
+/* nv2a.c: a notice, two lines at the top of the picture for 10 s (the audio
+ * driver's stuck engine, a save or screenshot that couldn't be written); any
+ * thread. A call while another notice is waiting or up is dropped. */
+void xhw_notice(const char* line1, const char* line2);
 /* Read-only file with positioned reads straight into the caller's buffer
  * (pdclib's fread goes 1 KB ReadFile at a time and copies byte by byte).
  * xhw_file_read returns 1 if all `len` bytes were read. */

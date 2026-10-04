@@ -28,6 +28,7 @@
  * file: comments and keys it doesn't know are not kept. */
 #include <dolphin/pad.h>
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -287,7 +288,7 @@ int xsdk_settings_save(void) {
     tmp_path(t, sizeof t);
     f = fopen(t, "w");
     if (!f) {
-        xhw_logf("[SETTINGS] save failed: can't create %s", t);
+        xhw_logf("[SETTINGS] save failed: can't create %s (errno %d)", t, errno);
         return 0;
     }
     write_all(f, &g_xsdk_settings);
@@ -308,7 +309,8 @@ int xsdk_settings_save(void) {
         return 0;
     }
     if (r != XHW_REPLACE_OK) {
-        xhw_logf("[SETTINGS] save failed (%s): %s left as it was", ok ? "rename" : "write or read-back", p);
+        xhw_logf("[SETTINGS] save failed (%s, errno %d): %s left as it was", ok ? "rename" : "write or read-back",
+                 errno, p);
         remove(t);
         return 0;
     }
