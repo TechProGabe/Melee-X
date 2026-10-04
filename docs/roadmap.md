@@ -30,8 +30,7 @@ Fully playable on the console; the simulation keeps 60 ticks a second at
 any frame rate.
 
 v52 is `dev` ef52994 (pushed), a test build (`-DXHW_PROF=1`,
-ThinLTO + PGO) on two consoles: red (192.168.158.113) and gold
-(192.168.158.125). Stage and map: `C:\xemu\hw\stage-v52`,
+ThinLTO + PGO) on two consoles: red and gold. Stage and map: `C:\xemu\hw\stage-v52`,
 `C:\xemu\hw\melee_x.v52.map`. It carries the frame-rate work (Fountain
 of Dreams 4-CPU 720p 32.0 -> 39.9 fps, `docs/fps-plan.md` "Outcome"), the
 Stadium screen-copy fix (item 3), the AC97 boot fix (item 9) and the

@@ -18,7 +18,7 @@ Updated 2026-10-04 (Windows PC, v52).
   it stands"). Red's first session was clean (`C:\xemu\hw\logs52-red-1`).
   Next: gold's session, burn-in on both, the user's audio repro (power off
   mid-match, dashboard, launch), PGO retrain (gx_tex.c changed).
-- **Consoles**: red 192.168.158.113 and gold 192.168.158.125 (CLAUDE.md,
+- **Consoles**: red and gold (addresses off the repo; CLAUDE.md,
   `docs/testing.md`). Pull logs before every relaunch or deploy.
 - **Reddit tester** (v3; 128 MB + CPU upgrade; settings.ini not
   regenerated, no BACK .bmp, widescreen does nothing; E: has over 1 GB
