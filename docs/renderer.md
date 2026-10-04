@@ -21,400 +21,194 @@ game -> GX calls -> gx_state.c   (XgxState, dirty bits)
                     nv2a_fog.c   (GX fog -> vertex-program fog, final combiner)
 ```
 
-Per draw, the back end rebuilds only what the front end's dirty groups
-say changed: the combiner setup and texture units (TEV, MAPS), the
-vertex-program key (CHANS, TEXGEN, LIGHTS, and whether the layout has
-normals and colours), texgen constants (TEXGEN, TEXMTX, or POSMTX when a
-texgen reads a position matrix), fixed pixel state (PIXEL, SCISSOR, FOG) and
-combiner constants (TEVREG). `s_draw_force` rebuilds everything after a GPU
-state reset or a content-rect change. So every GX setter must mark its
-group; `gx_state.c`'s all do. A setter whose values equal the current state
-returns without flushing or marking anything: HSD re-sets the whole TEV,
-channel and pixel state for every material, and those redundant calls used
-to make most draws rebuild and re-hash the combiner setup. The back end also
-skips re-sending a combiner program it sent last (by cache slot, not by
-comparing the program) and the inline white vertex colour while it is still
-there.
-
-memcpy, memmove, memset and memcmp are compiler builtins everywhere
-(`xbox/include/xbuiltin.h`, force-included): nxdk and the game build with
-`-ffreestanding`, which made every fixed-size copy in the decoder and HSD a
-real call. That was ~18% of a match frame on the console.
-
-Display lists are cached (`gx_vtx.c`, up to 2048 lists): the first call
-decodes the list into a vertex buffer from its own pool (4 MB; 720p had 3
-MB, which the first 720p match on the console filled, v38) and later calls
-replay the draws. One 4-CPU match fills about 3 MB; over a long session
-(several stages and characters) all 2048 slots and the whole pool stay in
-use, and the LRU eviction below rebuilds a few dozen
-to a few hundred lists every 10 s (v36 console log). Entries are keyed by the
-list's address and size and by the vertex descriptor and the formats (VAT)
-the list uses: HSD draws some small lists under different formats (shared
-by models quantized differently), and one entry per list flipped between
-them until ~100 lists were decoded on every call. Now a 4-CPU match keeps
-1400-2048 lists cached, none volatile. An entry is checked against the
-vertex descriptor, formats and arrays on every call, and against a sampled
-hash of the list and of the array ranges it indexed once a frame; a list
-that passed 120 checks in a row is checked every fourth frame, staggered by
-slot (the checks were ~4% of the console's CPU in a match, where no list
-changed content; a list rewritten in place would show stale for up to three
-frames). A list
-whose arrays keep changing (skinned and morphed models, whose positions and
-normals HSD rewrites or re-points every frame) goes dynamic after four
-rebuilds: its decode plan, every vertex's indices and a decoded template in
-cached RAM are kept (1 MB for all of them). Each call re-fetches only the
-attributes whose array moved or whose sampled hash changed (once one has
-changed it is fetched on every call), then copies the template into the
-vertex ring in one sequential write. Lists that don't fit the budget are
-decoded every call (volatile). `[DLC]` lines report both, and `[DLC]
-uncached:` names the first lists that could not be cached and why. A list
-may hold up to 512 draws: Fountain of Dreams' stage is one 104 KB list of
-more than 64, and at the old limit of 64 it was decoded on every call
-(~15 ms of a console frame). When the pool is full, the least recently
-used list not drawn this frame is evicted and its buffer freed at once:
-the frame's first GPU use (`frame_open`) waits for the GPU, so nothing
-reads it any more (a free before that point opens the frame first). Freeing them only after the next wait for idle cost Pokémon
-Stadium ~4 extra waits a frame on the console, each one stopping the CPU
-until the GPU had drawn everything queued. The content hashes (display lists and
-textures) run four FNV chains side by side over the same words, so the
-loads and multiplies overlap instead of waiting on one serial chain.
-
-Draws are merged where the state allows, because a draw costs about the
-same whatever its size. In xemu on macOS it costs most: xemu's GL renderer
-sends every non-point draw through a geometry shader, and macOS's GL runs a
-geometry shader as a compute pass that ends the render pass, so each draw
-was a render pass of its own (~75 µs of emulation, ~90% of a match frame).
-
-- The batches of one display list share its material, so consecutive ones
-  with the same vertex layout and primitive become one draw when the list is
-  decoded: triangle lists run on, strips are stitched with degenerate
-  triangles (the last vertex again, then the next strip's first once or
-  twice so it starts on an even vertex and keeps its winding). Dynamic lists
-  merge the same way when their template is copied out.
-- Immediate-mode vertices (`GXBegin`..`GXEnd`) are built in cached memory and
-  copied to the write-combined ring when drawn. A batch of a list primitive
-  that got all its vertices isn't drawn at `GXEnd`: it waits, and the next
-  `GXBegin` with the same primitive and layout continues it. Anything that
-  changes state flushes it first: every setter that changes a value,
-  `GXLoadTexObj`/`GXLoadTlut` when the binding changes, display-list calls,
-  copies and draw-done. Vertex descriptor, format and array setters only
-  close an open batch: a finished one already holds its vertices.
-- Quads and fans are sent as triangle lists (`out_prim` in `gx_vtx.c`), and
-  the EFB-copy quad as a strip.
-- `GXLoadTexMtxImm` compares the new rows first and changes nothing when
-  they match: HSD loads every texture's matrix before each draw, and it
-  marked the texture and position matrices dirty on ~77% of a match's draws
-  (rebuilding the texgen rows); now ~9%.
-- The pushbuffer is kicked every 32 KB (was 16 KB): each kick runs pbkit's
-  `pb_start`, which flushes the NV2A's write-combine cache and spins until
-  it is done (~2% of the console's CPU).
-- Every pushbuffer batch starts with `BREAK_VERTEX_BUFFER_CACHE`. The NV2A
-  caches vertex data by address and a draw's fetch reads ahead of its last
-  vertex; once a batch is kicked the GPU can run it before the CPU writes
-  the next draw's vertices into the ring right behind it, and that draw
-  then takes its first vertices from the stale read-ahead. On the console
-  each EFB copy waits for idle, and the next shadow map's white background
-  quad lost its first triangle (black wedges above its diagonal, black
-  flashes on the stage surfaces near fighters that multiply the maps in).
-  xemu has no such cache and drew them right.
-- The window clip's maximum is inclusive (xemu adds 1 to it as well):
-  the game's scissor sends `x1 - 1`, `y1 - 1`, and the EFB copy into a
-  swizzled texture clips to `pw - 1`, `ph - 1`. With `pw` a pixel in column
-  or row `pw` lands past the swizzled target. The copy and the Z-texture
-  mask also send `BREAK_VERTEX_BUFFER_CACHE` right before their draw: the
-  batch they join may be open already, and a stale read of their four
-  vertices puts the quad anywhere. Both are the v40 candidate fix for the
-  console's `LIMIT_COLOR` stall on the copy quad's `END` (`roadmap.md`).
-- The EFB copy's depth side points at the copy target through the
-  whole-RAM DMA object (3), not pbkit's zeta object (10, only the screen's
-  compressed depth buffer at the back buffer's shape); depth is neither
-  tested nor written. v42 still stalled on the copy quad's `END`, then with
-  `LIMIT_ZETA` as well as `LIMIT_COLOR`: v43's attempt. The first fault now
-  also logs PGRAPH 0x400700-0x4008FC and the last eight copies with where
-  each one's `END` sits in the pushbuffer.
-- An EFB copy's surface switches are sent twice (`XGX_COPY_FIX` 5, the
-  default). Now and then a colour-side surface write right after a
-  context-DMA switch didn't take on the console: the colour pitch stayed
-  the copy's after the retarget (the Z/stencil clear after the copy then
-  faulted `LIMIT_ZETA`: the tester's 100-Man freeze on v42, the v45 burn-in
-  at 38 min), or the copy's colour DMA stayed the back buffer's with the
-  offset on the target (`LIMIT_COLOR` on the copy quad's `END`, the v1/v2
-  stalls' form). PGRAPH stays busy after either. Bit 1: the retarget sends
-  the pitch again after the format (`ocx_pb_retarget_repitch`,
-  `patch_pbkit.py`); bit 4: after a wait for idle the copy sends its
-  target (DMA objects, format, pitch, offsets) again, and the retarget its
-  DMA objects, pitch and offsets. `-DXGX_COPY_STRESS=N` repeats each
-  clearing copy N more times into a scratch texture to make such faults
-  frequent: on the console fix 0 faulted 19 s into a match (720p, N = 20),
-  fix 1 after 4 min at 480i, fix 5 ran 22 min clean at 480i with N = 40.
-  Bit 2 (one `CLEAR_SURFACE` for colour and depth) is untried.
-- An EFB copy reads exactly its source rect: a target pixel's centre
-  samples the source pixel under it (`efb_copy_gpu`'s corners, `pix_x`/
-  `pix_y` in `read_rect_cpu`). Until v40 both paths sampled one pixel right
-  and down; the scissor's extra column had covered that, and with the exact
-  scissor the shadow maps' last row and column read black past their white
-  background (black bands across the stage floor near fighters).
-- Build switches undo these v26 GPU-side changes one at a time, to bisect
-  the console's GPU stalls (Pokémon Stadium, v27/v28): `-DXGX_PB_KICK=4096`,
-  `-DXGX_VB_CACHE_BREAK=0`, `-DXGX_VBUF_FREE_NOW=0`. A stall report
-  (`[NV2A] GPU stalled`) also logs PGRAPH's interrupt, trap, surface, clear,
-  window-clip and raster registers; `-DXGX_CHECK_VERTS` logs display lists
-  with non-finite or huge positions.
-- Array offsets point at the start of the 32768-vertex window of the vertex
-  ring or the vertex pool that the draw starts in, and each draw starts at
-  its first vertex's index from there (both place draws at a multiple of
-  their stride). Consecutive draws of one layout with nothing else changed
-  then have no methods between them, which xemu joins into one draw and
-  which saves the console the offset writes. The windows are there because
-  the console takes vertex indices up to 0xFFFF only: a larger
-  `DRAW_ARRAYS` start raises a PGRAPH data error per draw (xemu doesn't
-  check), and joined draws stop at 32768 vertices (`JOIN_MAX`).
-
-Per-draw bookkeeping in the back end stays small: the vertex-program cache
-compares a key hash before the key, the combiner config is zeroed, hashed and
-compared only up to its used stages (`rc_used`), and dirty constant rows are
-compared as words inline.
-
-`[NV2A]` lines count draws by primitive and by what changed before each
-(`changed nothing`, `only a position matrix`, then per dirty group); the
-`[DLC]` line counts joined batches and names the calls that drew a waiting
-immediate batch.
-
-### CPU cost of the back end (v33-v35)
-
-The v32 console profile of a 4-CPU Fountain of Dreams match (21 fps, ~47 ms
-a frame) had the back end at about a quarter of the CPU, mostly cache
-misses in lookups and revalidation rather than useful work. v33:
-
-- **CPU/GPU overlap** (`XGX_OVERLAP`, default 1): `xgx_present` no longer
-  waits for the GPU. It queues the frame-rate counter (GPU colour fills, it
-  was CPU writes into the back buffer) and pbkit's flip, which the GPU runs
-  after the frame's draws (triple buffering), and returns. The wait for idle
-  moved to `frame_open`, the next frame's first GPU use, so the GPU finishes
-  while the CPU runs the next simulation ticks; deferred frees are released
-  there. Everything after `frame_open` still sees an idle GPU at the start
-  of the frame (the vertex ring and pushbuffer restart, `xgx_vbuf_free_now`).
-  `GXCopyDisp`'s clear, which comes right after the present, is queued
-  until the frame opens. `frame_open`'s own clear of the whole
-  framebuffer (the bars around a pillarboxed content rect, a defined EFB)
-  is skipped when the first queued clear writes colour and depth over all
-  of it anyway: there are no bars then, and it was a second full fill and
-  depth clear (and a GPU wait) per frame. A screenshot frame still waits
-  in the present. The console waited ~3.6 ms a frame there on Fountain of
-  Dreams; xemu, whose GPU is slow, went from 19 to ~33 fps in the standard match.
-  `-DXGX_OVERLAP=0` restores the old order.
-  The settings menu on the title screen (`xgx_set_overlay`,
-  `xhw_overlay.c`) is the exception: its text is CPU writes into the
-  finished frame, so a present that shows it waits for the GPU before
-  writing (only there; the overlay lapses two presents after the title
-  stops refreshing it).
-- Display-list eviction scans a packed array of every slot's last use
-  (8 KB) instead of a word from each 180-byte entry: 2048 cache misses per
-  eviction, a few evictions a frame on Fountain of Dreams (~1.5% of the CPU).
-- The display-list cache's per-call key and check (`fmt_key`, `vtx_sig`)
-  were FNV hashes over the descriptor, the formats and the arrays (~250
-  bytes, ~700 calls a frame). The vertex setters now keep sums of a mixed
-  term per attribute setting, so both are a few multiplies; a sum doesn't
-  depend on the order of changes, so `GXClearVtxDesc` and the
-  `GXSetVtxDesc` calls that restore the same descriptor cancel out.
-- Revalidation of stable display lists and textures (passed 120 checks)
-  samples 16 words per range instead of 64 (`content_qhash`, `quick_hash`):
-  the samples are scattered cache misses. Textures above 512 bytes are
-  sampled (64 words) instead of hashed in full up to 4 KB (most of a
-  match's textures). The schedule is unchanged: every fourth frame,
-  staggered, once stable.
-- The combiner-program and vertex-program caches keep their entries'
-  hashes (and the programs' valid flags and last use) in packed arrays:
-  their lookups scanned a word from each 624-byte or 2 KB entry.
-- `gx_tex_bind` marks the maps dirty only when the bound texture or its
-  sampling changed: HSD rebinds the same texture through a new texture
-  object per material, and ~40% of a match's draws rebuilt the texture
-  units and combiners for nothing.
-- Light rows are built only for the lights an enabled channel uses (a
-  channel change rebuilds them), and colours are scaled by 1/255 with a
-  multiply instead of a divide (~20% of draws rebuild lights or channels).
-- v34: the off-screen cull (`gx_dl_culled`) transforms the box's centre
-  and tests the view-aligned box around it against each clip plane (one
-  transform and five plane tests instead of eight corners); it can only cull
-  less than the corner test, never more. `GXLoadPosMtxImm` and
-  `GXLoadTexMtxImm` compare and copy their 3x4 matrices inline as 12 words
-  (48 bytes was a memcmp and a memcpy call each, ~2% of the CPU).
-- Game side (imported code, `docs/decisions.md`): v34 prefetches the next
-  node in HSD's animation and display list walks (the P3 has a 128 KB L2
-  and no hardware prefetcher); v35 reuses an envelope's matrices when a
-  later PObj of the same DObj uses the same joints and weights (~1250
-  envelope matrices a frame in a 4-CPU match, ~630 distinct). After v50
-  (`PObjSetupMtx`, the biggest game function of the v50 console profile
-  at 7.2% of the match, ~13% with what it calls): a new envelope's
-  matrices are computed straight into their memo entry instead of copied
-  there, the setup functions' matrix locals skip the zeroing of
-  `-ftrivial-auto-var-init`, `HSD_MtxInverseTranspose` computes its
-  cofactors in SSE from one read of each row, and the walk prefetches the
-  next envelope and a new envelope's joints. Same matrices, same bits.
-- After v50, GX front end (the render bucket's lookups): the texture
-  cache's entries keep what a bind reads (key, chain, handle, the frames it
-  was checked and used) in one aligned 32-byte line and the hashes in a
-  second array (`find` was ~2% of the v50 console's render samples, nearly
-  all on the two lines a 48-byte entry spread those fields over);
-  `GXLoadTexObj` binds a changed object without asking `bind_unchanged`
-  again, compares texture objects and maps as words instead of `memcmp`
-  calls, and works out the GX size only to hash or upload; the upload path
-  stays out of line. `gx_dl_culled` makes its five clip planes once per
-  projection (`gx_cull.h`, `gx_proj_gen`) instead of for every list (~150
-  of its ~350 instructions). Same textures, binds, dirty bits and culls
-  (`test_tex_cache.py`, `test_dl_cull.py`).
-- After v45, per draw: a texture unit built from the same inputs as the
-  registers it last sent (texture handle, the map's wrap, filters and LOD
-  bias, the unit kind, and an epoch every texture made or freed bumps)
-  skips the `s_tex` read and the register build (`emit_textures`): most
-  draws that rebuild the units rebind one map, not all of them. The
-  combiner constants (`pack_const` per stage) are rebuilt only when the
-  program is sent or a TEV colour or konst colour changed
-  (`XGX_DIRTY_TEVREG`), not on every map or TEV change. A draw that only
-  rebinds textures (no TEV, texgen or indirect change) to the same set of
-  maps keeps the derived units and combiner program (`derive_units`, whose
-  only other input from the maps is which hold a texture).
-
 `xgx.h` is compiled by both triples (game and nxdk), so its structs hold only
 32-bit scalars, floats and byte arrays: no bit-fields, no 64-bit members.
+memcpy, memmove, memset and memcmp are compiler builtins everywhere
+(`xbox/include/xbuiltin.h`, force-included), since `-ffreestanding` would
+make every fixed-size copy a call.
 
-The GPU counts as idle (`wait_idle`) only once the pusher has caught up,
-PFIFO's CACHE1 is empty, the pusher has stopped and PGRAPH is idle, seen
-twice in a row. pbkit's `pb_busy` checks the first and last only, so
-methods still in CACHE1 passed as done whenever PGRAPH was between two of
-them. Deferred frees, the vertex ring's restart at every frame (in
-`frame_open`) and EFB copy targets all rely on this wait. xemu runs methods as they arrive and
-can't show the difference.
+## State and dirty groups
 
-The pushbuffer is 1 MB. pbkit's `pb_size` takes powers of two only and
-silently keeps its 512 KB default otherwise: the 1.5 MB asked for until
-v11 left `PB_GUARD` (restart at the head when a frame gets within 192 KB of
-the end) beyond the real end, a Pokémon Stadium frame ran past it into the
-memory after the pushbuffer, and the GPU fetched texture data as methods
-(DMA pusher error, `GPU fault kind 2`, frozen). `[NV2A] frame` lines report
-the interval's peak and mid-frame restarts.
+Per draw, the back end rebuilds only what the front end's dirty groups say
+changed: combiners and texture units (TEV, MAPS), the vertex-program key
+(CHANS, TEXGEN, LIGHTS, and whether the layout has normals and colours),
+texgen constants (TEXGEN, TEXMTX, or POSMTX when a texgen reads a position
+matrix), fixed pixel state (PIXEL, SCISSOR, FOG) and combiner constants
+(TEVREG). `s_draw_force` rebuilds everything after a GPU state reset or a
+content-rect change. So every GX setter must mark its group. HSD re-sets
+the whole TEV, channel and pixel state for every material, so redundant
+state is filtered at every level:
 
-### Display-list cache key (C2)
+- A setter whose values equal the current state returns without flushing
+  or marking anything (matrix loads compare 12 words). `gx_tex_bind` marks
+  the maps dirty only when the bound texture or its sampling changed.
+- A texture unit built from the same inputs as the registers it last sent
+  (handle, wrap, filters, LOD bias, unit kind, and an epoch bumped by every
+  texture made or freed) skips the build (`emit_textures`); a draw that only
+  rebinds the same set of maps keeps the derived units and combiner program.
+- Combiner constants (`pack_const`) are rebuilt only when the program is
+  sent or a TEV/konst colour changed; the program sent last (by cache slot)
+  and the inline white vertex colour aren't re-sent.
+- Light rows are built only for lights an enabled channel uses. The caches
+  compare a key hash before the key; the combiner config is hashed only up
+  to its used stages (`rc_used`).
 
-A cached list is keyed by its address and size, the vertex descriptor and
-the VAT of the formats it uses (`fmt_key`). The VAT part counts only the
-attributes the descriptor has on: a list decodes the same whatever the VAT
-says for an attribute it doesn't have, and HSD changes those freely. With
-every attribute in the key, Fountain of Dreams cached 821 of its 1381
-lists twice (1.7 MB of the 4 MB vertex pool; the console's pool ran full
-and rebuilt hundreds of lists a second); now 560 lists, none twice, 1.8 MB
-of the pool free (xemu census, 4-CPU match).
+## Vertices and draws
 
-### Probes (`docs/fps-plan.md`)
+### Display-list cache (`gx_vtx.c`)
 
-The back end takes part in two test-only probes. `-DXGX_CENSUS=1` counts
-each `xgx_draw` (draws, vertices, the dirty groups) by pass and owner from
-`xgx_census_tag`, which the game's render paths keep
-(`xbox/include/game/xgx_probe.h`), and `gx_vtx.c` adds the display-list
-cache's bytes by owner and its most rebuilt lists. The probe build's
-ablation window 4 (`-DXHW_PMC=1`, `env MX_ABLATE=1`) makes `xgx_draw`
-return at once, frames black, with every state group forced dirty again
-for the first draw after it; window 5 turns the display-list content
-rechecks off (`dlc_content_changed`). Round 3's GPU windows: window 8
-scissors every draw to one pixel (the vertex and state work stay, the fill
-goes) and window 9 skips the EFB copies; `[GPUP]` lines per period time
-the GPU's frame. None of it changes a release; outside a probe build the
-`[GPUP]` sums are a few additions a frame and never logged.
+HSD's display lists are model data, so up to 2048 are cached: the first
+call decodes the list into a vertex buffer from its own pool (4 MB) and
+later calls replay the draws. A list may hold up to 4096 draws
+(`DLC_MAX_BATCH`; Fountain of Dreams' stage is one 104 KB list of more than
+512).
+
+- **Key**: the list's address and size, the vertex descriptor and the VAT of
+  the formats it uses (`fmt_key`), counting only attributes the descriptor
+  has on (HSD changes the others freely). The vertex setters keep
+  order-independent sums per setting, so `fmt_key`/`vtx_sig` are cheap.
+- **Revalidation**: every call checks descriptor, formats and arrays
+  (`vtx_sig`); once a frame a sampled hash of the list and its array ranges
+  too (HSD reuses memory); after 120 passes (`DLC_STABLE`) every fourth
+  frame, staggered, with 16 words (`content_qhash`). A list rewritten in
+  place can show stale for up to three frames.
+- **Dynamic lists**: a list whose arrays keep changing (skinned and morphed
+  models) goes dynamic after four rebuilds: its decode plan, vertex indices
+  and a decoded template are kept in cached RAM (1 MB for all). Each call
+  re-fetches only attributes whose array moved or changed, then copies the
+  template into the ring in one sequential write. Lists over the budget are
+  decoded every call (volatile). `[DLC]` reports both; `[DLC] uncached:`
+  names lists that could not be cached and why.
+- **Eviction**: the least recently used list not drawn this frame, its
+  buffer freed at once: `frame_open` (the frame's first GPU use) has waited
+  for the GPU, so nothing reads it (a free before that opens the frame).
+
+### Off-screen culling
+
+The cache keeps each list's model-space box (lists without per-vertex
+matrices); `HSD_DObjDisp` skips rigid PObjs wholly outside the view
+(`gx_dl_culled`: the transformed centre's view-aligned box against five
+planes made once per projection, `gx_cull.h`; never culls more than an
+eight-corner test). A list is known after its first draw.
+
+### Fewer, bigger draws
+
+A draw costs about the same whatever its size (most in xemu on macOS, where
+each one became a render pass), so draws are merged where state allows:
+
+- Consecutive batches of one display list with the same layout and
+  primitive become one draw when the list is decoded: triangle lists run
+  on, strips are stitched with degenerate triangles (the last vertex again,
+  then the next strip's first once or twice so it starts on an even vertex
+  and keeps its winding). Dynamic lists merge the same way.
+- Immediate-mode vertices (`GXBegin`..`GXEnd`) are built in cached memory
+  and copied to the write-combined ring when drawn. A complete batch of a
+  list primitive waits at `GXEnd` for the next `GXBegin` with the same
+  primitive and layout. Any state change flushes it first; vertex
+  descriptor, format and array setters only close an open batch.
+- Quads and fans are sent as triangle lists (`out_prim`), the EFB-copy quad
+  as a strip.
+- Array offsets point at the start of the 32768-vertex window the draw
+  starts in, and each draw starts at its index from there, so consecutive
+  draws of one layout have no methods between them (xemu joins them). The
+  console takes vertex indices up to 0xFFFF only (a larger `DRAW_ARRAYS`
+  start raises a PGRAPH data error; xemu doesn't check), hence the windows
+  and `JOIN_MAX`.
+
+Immediate mode takes position components as a stream when the format is
+XYZ (HSD's shadow quad is six `GXPosition2f32` calls); with no texture
+coordinate in the vertex, `GXTexCoord1f32` feeds it too (`fn_80185408`).
+`[NV2A]` lines count draws by primitive and by what changed before each.
+
+### Pushbuffer and GPU sync
+
+- The pushbuffer is 1 MB (`pb_size` takes powers of two only and silently
+  keeps 512 KB otherwise, putting `PB_GUARD` past the end), kicked every
+  8192 words (`XGX_PB_KICK`; each kick flushes the write-combine cache).
+- Every batch starts with `BREAK_VERTEX_BUFFER_CACHE`: the NV2A caches
+  vertex data by address and reads ahead of a draw's last vertex, so a
+  kicked batch can leave stale read-ahead for vertices written right behind
+  it in the ring (xemu has no such cache). The EFB copy quad and the
+  Z-texture mask send it again right before their draw.
+- The GPU counts as idle (`wait_idle`) only once the pusher has caught up,
+  CACHE1 is empty, the pusher has stopped and PGRAPH is idle, twice in a
+  row (pbkit's `pb_busy` misses methods in CACHE1). Deferred frees, the
+  ring's restart and EFB copy targets rely on it.
+- **CPU/GPU overlap** (`XGX_OVERLAP`, default 1): `xgx_present` queues the
+  frame-rate counter and pbkit's flip (triple buffering) and returns; the
+  wait for idle is in `frame_open`, the next frame's first GPU use, where
+  deferred frees are released and ring and pushbuffer restart.
+  `GXCopyDisp`'s clear is queued until then (`frame_open`'s own full clear
+  is skipped when it covers everything). Screenshot frames and the title's
+  settings menu (`xgx_set_overlay`, CPU writes) still wait in the present.
+
+### CPU cost of the back end
+
+Besides the redundant-state filtering and sampled revalidation above:
+texture-cache entries keep what a bind reads in one aligned 32-byte line
+(hashes in a second array), and pool blocks sit in address order with free
+blocks on their own list and allocated ones hashed by offset (small
+requests take the lowest free block that fits, big ones the top of the
+highest). Measurements and history: `fps-plan.md`, `decisions.md` (also
+the game-side HSD matrix work).
+
+Probes (`fps-plan.md`): `-DXGX_CENSUS=1` counts draws by pass and owner
+(`xgx_census_tag`); the probe build's (`-DXHW_PMC=1`) ablation windows 4, 5,
+8 and 9 skip `xgx_draw`, display-list rechecks, the fill, and EFB copies;
+`[GPUP]` lines time the GPU's frame.
 
 ## Frame and output geometry
 
-- The logical EFB is the GameCube's 640x480. The back end maps it onto a
-  *content rect* of the framebuffer: all of 1280x720 at 720p (16:9), all of
-  640x480, or a pillarboxed rect when a scene asks for the GameCube's own
-  73:60 picture (`xgx_set_content_aspect`).
-- melee-pc's `widescreen.c` handles hor+ widescreen above this: it widens
-  the camera and anchors the HUD. It asks for the render size through
-  `AuroraGetRenderSize` and `AuroraSetPresentationAspect`, and the SDK side
-  answers them from `xgx_content_size`. The player HUDs are spread toward
-  the edges; the match timer is left at the top centre (`ifall.c`, `PORT:`).
+- The logical EFB is the GameCube's 640x480, mapped onto a *content rect*
+  of the framebuffer: all of 1280x720 at 720p, all of 640x480, or a
+  pillarboxed rect when a scene asks for the GameCube's 73:60 picture
+  (`xgx_set_content_aspect`). melee-pc's `widescreen.c` does hor+ above
+  this through `AuroraGetRenderSize`/`AuroraSetPresentationAspect`,
+  answered from `xgx_content_size`.
 - **The flip is `GXCopyDisp`**, where a GameCube frame ends: the EFB is
   copied to the XFB and cleared. `VIWaitForRetrace` only paces the game to
   60.000 Hz and runs the alarms (`vi.c`).
 - Framebuffers: 640x480x32 + Z24S8, or 1280x720 R5G6B5 + Z16 at 720p
-  (32-bit colour doesn't fit in 64 MB next to the game). `pb_DepthFmt` is
-  made settable by `tools/xbox/patch_pbkit.py`. Everything 16-bit keys on
-  the mode's bpp, not its size, so `-DXHW_VIDEO_480_BPP=16` runs 640x480 as
-  R5G6B5 + Z16 with 720p's pool sizes: the 720p path in xemu, which has no
-  720p. pbkit gives the depth buffer's tile compression tags with the
-  32-bit flag (`0x84000001`) also for Z16; `-DOCX_Z16_TILE_FLAGS` sets the
-  Z16 tile's flags for a console A/B (`docs/testing.md`), the default is
-  unchanged (`-DXGX_TILE` bit 1 does the same at run time, "Tile regions"). Clear colours go to pbkit's `pb_fill` as A8R8G8B8, which
-  converts them to the surface's format: `clear_fb` converted them to
-  R5G6B5 first as well, so every 16-bit clear colour (a stage's fog-coloured
-  clear) came out near black.
-  Z16 with Melee's near 0.1 / far 16384 has about `d^2 / 6550` units of
-  depth resolution at distance `d`; xemu 0.8 floors depth to 16 bits as
-  the hardware does, and the 720p Dream Land and Pokémon Stadium runs show
-  no z-fighting.
+  (32-bit doesn't fit in 64 MB; `pb_DepthFmt` made settable by
+  `patch_pbkit.py`). 16-bit paths key on the bpp, so
+  `-DXHW_VIDEO_480_BPP=16` runs 480 as R5G6B5 + Z16 (720p's path in xemu).
+  Clear colours go to `pb_fill` as A8R8G8B8, which converts them.
 
 ### Tile regions
 
-The NV2A's memory controller has eight tile regions (`NV_PFB_TILE`, with
-copies in PGRAPH and its RDI that must match): a range of memory with a
-pitch from a fixed table, base and size 16 KB aligned, laid out so that a
-2D block of a surface falls into one DRAM page. The mapping is by address
-and the same for every client (rendering, texture reads, scan-out, and
-on NV2x PCs host reads, which nouveau relies on), so it changes no pixel.
-A region can also have Z compression (`NV_PFB_ZCOMP`): blocks of depth
-that one plane describes exactly are stored in fewer bytes, a tag per
-block says which; a block that doesn't fit stays uncompressed, so this
-can't change a pixel either, but the CPU must not read such a buffer and
-it can't be sampled as a texture (the Z-texture mask below).
+The NV2A's memory controller has eight tile regions (`NV_PFB_TILE`, copied
+in PGRAPH and its RDI) that lay a surface out so a 2D block falls into one
+DRAM page; the same for every client, so no pixel changes. Z compression
+(`NV_PFB_ZCOMP`) is lossless too, but a compressed buffer can't be read by
+the CPU or sampled as a texture (see Z textures).
 
-`pb_init` sets them up as the XDK does: tile 0 over the three framebuffers,
-tile 1 over the depth buffer with compression (tag base 0), both pitches
-2560 bytes at 720p and at 480, which the table has. Two things look off:
+`pb_init` puts tile 0 over the three framebuffers and tile 1 (compressed)
+over the depth buffer, pitch 2560, but writes the base word as
+`base | 2 | (flags & 1)`, while bit 0 is the enable (envytools, nouveau,
+xemu), and sets the Z24S8 format bit for the Z16 buffer too.
+`-DXGX_TILE=<bits>` (`env MX_TILE=`) re-programs them in `tiles_setup` at
+boot: 1 the Z16 format, 2 tile 0 as `base | 1`, 4 tile 0 as `base | 3`, 8 no
+Z compression; 0 leaves pbkit's setup. Default 4: console rounds
+(`fps-plan.md`) found tiled framebuffers faster at 720p with the same
+picture. `-DOCX_Z16_TILE_FLAGS` sets the Z16 tile's flags at build time.
 
-- pbkit writes a tile's base word as `base | 2 | (flags & 1)`, so tile 0
-  (flags 0) gets `base | 2`, tile 1 `base | 3`. envytools (NV20-NV30),
-  nouveau (`nv20_fb.c`, which NV2A uses) and xemu's `nv2a_regs.h` all have
-  bit 0 as the region's enable and bit 1 as a bank offset: by them the
-  framebuffers are not tiled at all. Whether the NV2A follows them or
-  pbkit (copied from the XDK) is not known.
-- the compression word's format bit (`0x04000000`, envytools' NV20
-  `FORMAT`: 0 Z16, 1 Z24S8) is set for the Z16 buffer at 720p as well:
-  the compressor then fits Z24S8 planes to pairs of Z16 values, which
-  only a uniform (cleared) block passes.
-
-`-DXGX_TILE=<bits>` (test builds: `env MX_TILE=`) re-programs both in
-`tiles_setup`, at boot before the first frame's clear: 1 the Z16 format,
-2 tile 0 as `base | 1`, 4 tile 0 as `base | 3`, 8 no Z compression (the
-A/B's baseline); 0 leaves pbkit's setup. The default is 4: console round 4
-(`fps-plan.md`) found the enable bit is bit 0, as envytools has it, and
-the tiled framebuffers +11% at 720p on Fountain; the Z settings changed
-nothing.
-
-With tile 0 on, the CPU must not touch a framebuffer at pbkit's
-0x8xxxxxxx address: it bypasses the tile and sees the raw layout (256-byte
-tiles of 64 bytes by 4 rows with bank swizzles; round 4's shots read
-there were the picture's 16-byte chunks rearranged). The NV2A's aperture
-(BAR1, 0xF0000000 + physical, mapped once by `tiles_setup`) goes through
-the tile, so `fb_cpu` hands that address to the settings menu
-(`xhw_overlay_draw`), screenshots and `read_rect_cpu`. A tile is only
-changed when its pitch is the surface's (not under `-DXHW_VIDEO_480_BPP=16`,
-whose 1280-byte rows sit in 1536-byte tiles). The boot line `[NV2A]
-tiles` reads all eight regions back, their compression words and the tag
-count. xemu ignores tile regions; only the console can say which settings
-are faster (and that the picture stays the same).
+With tile 0 on, the CPU must not touch a framebuffer at pbkit's 0x8xxxxxxx
+address (it bypasses the tile); `fb_cpu` hands out the NV2A's aperture
+(BAR1, 0xF0000000 + physical) instead, for the settings menu, screenshots
+and `read_rect_cpu`. A tile is only changed when its pitch is the surface's
+(not under `-DXHW_VIDEO_480_BPP=16`). `[NV2A] tiles` at boot reads them
+back. xemu ignores tile regions.
 
 ## Vertex programs (`nv2a_vp.c`)
 
 Each transform/lighting/texgen configuration (`VpKey`) gets a generated
-program, cached by key (64 entries). The instruction encoder matches
+program, cached by key (64 entries, `VPM_PROGS`). The encoder matches
 [nv2a-vsh](https://pypi.org/project/nv2a-vsh/) bit for bit
-(`tools/xbox/test_vp_encoder.py`). Details that took some work to get right:
+(`tools/xbox/test_vp_encoder.py`): relative addressing is `c[A0+N]`; output
+and write masks are bit-reversed relative to `xyzw`; MAC `ADD` takes slots A
+and C, ILU ops (RCP, RSQ, LIT, ...) slot C.
 
-- relative addressing is `c[A0+N]`;
-- the hardware output and write masks are bit-reversed relative to `xyzw`;
-- the MAC `ADD` takes its operands from slots A and C, and ILU ops (RCP,
-  RSQ, LIT, ...) take theirs from slot C.
-
-Constant rows:
+Constant rows (`nv2a_vp.h`):
 
 | rows | contents |
 |---|---|
@@ -431,77 +225,38 @@ Constant rows:
 Inputs: v0 position, v1 matrix index, v2 normal, v3/v4 colours 0/1, GX
 TEX0..6 -> v9..v15, TEX7 -> v8. The front end writes canonical vertices
 (`XgxLayout`): float positions, normals and texcoords, RGBA8 colours, and the
-matrix index as a float.
-
-Skinning: GX selects a position matrix per vertex (PNMTXIDX, 0..27 in steps
-of 3). The program loads it into `a0` and reads `c[A0+6]`, so a whole
-skinned mesh is one draw.
+matrix index as a float. Skinning: GX selects a position matrix per vertex
+(PNMTXIDX, 0..27 in steps of 3); the program loads it into `a0` and reads
+`c[A0+6]`, so a whole skinned mesh is one draw.
 
 ### Shorter programs
 
-The generator writes one op per instruction over named temporaries;
-`vp_optimize` then shortens the program without changing any value in it.
-Every step keeps each value's operation and operands, so the results are
-the same bits:
-
-- a MOV to an output goes, and the ops that computed its source write the
-  output themselves (also the temporary if it is read again: a MAC op can
-  write both);
-- lanes nobody reads aren't written, and ops left writing nothing go;
-- MOVs of the same constant or input row into one destination merge;
-- the ops are scheduled again so an ILU op (RCP, RSQ, EXP, or a MOV) shares
-  an instruction with a MAC op, and temporaries are allocated again for
-  that order. The paired ILU op writes r1 (nv2a-vsh, xemu). Lanes built by
-  several ops and read together (RPOS, a texgen's source) stay in one
-  register. A register isn't written in an instruction of a pair that reads
-  it: xemu runs the MAC op before the ILU op.
-
-The generator itself also computes less: a channel whose colour and alpha
-halves have the same lights and functions lights all four lanes in one loop;
-the spot and specular vectors (1, cos, cos^2), (1, d, d^2) are built where
-the values land, the constant 1 set once per channel; a texgen from the
-position or normal reads the attribute directly (declared with 3 components,
-so w reads 1). And `VpKey.ang_one`/`dist_one` flag lights whose angle or
-distance attenuation rows are (1, 0, 0), as HSD sets them for infinite
-lights (both) and point lights (angle): in a spot channel that factor is
-1 + 0 cos + 0 cos^2 = 1 and rcp(1) = 1, so it and its product (x * 1 = x)
-are left out, 9 instructions per infinite light. `vp_canon` clears the key
-fields a program doesn't depend on (the second channel with one channel on,
-a disabled half's lighting, unused texgens and flags), so draws that differ
-only there share one program and don't switch.
-
-`tools/xbox/test_vp_opt.py` runs the programs of 200000 random keys, and the
-programs of the generator before all this (`tests/xbox/vp_ref.c`), through an
-interpreter of the encoded words, in the hardware's order and in xemu's, and
-requires the same bits in every output lane. Programs average 48 instructions
-there, 68 before; a lit and specular fighter program with two infinite lights,
-fog and a texture went from 96 to 54. Keys the old generator couldn't fit
-(more than 136 instructions: lights past the first two and spot attenuation
-dropped) are still approximated exactly as then (`legacy_len`), so the
-picture is unchanged; about a third of them would fit now.
+`vp_optimize` shortens the generator's one-op-per-instruction output
+without changing any value (same operations and operands, same bits): MOVs
+to outputs fold into the ops that computed them, unread lanes and dead ops
+go, and ops are rescheduled so an ILU op pairs with a MAC op (the ILU op
+writes r1; a pair never writes a register it reads, since xemu runs the MAC
+op first). The generator drops attenuation factors flagged as 1
+(`VpKey.ang_one`/`dist_one`), and `vp_canon` clears key fields a program
+doesn't depend on so such draws share a program. `tools/xbox/test_vp_opt.py`
+compares 200000 random keys against the original generator
+(`tests/xbox/vp_ref.c`) bit for bit, in hardware and xemu order; keys that
+didn't fit 136 instructions then are approximated as then (`legacy_len`).
 
 ### Program memory
 
-The NV2A holds 136 instructions, and the programs a match frame selects are
-several times that, so some are loaded again every frame (through the
-pushbuffer: 16 bytes per instruction, bursts of 8). `nv2a_vpmem.c` decides
-where: the smallest free gap that fits, else the contiguous window whose
-programs are needed last. "Needed" is Belady's rule with the previous frame
-as the forecast: frames select their programs in nearly the same order, so a
-resident program's next use is where the previous frame selected it next
-(ties: least recently used, then fewest instructions overwritten). Before,
-program memory was packed from 0 and flushed whole when the next program
-didn't fit. Loads can overwrite any program, the current one included: the
-GPU runs the pushbuffer in order.
+The NV2A holds 136 instructions, and a match frame's programs are several
+times that, so some are reloaded every frame (16 bytes per instruction,
+bursts of 8). `nv2a_vpmem.c` places a program in the smallest free gap
+that fits, else the contiguous window whose programs are needed last.
+"Needed" is Belady's rule with the previous frame as the forecast (frames
+select programs in nearly the same order; ties: least recently used, then
+fewest instructions overwritten). Loads can overwrite any program, the
+current one included: the GPU runs the pushbuffer in order.
 
-`tools/xbox/vp_policy.py` replays select traces (`-DXGX_DEBUG_VPTRACE`, or a
-synthetic 4-CPU Fountain of Dreams frame) through that code and through
-flush-all, LRU and an offline Belady for comparison. On the synthetic frame
-(two infinite diffuse lights, one specular): 106 loads and 7200 instructions
-a frame before, 75 / 2830 with the shorter programs alone, 46 / 1730 with the
-residency policy too (LRU 57 / 2210; offline Belady 43). `[NV2A] per N
-frames: L vertex programs loaded (I instructions), S program switches`
-reports it on the console.
+`tools/xbox/vp_policy.py` replays select traces (`-DXGX_DEBUG_VPTRACE`)
+against flush-all, LRU and offline Belady; `[NV2A] per N frames: L vertex
+programs loaded ...` reports it on the console.
 
 ### Depth
 
@@ -514,173 +269,110 @@ row2 = ZMAX * ((vf - vn) * P[2] + vf * P[3])
 ```
 
 where `vn`/`vf` are the viewport depth range and ZMAX is 2^24-1 (Z24) or
-65535 (Z16 at 720p).
+65535 (Z16). Rows 0 and 1 fold in the viewport scale and offset, y flipped.
 
 This is a z-buffer: CONTROL0's `Z_PERSPECTIVE_ENABLE` (w-buffering) must
-stay off. pbkit's `pb_target_back_buffer` turns it on ("We use W") each
-time it targets the back buffer, so `frame_open` sets CONTROL0 again right
-after. With the w-buffer the console took depth from the interpolated w
-and Pokémon Stadium's floor showed black bands that moved with the
-camera. With the z-buffer really in use, xemu showed the same bands: the
-floor's pixels got depth just outside the clip range and were culled
-(`ZMIN_MAX_CONTROL` CULL_NEAR_FAR). Depth is now clamped to the range
-(ZCLAMP_CLAMP), as the GameCube's 24-bit depth is; `-DXGX_DEPTH_CULL=1`
-restores culling. Geometry behind the eye is still clipped on w. Rows 0 and 1 fold in the viewport scale and offset,
-with y flipped.
+stay off. pbkit's `pb_target_back_buffer` turns it on ("We use W") each time
+it targets the back buffer, so `frame_open` sets CONTROL0 again right after.
+Depth is clamped to the range (`ZMIN_MAX_CONTROL` ZCLAMP_CLAMP) as on the
+GameCube, not culled (`-DXGX_DEPTH_CULL=1` culls); geometry behind the eye
+is still clipped on w.
 
-At 16 bits (720p, or `-DXHW_VIDEO_480_BPP=16`) the depth buffer is Z16,
-and a z-buffer step at eye distance D is about D^2 / (65536 * near).
-Melee's match camera has near 0.1 and far 16384: ~3 units a step where the
-fighters are, so crates, Fountain of Dreams' grass and floor layer and the
-fighters in front of it z-fought (Final Destination, near 1, didn't). At
-Z16 the depth is therefore remapped once per frame: GX depth g (0..1) is
-stored as (g - g0) / (1 - g0), with g0 a camera's depth at far /
-`XGX_Z16_DEPTH_RATIO` (4096), i.e. as if its near plane were at far / 4096
-(~0.1 units a step at D ~150); of the frame's projections whose far/near
-ratio is past 4096, the one with the smallest g0 decides. The remap is affine, so row 2 still
-gives a z-buffer, and it is the same for every projection of the frame,
-ortho too: the match timer's camera is depth-tested against the stage's
-(a remap per projection hid the timer). Depth 1 (far, the copy clears)
-stays; what lies nearer than g0 is clamped to 0, not clipped, and keeps
-only draw order among itself. Clears and the Z-texture mask convert their
-z24 through the same remap (`z_store`), fog still reads GX's own row
-(`s_zrow_gx`). `build_proj` collects the frame's g0 and `xgx_present` makes
-it the next frame's, rebuilding the projection rows when it changes; a
-frame with no extreme projection uses none. Z24 is untouched.
-`-DXGX_Z16_DEPTH_RATIO=0` turns it off.
+At Z16 (720p, or `-DXHW_VIDEO_480_BPP=16`) a depth step at eye distance D is
+about D^2 / (65536 * near), ~3 units where the fighters are with Melee's
+near 0.1 / far 16384: enough to z-fight. So at Z16 depth is remapped once
+per frame: GX depth g (0..1) is stored as (g - g0) / (1 - g0), g0 being a
+camera's depth at far / `XGX_Z16_DEPTH_RATIO` (4096); of the frame's
+projections whose far/near ratio exceeds that, the smallest g0 decides. The
+remap is affine (still a z-buffer) and the same for every projection of the
+frame, ortho too (the match timer is depth-tested against the stage).
+Depth 1 stays; nearer than g0 clamps to 0. Clears and the Z-texture mask
+convert through the same remap (`z_store`); fog reads GX's own row
+(`s_zrow_gx`). `build_proj` collects g0 and `xgx_present` makes it the next
+frame's. Z24 is untouched; `-DXGX_Z16_DEPTH_RATIO=0` turns it off.
 
 ### Culling
 
-The viewport y-flip is folded into the projection, and GX's front faces then
-come out clockwise, so the front face is CW. (OpenCrossing's GL shim uses
-CCW; its projection differs. Checked in xemu against Dolphin on the memory
-card screen, whose panels use `GX_CULL_BACK`.) `GX_CULL_BACK` maps to 0x405 (back),
+The viewport y-flip is folded into the projection, so GX's front faces come
+out clockwise and the front face is CW (checked in xemu against Dolphin on
+the memory card screen). `GX_CULL_BACK` maps to 0x405 (back),
 `GX_CULL_FRONT` to 0x404 and `GX_CULL_ALL` to 0x408 (front and back).
 
 ## TEV -> register combiners (`nv2a_rc.c`)
 
-This comes from OpenCrossing-Xbox's compiler, generalized. There are up to
-8 combiner stages and 4 texture units. The TEV konst colours and registers
-become per-draw combiner constants (`RREF_*`). When a TEV configuration
-can't be represented exactly, it is approximated and counted. The
-`[NV2A] frame N: D draws (A approximated)` log line reports that count
-every 600 frames (10 seconds).
+This comes from OpenCrossing-Xbox's compiler, generalized: up to 8 combiner
+stages and 4 texture units. TEV konst colours and registers become per-draw
+combiner constants (`RREF_*`). A TEV configuration that can't be represented
+exactly is approximated and counted (`[NV2A] frame N: D draws (A
+approximated)`, every 600 frames).
 
-Constants are unsigned, and reading PREV back clamps at 0. So the signed,
-unclamped arithmetic of Nintendo's THP YUV -> RGB recipe (used for
-`sobjlib.c`'s movie sprite) is recognised as a whole. It is replaced by a
-three-stage program that does the same maths with signed registers and
+Constants are unsigned, and reading PREV back clamps at 0, so the signed,
+unclamped THP YUV -> RGB recipe (`sobjlib.c`'s movie sprite) is recognised
+as a whole and replaced by a three-stage program with signed registers and
 fixed constants (`RREF_FIXED`).
 
-TEV swap tables (`GXSetTevSwapModeTable`, `GXSetTevSwapMode`): a stage
-sees its texture and rasterised colour through one of four tables, TEXC as
-(src[r], src[g], src[b]) and TEXA as src[a]. A combiner input reads a
-register's rgb or its alpha broadcast, so the identity and an alpha
-broadcast (`AAAA`) cost nothing. A colour broadcast (GXInit's tables 1-3,
-`RRRA`, `GGGA`, `BBBA`, which the front end now sets up as GXInit does;
-they were all identity) or an alpha taken from r, g or b costs one combiner
-stage in front of the TEV stage: a dot product of the source with a unit
-vector (`RREF_FIXED` 4-6) into a spare register, AB for the colour view and
-CD for the alpha view (CD's blue copied to its alpha), so up to two views
-of one source per extra stage. The stage only exists for views the TEV
-stage reads, and it counts against the 8 combiner stages (a configuration
-that no longer fits is approximated, as before). Permutations (`GBRA` and
-the like) are approximated by the identity: nothing in Melee's code sets
-one. The user in the code is the 1P clear screen's sepia freeze frame
-(`lb_800122F0`: three stages read one texture through `RRRA`, `GGGA`,
-`BBBA` and sum K0 r + K1 g + K2 b, six combiner stages); HSD's TEV
-descriptors (`HSD_SetupTevStage`) can name any table from model data.
-`[NV2A] per N frames: D draws through swap tables (S combiner stages
-added)` counts them. `tools/xbox/test_rc.py` checks that configurations
-without a swizzle compile to the same combiner words as before
-(`tests/xbox/rc_ref.c` is the compiler before swap tables), that swizzled
-configurations run through a model of the combiners give what the identity
-gives on pre-swizzled inputs, and the sepia case.
+TEV swap tables: the identity and `AAAA` cost nothing. A colour broadcast
+(`RRRA`, `GGGA`, `BBBA`, GXInit's tables 1-3) or an alpha from r, g or b
+costs one combiner stage in front of the TEV stage: a dot product with a
+unit vector (`RREF_FIXED` 4-6) into a spare register (AB colour view, CD
+alpha view). The user is the 1P clear screen's sepia freeze frame
+(`lb_800122F0`). `[NV2A] per N frames: D draws through swap tables` counts
+them; `tools/xbox/test_rc.py` checks against `tests/xbox/rc_ref.c` and a
+combiner model.
 
-Current limits:
+### Current limits
 
 - signed TEV colours (`GXSetTevColorS10` below 0) and unclamped stages
   work only in the movie recipe;
 - TEV swap tables: permutations are approximated by the identity;
 - indirect texturing: only what the NV2A's BUMPENVMAP can do (below);
-- destination alpha: R5G6B5 (720p) has none, so `GX_BL_DSTALPHA` reads 1
-  there. That is what the GameCube does too: HSD only ever sets
-  `GX_PF_RGB8_Z24` (`HSD_StartRender`), an EFB without alpha. The 32-bit
-  framebuffer keeps an alpha channel GX wouldn't have, so `GX_BL_DSTALPHA`
-  reads what the draws left there at 480. EFB copies don't: a colour,
-  IA or RA copy has alpha 1 at every bpp, as from GX's RGB8 EFB (an I4/R4
-  copy's alpha is its intensity, as on the GameCube; HSD's shadow maps
-  take alpha from APREV, not the map). Until v43 a 32-bit copy kept the
-  back buffer's alpha, often 0: the 1P clear's sepia freeze frame, drawn
-  with the copy's alpha (`lb_80012994`), was transparent and the
-  background behind the bonus list black. Only the Z-texture mask
-  (`XGX_COPY_ALPHA`) reads the back buffer's alpha;
+- destination alpha: HSD only sets `GX_PF_RGB8_Z24` (no EFB alpha). R5G6B5
+  (720p) has none either, so `GX_BL_DSTALPHA` reads 1; at 480 it reads what
+  draws left in the 32-bit framebuffer. EFB copies always get alpha 1 for
+  colour, IA and RA formats (an I4/R4 copy's alpha is its intensity), as
+  from GX's RGB8 EFB (the sepia freeze frame draws with it, `lb_80012994`);
+  only the Z-texture mask (`XGX_COPY_ALPHA`) reads the back buffer's alpha;
 - texture-matrix index attributes (TEXnMTXIDX) are ignored.
 
 ## Indirect texturing (`nv2a.c`)
 
-GX's indirect stages (`GXSetNumIndStages`, `GXSetIndTexOrder`,
-`GXSetIndTexCoordScale`, `GXSetIndTexMtx`, `GXSetTevIndirect`) offset a TEV
-stage's texture coordinate, in texels, by a 2x3 matrix times (s, t, u)
-minus a bias, read per pixel from an indirect texture's alpha, blue and
-green. The one user in Melee's code is `lbRefract` (`lbrefract.c`): a
-cloaked fighter (the Cloaking Device, Invisible Melee) is drawn as the
-stage behind it, a half-size copy of the frame (`lbRefract_80022560`)
-sampled at the fighter's projected position and offset by a 32x32 IA8
-lens map looked up by the view-space normal (`GX_ITF_8`, `GX_ITB_ST`,
-matrix 0 = -1, no wrap). No stage uses it: Fountain of Dreams' reflection
-and water are geometry (`[NV2A]` counts no indirect draws there), and
-HSD's texture objects have no indirect path (`TEX_BUMP` is the emboss
-handled under Textures).
+GX's indirect stages offset a TEV stage's texture coordinate by a 2x3
+matrix times (s, t, u) minus a bias, read per pixel from an indirect
+texture. The one user is `lbRefract` (`lbrefract.c`): a cloaked fighter is
+drawn as a half-size copy of the frame offset by a 32x32 IA8 lens map
+(`GX_ITF_8`, `GX_ITB_ST`, matrix 0 = -1, no wrap).
 
-The NV2A's texture shader has the counterpart: a `BUMPENVMAP` unit adds a
-2x2 matrix times (du, dv), read from an earlier unit's blue and green, to
-its coordinate. `derive_units` maps a TEV stage with an indirect offset
-onto two units:
+The NV2A's counterpart is a `BUMPENVMAP` unit, which adds a 2x2 matrix times
+(du, dv) from an earlier unit's blue and green to its coordinate.
+`derive_units` maps the stage onto two units:
 
-- the indirect map gets one of the first units (`UNIT_IND`, 2D projective),
-  since a bump unit reads an earlier unit (`SET_SHADER_OTHER_STAGE_INPUT`
-  for units 2 and 3; unit 1 reads unit 0) and unit 0 can't be one. Its
-  texgen is scaled by `GXSetIndTexCoordScale`.
-- the stage's own texture gets a unit of its own (`UNIT_BUMP`, program 6),
-  with the matrix in `SET_TEXTURE_SET_BUMP_ENV_MAT`. `BUMPENVMAP` reads s
-  and t without dividing by q, so a projective texgen on that unit divides
-  in the vertex program (`VP_PROJ_DIVIDE`; per vertex, so the coordinate is
-  interpolated as s/q, which differs from GX's per-pixel divide by the
-  perspective across one triangle: small at a fighter's size;
-  `test_vp_opt.py` checks the divide against the projective program).
-  The matrix method takes 00, 01, 11, 10 (xemu's register order).
+- the indirect map gets one of the first units (`UNIT_IND`, 2D projective;
+  a bump unit reads an earlier unit, `SET_SHADER_OTHER_STAGE_INPUT`, so unit
+  0 can't be one), its texgen scaled by `GXSetIndTexCoordScale`;
+- the stage's texture gets its own unit (`UNIT_BUMP`, program 6), the
+  matrix in `SET_TEXTURE_SET_BUMP_ENV_MAT` (order 00, 01, 11, 10).
+  `BUMPENVMAP` doesn't divide by q, so a projective texgen there divides
+  per vertex in the vertex program (`VP_PROJ_DIVIDE`).
 
-The unit reads du and dv as two's-complement bytes / 127 (xemu's `sign3`).
-The indirect map is drawn from a copy (`ind_tex`: A8R8G8B8, s / 2 in blue
-and t / 2 in green, made from the pool's texels once per texture and
-generation; AY8, A8Y8, R5G6B5, A8R8G8B8 and P8 sources, up to 64K texels):
-halved, no texel crosses the two's complement wrap, so filtering between
-texels stays linear as GX's does, and GX's -128 bias becomes a constant
-added to the bump unit's texgen rows (s + c q). The matrix is the GX matrix
-times 254 over the GX texture's size (a swizzled texture is sampled over
-[0, 1]; a linear one in texels). Halving loses the lowest bit: the offset
-is within half a step of GX's (`2^scale` texels per step; Melee's lens
-map: half a texel of the 320x240 copy, a pixel on screen).
+The unit reads du, dv as two's-complement bytes / 127, so the indirect map
+is drawn from a copy (`ind_tex`, A8R8G8B8, once per texture and generation)
+holding s / 2 and t / 2: halved, no texel crosses the wrap, filtering stays
+linear as on GX, and GX's -128 bias becomes a constant in the bump unit's
+texgen rows. The matrix is the GX matrix times 254 over the texture's size.
+The offset is within half a step of GX's.
 
-Drawn direct (and counted as approximated, `[NV2A] per N frames: ...
-indirect (M more drawn direct)`): dynamic matrices (`GX_ITM_S*`,
-`GX_ITM_T*`), wrapping, `add_prev` (accumulated offsets), bump alpha,
-the 5/4/3-bit formats, DXT maps, a stage without a free unit pair, and the
-matrix's u column (ignored when not zero). Draws without an indirect stage
-send exactly what they did before; `-DXGX_NO_INDIRECT=1` draws every
-indirect stage direct (v40's behaviour) for bisecting on the console.
-`tools/xbox/scenarios/inv` (`MELEE_DEBUG_VS_INVISIBLE=3`) is Fountain of
-Dreams with two of four CPUs cloaked.
+Drawn direct (counted as approximated): dynamic matrices, wrapping,
+`add_prev`, bump alpha, the 5/4/3-bit formats, DXT maps, no free unit pair,
+a non-zero u column. `-DXGX_NO_INDIRECT=1` draws every indirect stage
+direct; `tools/xbox/scenarios/inv` has two of four CPUs cloaked.
 
 ## Fog (`nv2a_fog.c`)
 
 GX applies fog after the last TEV stage, to the colour only:
-`rgb = (rgb * (256 - F256) + fog * F256) >> 8` with F256 = F * 256. The
-fog amount F comes from the pixel's 24-bit EFB depth Zs and the registers
-`GXSetFog` writes: A and C cut to 11 mantissa bits, and for perspective fog
-B as a 24-bit magnitude and a shift (libogc `GX_SetFog`, Dolphin's
-`PixelShaderGen`):
+`rgb = (rgb * (256 - F256) + fog * F256) >> 8` with F256 = F * 256. F comes
+from the pixel's 24-bit EFB depth Zs and the registers `GXSetFog` writes (A
+and C cut to 11 mantissa bits; for perspective fog B as a 24-bit magnitude
+and a shift: libogc `GX_SetFog`, Dolphin's `PixelShaderGen`):
 
 | fog | per pixel |
 |---|---|
@@ -688,230 +380,175 @@ B as a 24-bit magnitude and a shift (libogc `GX_SetFog`, Dolphin's
 | orthographic (`GX_FOG_ORTHO_*`) | `ze = A * Zs / 2^24` |
 | all | `x = clamp(ze - C, 0, 1)`; LIN `F = x`, EXP `1 - 2^(-8x)`, EXP2 `1 - 2^(-8x^2)`, REVEXP `2^(-8(1-x))`, REVEXP2 `2^(-8(1-x)^2)`; `GX_FOG_NONE`: off |
 
-The NV2A has no per-pixel depth fog. Its fog unit takes oFog.x from the
-vertex program per vertex and interpolates the factor (xemu evaluates it
-per vertex; `FOG_PARAMS` also goes to the transform engine). So:
+The NV2A has no per-pixel depth fog; its fog unit interpolates a factor
+the vertex program writes to oFog.x. So:
 
-- **Vertex program.** F is computed per vertex from the vertex's own depth
-  with the same registers. Zs / 2^24 is `(a . P) / (w . P)` for the
-  view-space position P and the projection's depth and w rows (`VPC_PROJ`
-  + 2 and + 3), so `ze - C` is a ratio of two linear functions of P: rows
-  `VPC_FOG` and `VPC_FOG + 1`, built by `fog_setup` when the fog or the
-  projection changes. EXP and EXP2 clamp x and evaluate `2^(-8u)` with
-  `expp` (the REV types use 1 - x; the curve's constants are in
-  `VPC_FOG + 2`). `VpKey.fog` selects the variant (off, linear, exp,
-  exp2); fog makes a program 4 (LIN) to 10 (EXP2) instructions longer, so
-  a program already near the NV2A's 136 drops lights sooner.
+- **Vertex program.** F per vertex from the vertex's own depth: `ze - C` is
+  a ratio of two linear functions of the view-space position (rows
+  `VPC_FOG`, `VPC_FOG + 1`, built by `fog_setup` when fog or projection
+  change); EXP/EXP2 use `expp` (curve constants in `VPC_FOG + 2`).
+  `VpKey.fog` selects the variant: 4 (LIN) to 10 (EXP2) more instructions.
 - **Fog unit.** LINEAR, `FOG_PARAMS` (1, 1, 0): the linear mode computes
-  `p0 + p1 * oFog - 1` (nxdk's NV10 notes, xemu's `fogFactor -= 1.0`), so
-  the factor is F, clamped to 0..1 per pixel. nxdk_pgraph_tests' vertex
-  shader fog tests use the same setup; they also found that the gen mode
-  doesn't matter with a vertex program. The NV2A's EXP modes aren't used:
-  they are evaluated per vertex as well, and EXP's zero point measures
-  ~1.51 on hardware where the formula says 1.5.
+  `p0 + p1 * oFog - 1` (nxdk's NV10 notes, xemu), so the factor is F,
+  clamped per pixel. The NV2A's EXP modes aren't used: they are per vertex
+  too, and EXP's zero point measures ~1.51 on hardware, not 1.5.
 - **Final combiner.** CW0 becomes A = FOG.a (the factor), B = FOG.rgb (the
-  fog colour, `SET_FOG_COLOR` is ABGR), C = PREV, D = 0; alpha (CW1's G)
-  is untouched. Without fog CW0 is what `nv2a_rc.c` compiled, and
-  unfogged vertex programs are the same as before (checked on 200000
-  random keys).
-- **State.** Fog is sent only when `GXSetFog` changed something
-  (`XGX_DIRTY_FOG`; `GXSetFog` returns early on equal values like the other
-  setters, as HSD calls it for every camera pass and particle kind) or the
-  projection changed while fog is on.
+  colour; `SET_FOG_COLOR` is ABGR), C = PREV, D = 0; alpha is untouched.
+- **State.** Sent only when `GXSetFog` changed something (`XGX_DIRTY_FOG`)
+  or the projection changed while fog is on.
 
 Accuracy (`tools/xbox/test_fog.py`, against libogc's registers and
-Dolphin's formula): at every vertex F is within 1/255 of what GX gives
-within one of its own depth steps. With Melee's 0.1..16384 game camera GX
-resolves fog coarsely: `b_mag - (Zs >> 2)` is 99 steps at depth 5000 and 41
-at the far plane, and b_mag rounds B up (8388638 / 2^23), which makes GX's
-ze up to 1.57 times smaller at depth than the textbook formula (thinner
-fog). The port reproduces both at the vertices. Between vertices the NV2A
-interpolates F linearly in view space, which is exact for LIN fog while
-b_mag's rounding is negligible (the test checks edges for most cameras).
-With Melee's camera GX's denominator grows by ~57% from near to far, so a
-polygon that spans a long depth range gets less fog mid-span than on the
-GameCube: up to ~23/255 on an edge from depth 2000 to 14000 through a
-narrow fog range. The EXP curves are also linear between vertices.
-
-`GXSetFogRangeAdj` (a horizontal correction toward radial distance, which
-HSD sets when a fog has a FogAdj descriptor) is not applied.
-
-Melee sets fog in these places (`HSD_FogSet`), all compared best against
-Dolphin:
-
-- stages: `Ground_801C1E94` loads the stage's fog descriptor (scaled by the
-  stage's `param->y`; its colour is also the clear colour) and
-  `Ground_801C1E2C` applies it for the stage's camera passes while
-  `stage_info.unk8C.b2` holds (set at stage load; Final Destination's
-  `grlast.c` clears it). The camera turns it off for its later passes
-  (`camera.c`);
-- particles whose kind has `DispFog` (`psdisp.c`);
-- the title screen (`ScTitle_fog`), the Classic and All-Star intros
-  (`gm_1832.c`, `gm_186E.c`), Tournament mode (`gmtou_*.c`), the 1P ending
-  (`gmregenddisp.c`), the staff roll, Adventure cutscenes (`vi0102`,
-  `vi0401`, `vi0501`, `vi0502`, `vi0801`, `vi1201v1`, `vi1201v2`) and the
-  trophy display (`ScMenDisplay_fog`, `tydisplay.c`; `toy.c`'s own white
-  fog is a debug-ROM feature).
+Dolphin's formula): at the vertices F is within 1/255 of GX, including GX's
+coarse depth steps and b_mag rounding. Between vertices F is interpolated
+linearly, so a polygon spanning a long depth range gets somewhat less fog
+mid-span than on the GameCube (up to ~23/255). `GXSetFogRangeAdj` is a
+no-op. Users (`HSD_FogSet`): stages (`Ground_801C1E94`/`Ground_801C1E2C`),
+particles with `DispFog`, the title, intros, cutscenes, the trophy display.
 
 ## Textures (`gx_tex.c`, `nv2a.c`)
 
-- GX textures are converted once and cached, keyed by data pointer, size,
-  format, palette and mip count. A sampled hash revalidates them at most
-  once a frame, because HSD reuses archive memory.
-- For power-of-two sizes the NV2A's own formats are used: CMPR -> DXT1,
-  I4/I8 -> AY8, IA4/IA8 -> A8Y8, RGB565 -> R5G6B5, C4/C8 -> I8 indices with
-  a 256-entry A8R8G8B8 palette (the TLUT decoded; it sits at the start of
-  the texture's pool allocation, `SET_TEXTURE_PALETTE`). Everything else
-  becomes A8R8G8B8. Non-power-of-two images are linear textures of their own
-  size (`LU_IMAGE_AY8`/`A8Y8`/`A8R8G8B8`, rows 64-byte aligned, one row copy
-  each): I4/I8 and IA4/IA8 keep AY8/A8Y8, the rest A8R8G8B8. They are
-  sampled in texel coordinates, so `build_texgen` scales the s and t rows of
-  a unit that binds one by its width and height (the post matrix when the
-  texgen normalizes); GX allows only clamping and no mipmaps at such sizes,
-  which is what linear textures do. Before, they were resampled to the next
-  power of two: a little blur, up to eight times the memory (the Trophy
-  Collection's I4 textures), and ~18 ms a frame for the movie's 640x480
-  Y/U/V planes on the console. Movie frames now cost ~2-3 ms of texture
-  work in xemu (was 17-22) and the movie runs at ~59 fps there (was ~33).
-  Power-of-two sizes that GX wraps are untouched; an EFB copy is still drawn
-  to a power-of-two texture (`copy_dim`). On Pokémon Stadium, C8 as A8R8G8B8 took 2.1 MB of the pool. A
-  texture unit is re-sent whenever a different texture binds, even one made
-  at a freed texture's address with the same format and size, so a P8
-  palette is always loaded again (xemu reads palettes at each draw).
-  `docs/architecture.md` has the table and `tools/xbox/test_tex_convert.py`
-  the checks.
-- Off-screen culling: the display-list cache keeps each list's model-space
-  box (lists without per-vertex matrices); `HSD_DObjDisp` asks
-  `gx_dl_culled` with the DObj's model-view matrix and the current
-  projection and skips DObjs of rigid PObjs that are wholly outside (the
-  box's centre is transformed and the view-aligned box around it tested
-  against the four side planes and the camera plane, so nothing visible is
-  dropped; v34, was eight corners). A list is known after its first draw.
+### Formats
+
+- Power-of-two sizes use the NV2A's formats: CMPR -> DXT1, I4/I8 -> AY8,
+  IA4/IA8 -> A8Y8, RGB565 -> R5G6B5, C4/C8 -> I8 indices with a 256-entry
+  A8R8G8B8 palette (at the start of the texture's pool allocation,
+  `SET_TEXTURE_PALETTE`); everything else A8R8G8B8 (`docs/architecture.md`
+  has the table, `tools/xbox/test_tex_convert.py` the checks).
+- Non-power-of-two images are linear textures of their own size
+  (`LU_IMAGE_AY8`/`A8Y8`/`A8R8G8B8`, rows 64-byte aligned), sampled in
+  texels, so `build_texgen` scales a unit's s and t rows by the size (the
+  post matrix when the texgen normalizes). GX allows only clamping and no
+  mipmaps at such sizes, as linear textures do.
+- CMPR -> DXT1: GX's 8x8 tiles of four DXT1 blocks (TL, TR, BL, BR, small
+  mips padded to a tile) are reordered into 4x4 block rows, both colours
+  byte-swapped, each index byte's 2-bit fields reversed. Blocks with a
+  transparent texel (three-colour mode, index 3) make the texture DXT3: GX
+  decodes that index as the average colour with alpha 0, DXT1 as black.
+- Levels are swizzled into a cached buffer, then copied in order (swizzled
+  stores into write-combined memory defeat write combining).
 - Bump texgens (`GX_TG_BUMPn`, HSD's emboss) are drawn as their source
-  coordinate (no binormal/tangent offset), and the emboss stage pair
-  "prev + h(tc)*ras, prev - h(bump)*ras" is dropped since it cancels; the
-  combiners would clamp the sum at 1 first (the crates' fronts).
-- CMPR textures with a transparent texel (a three-colour block using index
-  3) go to DXT3 instead: GX decodes that index as the average colour with
-  alpha 0, DXT1 as black. The software decoder matches GX now too.
-- CMPR -> DXT1 conversion:
-  - GX stores 8x8 tiles, each holding four DXT1 blocks (TL, TR, BL, BR),
-    and pads small mip levels to a full tile; they are reordered into
-    DXT1's 4x4 block rows;
-  - both colours are byte-swapped;
-  - each index byte has its 2-bit fields reversed (GX puts pixel 0 in bits
-    7-6, DXT1 in bits 1-0).
-- The texture pool is contiguous memory: 8 MB at 480, 6 MB at 720p (it was
-  6 / 5 MB and ran out on the console at the start of a match; init falls
-  back 1 MB at a time to 4 MB, `-DXGX_TEX_POOL_KB=<n>` sets it). When it is
-  full, `gx_tex_make_room` evicts least recently used cache entries until
-  about the needed size is released, then the GPU is waited on once and the
-  allocation retried; each round frees twice as much, since the pool
-  fragments. Textures bound to a texture map are never evicted, and a
-  texture drawn this frame only goes when nothing older is left. EFB copies
-  are evicted too (a stale one would otherwise pin the pool: the attract demo
-  copies to a new address every frame), but among the older entries they
-  count as 60 frames younger, since they can't be rebuilt from memory. The
-  idle release (textures unused for 600 frames) skips EFB copies: Pokémon
-  Stadium's screen binds a copy's destination before that frame's copy,
-  and after ~10 s on other views got an upload of memory the copy never
-  wrote. An idle copy binds only as the size it was copied at and goes at
-  the next scene change, and a destination copied to again counts as 3600
-  frames younger for eviction (`decisions.md`). When
-  nothing is left to evict the texture is dropped for that draw (drawn
-  untextured, usually black) instead of waiting forever. Drops are counted
-  in the `[TEX]` line, the first of each interval gets a `[TEX] drop:` line
-  (size, pool free, largest free block), and `-DXGX_DEBUG_MAGENTA` draws
-  them magenta. The `[NV2A]` line's `pool allocations failed` counts every
-  allocation that didn't fit at first, including the ones that fit after
-  evicting: with a full pool (every long session, v36) it is a few to ~15
-  per 10 s while `drops` stays 0.
-- When only textures drawn this frame are left to evict, the frame's working
-  set is bigger than the pool: an overflow pool is taken from the RAM free
-  at that moment (up to 8 MB, keeping 6 MB free for the game's
-  demand-committed memory; `[TEX] overflow pool N KB`), and given back at
-  the next scene change after its textures are dropped (`[TEX] overflow
-  pool released`). The Trophy Collection, which draws every trophy at once,
-  ran at 1.4 fps on the console re-uploading most textures every frame
-  (650 ms a frame in texture conversion).
-- Pool blocks are kept in address order, the free ones also on a list of
-  their own and the allocated ones in a hash by offset; placement is
-  unchanged (small requests take the lowest free block that fits, big ones
-  the top of the highest). Walking every block per allocation and twice per
-  free took ~5% of the console's CPU on Pokémon Stadium (~2000 blocks).
-- Cache lookups go through a hash of the data pointer. Binding the object a
-  texture map already holds this frame skips the lookup entirely. Textures
-  are revalidated (sampled hash) once a frame, and every fourth frame
-  (staggered by address) once one has passed 120 checks in a row: the
-  hashes were ~4% of the console's CPU in a match, where no texture changed
-  (one rewritten in place shows stale for up to three frames; `[TEX] ...
-  N changed (M palette only)` and one `[TEX] changed:` line per interval
-  report revalidation failures); `GXInvalidateTexAll`, which
-  HSD calls after each of its four shadow copies, no longer forces another
-  round.
-- EFB copies (`GXCopyTex`) are drawn by the GPU (`efb_copy_gpu`): the back
-  buffer, bound as a linear texture, is drawn with one quad into the
-  destination texture as a swizzled render target (pbkit's DMA object 3,
-  which spans all of RAM, as the colour context). The cache registers the
-  texture under the copy's destination pointer. The combiners keep the
-  channels the copy format stores: the shadow maps are `GX_CTF_R4`, sampled
-  as I4, so red goes to every channel. `WAIT_FOR_IDLE` on both sides orders
-  the copy against the draws before and after it; the CPU never waits.
-  Afterwards the back buffer is the target again
-  (`ocx_pb_retarget_back_buffer`, added by `tools/xbox/patch_pbkit.py`: it
-  re-sends the surface state only, where `pb_target_back_buffer` rewrites
-  DMA object 9 through four GPU-to-CPU interrupts) and every state group is
-  re-sent. The copy's texture is the nearest power of two per side, not
-  the next one (`copy_dim`), filtered linearly when that is smaller than
-  the source: Pokémon Stadium's screen copies 640x406, which was 1024x512
-  ARGB8 (2 MB of the pool) and is now 512x512. The target has the back
-  buffer's format: A8R8G8B8 with a Z24S8 surface format, or R5G6B5 with
-  Z16 at 16 bits (720p; the NV2A wants colour and depth surfaces of the
-  same width even with depth off), and the back buffer is bound as
-  `LU_IMAGE_R5G6B5` there. An R5G6B5 copy has no alpha: it samples 1
-  ("Current limits"). Until this, 720p's 16-bit depth kept it on the CPU
-  readback: a 4-CPU match there spent ~60 ms a frame in it (`efb`, v38
-  console, 7.5 fps; 378 copies and ~380 extra GPU waits per 600 frames).
-  The CPU readback (`-DXGX_EFB_GPU_COPY=0`, ARGB8 at every bpp) cost ~8 ms
-  per 256x256 shadow map on the console: the framebuffer is
-  write-combined, so each read is an uncached bus cycle. Reading it
-  through 0x80000000 | physical does not help: contiguous memory already
-  lives there, and the write-combine attribute is on those same page-table
-  entries.
-- Levels are swizzled into a cached buffer and then copied in order:
-  swizzled stores straight into write-combined texture memory defeat write
-  combining.
-- Movie frames (`xbox/src/sdk/thp.c`) are baseline JPEGs without byte
-  stuffing. They are decoded MCU by MCU, with stb_image's IDCT, straight
-  into the game's I8-tiled Y/Cb/Cr planes. The TEV then converts them to
-  RGB.
-- Immediate mode takes position components as a stream when the format is
-  XYZ: HSD's shadow code writes its background quad as 12 floats in six
-  `GXPosition2f32` calls. Taking each call as a vertex left the shadow maps
-  black, and the stages that multiply them in (Mute City's road) went black.
-  With no texture coordinate in the vertex, `GXTexCoord1f32` feeds that
-  stream too: the Classic team card primes its depth plane with a
-  position-only quad written as twelve `GXTexCoord1f32` (`fn_80185408`),
-  and dropping them left the plane unprimed.
-- `GXSetZTexture` (the Classic team cards: each costume's depth is copied,
-  and the tiles are drawn back with that depth so only the fighter shows)
-  is emulated as a mask. The NV2A can't replace a fragment's depth from a
-  texture, and pbkit's depth buffer is compressed, so it can't be sampled
-  either. At a depth-format copy (`GXCopyTex` with a `_GX_TF_ZTF` format)
-  `xgx_ztex_mask` draws the copy rect into the framebuffer's alpha: 0, then
-  1 where the depth test (GREATER) says the stored depth is in front of a
-  quad just before the copy's clear depth. The copy takes that alpha
-  (`XGX_COPY_ALPHA`); a draw with `ztex` set gets one more combiner stage
-  (`APREV * TEXA` of the last stage's texture, `derive_units`) and an alpha
-  test that drops 0 (`emit_fixed`). The mask pass starts with a quad that
-  has depth writes on and `NEVER` as its test: it changes nothing, but
-  xemu only rebinds its depth buffer for a draw that may write depth, and
-  after the EFB colour copy just before (a swizzled target) it had none,
-  so every pixel passed. At 720p (R5G6B5, no alpha) the mask goes into
-  green instead and the copy reads it as `XGX_COPY_GREEN` (which also
-  fills the copy's alpha). That overwrites the rect's colour, so it is only
-  done when the depth copy clears the rect after itself, as the team
-  card's does (`gm_1832.c`: colour copy first, then the depth copy with
-  clear); otherwise the copy stays a colour copy and the draw is unmasked.
-- Known wrong in xemu: Mute City's distant skyline band renders as white
-  speckle.
+  coordinate, and the emboss stage pair that cancels is dropped.
+- Movie frames (`xbox/src/sdk/thp.c`) are decoded with stb_image's IDCT
+  straight into the game's I8-tiled Y/Cb/Cr planes; the TEV makes RGB.
+
+### Cache
+
+- Textures are converted once and cached, keyed by data pointer, size,
+  format, palette and mip count; an EFB copy by its destination pointer
+  alone. Lookups hash the data pointer; binding the object a map already
+  holds this frame skips the lookup (`bind_unchanged`).
+- Revalidation, as for display lists: a sampled hash (whole up to 512
+  bytes and palettes, else 64 words) once a frame per texture drawn; after
+  120 passes (`TEX_STABLE`) every fourth frame with 16 words (`quick_hash`).
+  `[TEX] changed:` reports failures; `GXInvalidateTexAll` forces nothing.
+- Idle release: textures unused for 600 frames (`TEX_IDLE_FRAMES`) are
+  released, EFB copies not (a screen can bind a copy's destination before
+  that frame's copy; an upload would show memory the copy never wrote). A
+  copy idle that long binds only at the size it was copied at (a bind at
+  another size drops it and uploads) and goes at the next scene change
+  (`gx_tex_scene_leave`).
+
+### Pool and eviction
+
+- The texture pool is contiguous memory: 8 MB at 480, 6 MB at 720p (init
+  falls back 1 MB at a time to 4 MB; `-DXGX_TEX_POOL_KB=<n>` sets it).
+- When it is full, `gx_tex_make_room` evicts least recently used entries
+  until about the needed size is freed, waits for the GPU once and retries,
+  freeing twice as much each round (the pool fragments). Textures bound to
+  a map are never evicted; one drawn this frame only when nothing older is
+  left. EFB copies can't be rebuilt, so among older entries they rank as
+  younger (`lru_victim`): by 60 frames (`EFB_GRACE`), or 3600
+  (`EFB_REPEAT_GRACE`) for a destination copied to again (a screen, a
+  shadow map), so Pokémon Stadium's screen copy outlasts other views while
+  the attract demo's one-off copies still go first (`decisions.md`).
+- When only textures drawn this frame are left (the Trophy Collection draws
+  every trophy at once), an overflow pool is taken from free RAM (up to
+  8 MB, keeping 6 MB for the game's demand-committed memory) and given back
+  at the next scene change (`[TEX] overflow pool ...`).
+- When nothing is left to evict, the texture is dropped for that draw
+  (untextured, usually black; magenta with `-DXGX_DEBUG_MAGENTA`), logged as
+  `[TEX] drop:`. `[NV2A]`'s `pool allocations failed` also counts
+  allocations that fit after evicting, so it is nonzero in long sessions.
+
+### EFB copies
+
+`GXCopyTex` is drawn by the GPU (`efb_copy_gpu`): the back buffer, bound as
+a linear texture, is drawn with one quad into the destination texture as a
+swizzled render target (pbkit's whole-RAM DMA object 3 as the colour
+context). The cache registers the texture under the destination pointer.
+These are the shadow-map notes too: HSD's shadow maps are EFB copies.
+
+- **Channels**: the combiners keep the channels the copy format stores
+  (shadow maps are `GX_CTF_R4`, sampled as I4, so red goes everywhere).
+  Alpha: see "Current limits".
+- **Size**: the nearest power of two per side, not the next (`copy_dim`),
+  filtered linearly when smaller than the source (Pokémon Stadium's 640x406
+  screen copy is 512x512).
+- **Format**: the back buffer's (A8R8G8B8, or R5G6B5 at 16 bits). The
+  depth surface points at the target through DMA object 3, not pbkit's zeta
+  object (10, the compressed screen depth); depth is neither tested nor
+  written.
+- **Exact rect**: a target pixel's centre samples the source pixel under it
+  (`efb_copy_gpu`'s corners, `pix_x`/`pix_y` in `read_rect_cpu`). The window
+  clip's maximum is inclusive: the game's scissor sends `x1 - 1`, `y1 - 1`,
+  and the copy clips to `pw - 1`, `ph - 1`. Off by one, shadow maps read
+  black at their last row and column (black bands on the floor near
+  fighters).
+- **Ordering**: `WAIT_FOR_IDLE` on both sides orders the copy against the
+  draws around it; the CPU never waits. Then the back buffer is the target
+  again (`ocx_pb_retarget_back_buffer`, from `patch_pbkit.py`: surface state
+  only, unlike `pb_target_back_buffer`'s four GPU-to-CPU interrupts) and
+  every state group is re-sent.
+- **Surface switches sent twice** (`XGX_COPY_FIX`, default 5): on the
+  console a colour-side surface write right after a context-DMA switch
+  occasionally doesn't take (stall: `LIMIT_ZETA` on the next clear or
+  `LIMIT_COLOR` on the quad's `END`). Bit 1 re-sends the retarget's pitch
+  after the format (`ocx_pb_retarget_repitch`); bit 4 re-sends the copy's
+  target and the retarget's DMA objects, pitch and offsets after a wait for
+  idle; bit 2 (one `CLEAR_SURFACE`) is untried. `-DXGX_COPY_STRESS=N`
+  repeats each clearing copy N times to provoke faults (`env MX_COPY_FIX=`/
+  `MX_COPY_STRESS=`, `scenarios/stall`; results in `roadmap.md`).
+  `[NV2A] GPU stalled` dumps PGRAPH state and the last eight copies.
+- `-DXGX_EFB_GPU_COPY=0` reads back on the CPU instead (ARGB8 at every bpp;
+  ~8 ms per 256x256 map, the framebuffer being write-combined).
+
+### Z textures
+
+`GXSetZTexture` (the Classic team cards: tiles drawn back with each
+costume's copied depth so only the fighter shows) is emulated as a mask,
+since the NV2A can't take a fragment's depth from a texture or sample the
+compressed depth buffer. At a depth-format copy (`_GX_TF_ZTF`)
+`xgx_ztex_mask` writes the rect's alpha: 1 where the stored depth is in
+front of the copy's clear depth (GREATER), else 0. The copy takes that
+alpha (`XGX_COPY_ALPHA`); a draw with `ztex` set gets one more combiner
+stage (`APREV * TEXA`, `derive_units`) and an alpha test that drops 0
+(`emit_fixed`). The pass starts with a no-op quad (depth writes on, test
+`NEVER`) so xemu rebinds its depth buffer. At 16 bits the mask goes into
+green (`XGX_COPY_GREEN`), which overwrites the rect's colour, so it is done
+only when the depth copy clears the rect after itself (`gm_1832.c`);
+otherwise the draw is unmasked.
+
+## Build switches
+
+Renderer switches (all switches: `testing.md`):
+
+| switch | effect |
+|---|---|
+| `-DXGX_OVERLAP=0` | present waits for the GPU before the flip |
+| `-DXGX_PB_KICK=<words>` | pushbuffer kick size (default 8192) |
+| `-DXGX_VB_CACHE_BREAK=0` | no vertex cache break at each batch start |
+| `-DXGX_VBUF_FREE_NOW=0` | evicted display-list buffers go through the deferred free |
+| `-DXGX_COPY_FIX=<bits>`, `-DXGX_COPY_STRESS=N` | EFB copy surface re-sends, copy stress |
+| `-DXGX_EFB_GPU_COPY=0` | EFB copies by CPU readback |
+| `-DXGX_TILE=<bits>`, `-DOCX_Z16_TILE_FLAGS` | tile regions |
+| `-DXGX_Z16_DEPTH_RATIO=<n>` | Z16 depth remap; 0 off |
+| `-DXGX_DEPTH_CULL=1` | cull depth outside the range instead of clamping |
+| `-DXGX_NO_INDIRECT=1` | indirect stages drawn direct |
+| `-DXGX_TEX_POOL_KB=<n>` | texture pool size |
+| `-DXGX_DEBUG_MAGENTA` | dropped textures drawn magenta |
+| `-DXGX_CHECK_VERTS` | log display lists with non-finite or huge positions |
+| `-DXGX_DEBUG_VPTRACE` | vertex-program select traces for `vp_policy.py` |
+| `-DXGX_CENSUS=1` | draw census (Probes) |
+
+Known wrong in xemu: Mute City's distant skyline band renders as white
+speckle.

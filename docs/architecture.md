@@ -58,22 +58,22 @@ here than on x86-64:
 | NV2A: 720p R5G6B5 x3 + Z16 | 7.4 MB |
 | NV2A: texture pool | 6 MB at 720p, 8 MB at 480 |
 | pushbuffer (1 MB) + vertex ring (1.5 MB) | 2.5 MB |
-| NV2A: display-list vertex cache | 4 MB (down to 2 MB if short; 720p had 3 MB) |
+| NV2A: display-list vertex cache | 4 MB (down to 2 MB if short) |
+| NV2A: texture overflow pool | 2-8 MB from free RAM when one frame's textures don't fit (the Trophy Collection), keeping 6 MB free; given back at the next scene |
 
 MEM1 and ARAM are reserved at fixed VAs and committed 64 KB at a time
 (`xhw_reserve_lazy`). The first touch of a chunk faults, and the SEH
 record every game thread runs under (`xhw_crash_guard`) commits it and
 resumes. Memory the kernel writes into (disc image reads) is committed
 first with `xhw_commit`, since a fault inside the file system never
-reaches that handler. So only the parts of MEM1 and ARAM the game really
-uses cost Xbox RAM. `boot.log`'s `[MEM]` lines and `crash.log` report how
-much is committed. Melee can touch more than the Xbox has (24 MB of MEM1
-and 16 MB of ARAM, with ~35 MB free after the NV2A is up), so ARAM pages
-that hold bytes straight from the disc image are left on the disc: their
-chunks are decommitted and read back from the image when needed (`ar.c`,
-docs/decisions.md). Measured on the console (v36, 480i): ~34 MB free once
-the NV2A is up, ~24 MB of MEM1+ARAM committed in a match (another ~11 MB of
-ARAM left on the disc), ~7-9 MB free, steady from match to match.
+reaches that handler. So only what the game touches costs Xbox RAM;
+`boot.log`'s `[MEM]` lines and `crash.log` report how much is committed.
+Melee can touch more than the Xbox has (40 MB of MEM1 and ARAM against
+~34 MB free once the NV2A is up), so ARAM chunks that hold bytes straight
+from the disc image are decommitted and read back from the image when
+needed (`ar.c`, docs/decisions.md). On the console a match commits ~24 MB
+of MEM1+ARAM (another ~11 MB of ARAM left on the disc), leaving ~7-9 MB
+free, steady from match to match.
 
 Textures are stored in formats the NV2A samples as is, whenever the size
 is a power of two:
@@ -109,10 +109,11 @@ mapped to GameCube pads (`PADStatus`):
 | A / B | A / X |
 | X / Y | B / Y |
 | Z | White (Black also) |
-| L / R analog + click | left / right trigger (click past 90%) |
+| L / R analog + click | left / right trigger (click past `trigger_click`, 230/255 by default) |
 | control stick | left stick |
 | C-stick | right stick |
 | Start | Start |
 | D-pad | D-pad |
 
 Remappable per port in `settings.ini`. Rumble maps to the pad's motors.
+Details: `docs/platform.md` (PAD, `settings.ini`).

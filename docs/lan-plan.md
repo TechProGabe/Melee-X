@@ -292,13 +292,13 @@ memory in the match within 64 KB of the base (or the difference explained).
   of live heap was the guess; phase 0A's `[NETM]` in xemu measured about
   6.7 MB (2026-10-04). So ~7.5 MB a snapshot, 8 slots (`SNAPS`,
   `net_internal.h:125`): ~60 MB against 6.8-9 MB free in a match
-  (`fps-plan.md:397`, `architecture.md:74-76`); D2 (no rollback) holds by
+  (`fps-plan.md` "Lessons", `architecture.md` memory budget); D2 (no rollback) holds by
   a wider margin than planned.
 - Copying 3-4 MB on the console: 10-25 ms (**unverified** estimate from
   150-300 MB/s for uncached copies; phase 0A times it). A tick period is
   16.7 ms.
 - A tick costs 1.84 ms on Final Destination 1v1 and about 3.3 ms on
-  Fountain with four fighters (`fps-plan.md:339-349`: 4.9 ms a frame at
+  Fountain with four fighters (`fps-plan.md` "Console round 6": 4.9 ms a frame at
   ~1.5 ticks). Seven re-run ticks: 13-23 ms, on a machine that already
   renders busy stages at 40 fps.
 
@@ -306,9 +306,9 @@ memory in the match within 64 KB of the base (or the difference explained).
 
 - On the console, runs of one build part at tick 4440-4500 on Fountain
   4-CPU seed 1 into the same three outcomes, the seed first
-  (`roadmap.md:119-131`, `fps-plan.md:263-267`). xemu under `-icount`
+  (`roadmap.md` item 10, `fps-plan.md` "Console round 3"). xemu under `-icount`
   was thought never to part; a real-time xemu run parted once
-  (`fps-plan.md:698-702`). **Phase 0A (2026-10-04): `det` twice under
+  (`fps-plan.md` "Lessons"). **Phase 0A (2026-10-04): `det` twice under
   `-icount` parts at tick 4447** (first `[SIMH]` difference at 4500), so
   item 10 reproduces in xemu. One run has 8 more HUD damage-shake draws
   and no RNG difference before them: the render-written off-screen flag
@@ -382,7 +382,7 @@ memory in the match within 64 KB of the base (or the difference explained).
   ordinary network switch (DHCP from the router, D3's first path); a
   crossover cable (AutoIP) is tested later, in S4.
 - B therefore always draws on the 640x480x32 path, interlaced
-  (`xhw_video.c:60-66`); A at 720p draws R5G6B5 + Z16 (`architecture.md:96`).
+  (`xhw_video.c:60-66`); A at 720p draws R5G6B5 + Z16 (`architecture.md` "Video").
   Every two-console match pairs two render paths, so anything the render
   writes that a tick reads (F6 item 3) shows as a desync between A and B
   even when two runs on one console agree. Phase 2's proof therefore

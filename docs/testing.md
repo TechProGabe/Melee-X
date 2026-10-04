@@ -11,391 +11,126 @@ tools/xbox/test_tex_convert.py   # native texture formats vs the GX decoder
 tools/xbox/test_fog.py           # GX fog on the NV2A vs GX's fog factor (libogc registers, Dolphin's formula)
 tools/xbox/test_rc.py            # TEV -> combiners: no-swizzle programs unchanged, swap tables vs a combiner model [n]
 tools/xbox/test_card_endian.py   # memory-card files: field tables vs the game's structs, big-endian <-> native
-tools/xbox/test_pool.py          # nv2a.c's pool allocator: random allocations and frees, block-list invariants
 tools/xbox/test_anim_mtx.py      # HSD keyframe interpreter, HSD_MtxSRT, envelope blend vs the code before the rewrites [--full]
-tools/xbox/test_audio_mix.py     # src/pc/audio.c's voice mixer (block decoder, SSE1), output clamp and reverb vs the code before
-tools/xbox/test_mplib.py         # stage collision's line rejects (mplib.c) vs the line tests before them, random stages [rounds]
 tools/xbox/test_pobj_mtx.py      # PObjSetupMtx (envelope memo, prefetches), SSE HSD_MtxInverseTranspose vs upstream
 tools/xbox/test_tex_cache.py     # gx_tex.c's texture cache and binds vs the file before the entry split: the same trace
 tools/xbox/test_dl_cull.py       # gx_dl_culled's box test with clip planes kept per projection vs planes per box
+tools/xbox/test_audio_mix.py     # src/pc/audio.c's voice mixer (block decoder, SSE1), output clamp and reverb vs the code before
+tools/xbox/test_mplib.py         # stage collision's line rejects (mplib.c) vs the line tests before them, random stages [rounds]
+tools/xbox/test_pool.py          # nv2a.c's pool allocator: random allocations and frees, block-list invariants (not in CI)
 ```
 
 CI (`.github/workflows/build.yml`, started by hand; it also builds the
-releases) runs them all after building `default.xbe`, and uploads the XBE
-with its link map.
+releases) runs all but `test_pool.py` after building `default.xbe`, and
+uploads the XBE with its link map.
+
+The reference tests build the current code on the host the way the Xbox
+builds it (`TARGET_XBOX`, SSE, `-ffp-contract=off`) next to a verbatim copy
+of the code before a rewrite in `tests/xbox/*_ref.c`, run both on random and
+adversarial inputs (denormals, signed zeros, infinities, NaNs), and require
+the same bits; a NaN only has to stay a NaN. A new rewrite of guarded code
+needs its reference added first.
+
+| test | reference | what is compared |
+|---|---|---|
+| `test_anim_mtx.py` | `anim_mtx_ref.c` (`fobj.c`, `mtx.c` before the rewrites, `docs/decisions.md` "Edits to imported code") | `pc_sincosf` vs `pc_sinf`/`pc_cosf` (16M floats, `--full` all 2^32), `parseFloat`, the spline, 20000 random keyframe streams frame by frame, `HSD_MtxSRT` and the fused envelope blend |
+| `test_pobj_mtx.py` | `pobj_mtx_ref.c` (upstream setup, scalar `HSD_MtxInverseTranspose`) | the inverse transpose on 4M matrices, then 300000 random DObjs: every GX matrix load, `GXSetCurrentMtx`, blend count and joint update in order |
+| `test_tex_cache.py` | `gx_tex_ref.c` (before the hot-line split and the bind-path cuts) | 4000 seeded frames of HSD-shaped binds, all eleven formats, EFB copies, collisions, pool overflow: the full back-end trace must match |
+| `test_dl_cull.py` | `dl_cull_ref.c` (planes made per box) | 12M boxes against GX-shaped and random projections changed every few boxes: every answer and the planes' bits |
+| `test_audio_mix.py` | `audio_mix_ref.c` (per-sample `next_sample()`/`mix_voice()`) | 200000 random voices (all formats, ARAM wrap, loops, ratios, ramps), the output clamp and the aux reverb; built with SSE1 and as plain C (`PC_AUDIO_SCALAR`) |
+| `test_mplib.py` | `mplib_ref.c` (line loops before the rejects; cut out of `mplib.c` by name) | the eight line loops on a Fountain-like stage, random polylines and adversarial lines: return, outputs, flags, callbacks; prints the share of line tests skipped |
+| `test_card_endian.py` | `offsetof`-built saves | field tables tile `GmSaveData` and `NameTagDataBank`, round trip is the identity, little-endian (old Melee-X) files left alone; a table that doesn't add up to `sizeof` also stops the Xbox build |
+
+`test_audio_mix.py` and `test_mplib.py` take `CC`/`CFLAGS` to check the
+Xbox's code generation on Windows (MSYS2), e.g. `CC="clang
+--target=i686-w64-mingw32 --sysroot=C:/msys64/mingw32" CFLAGS="-march=pentium3
+-msse -mfpmath=sse"`, or `CC=i686-w64-mingw32-gcc` (x87 doubles, as on the Xbox).
 
 `tools/xbox/vp_policy.py [boot.log]` replays vertex-program selects (a
-`-DXGX_DEBUG_VPTRACE` log, or a synthetic 4-CPU Fountain of Dreams frame
-without one) through residency policies and prints loads and instructions
-per frame for the programs before and after the optimizer; `--keys` lists a
-frame's programs and their sizes, `--diffuse`/`--spec`/`--point` vary the
-synthetic stage's lights.
-
-`test_card_endian.py` compiles `xbox/src/sdk/card_endian.c` with the
-game's `<melee/gm/types.h>` on the host (LP64; the size asserts of unrelated
-disc structs that hold pointers are switched off for it). It checks that
-the field tables tile `GmSaveData` and `NameTagDataBank` byte for byte,
-that the `FighterData.x7C` bit-field widths match the declaration, that
-converting to the card and back is the identity, that a big-endian save
-and name-tag bank built by hand from `offsetof` read back with the right
-values and are written back byte for byte, and that a little-endian file
-(an older Melee-X save) is recognised and left alone. A table that doesn't
-add up to `sizeof` its struct also stops the Xbox build.
-
-`test_anim_mtx.py` guards the bit-identical rewrites of HSD's animation and
-matrix code (`docs/decisions.md`, "Edits to imported code"). It builds the
-current `fobj.c` and `mtx.c` on the host as the Xbox builds them
-(`TARGET_XBOX`, SSE, `-ffp-contract=off`) next to `tests/xbox/anim_mtx_ref.c`,
-a verbatim copy of the code before the rewrites, and compares:
-`pc_sincosf` with `pc_sinf`/`pc_cosf` (16M floats spread over all 2^32 and
-every branch boundary; `--full` takes all 2^32, a few minutes), `parseFloat`
-for every frac byte and 16-bit pattern, the spline with `1/fterm` in float
-for every u16, 20000 random keyframe streams (every opcode and frac type,
-pack and wait encodings, truncated streams and garbage) run frame by frame
-at random rates with stops and rewinds (every update callback and the FObj
-state after each frame), and `HSD_MtxSRT` and the fused envelope blend on
-random inputs with denormals, negative zero, infinities and NaNs. Floats
-must have the same bits; a NaN only has to stay a NaN (which NaN operand's
-payload x86 keeps depends on the operand order the compiler picks). A new
-rewrite in this code needs its reference added there first.
-
-`test_pobj_mtx.py` does the same for the matrix setup of HSD's PObjs. It
-builds the current `pobj.c` and `mtx.c` with stubs for GX, the perf
-counters and the joint calls, next to `tests/xbox/pobj_mtx_ref.c`, the
-upstream setup functions (no envelope memo, no fused blend) and
-`HSD_MtxInverseTranspose` before its SSE rewrite. It compares the inverse
-transpose on 4M random matrices (singular and near-singular ones, in place
-and not), then draws 300000 random DObjs the way `HSD_DObjDisp` does
-(memo reset, then rigid, shared-vertex, shape-anim and envelope PObjs whose
-envelopes repeat as separate objects, with and without lighting,
-reflection and highlight texgens, a model node matrix, dirty joints) through
-both: every GX matrix load (slot and the 12 words), `GXSetCurrentMtx`,
-envelope-blend count and joint update in order, the matrix marks, the
-joints and the matrix-load count must agree.
-
-`test_tex_cache.py` guards the texture cache of the GX front end
-(`xbox/src/sdk/gx/gx_tex.c`) against `tests/xbox/gx_tex_ref.c`, the file
-before its entries were split into a hot 32-byte line and the hashes, and
-before the bind path lost its second `bind_unchanged()`, its `memcmp`
-calls and the eager `GXGetTexBufferSize`. It builds `tests/xbox/test_tex_cache.c`
-twice, around each file, with a back-end stub whose texture pool fills up
-(and grows once, as the overflow pool does). Both drive the same seeded
-4000 frames: HSD-shaped materials (one to three maps, rebound for each
-PObj, sometimes through a texture object that differs in one sampler
-setting), all eleven formats with mipmaps and palettes, textures that
-share data under another key or collide in a bucket, EFB copies (refilled
-in place, dropped, bound as textures), texel and palette changes,
-invalid objects and maps, scene changes, a burst of small textures past the
-2048 entries, a texture larger than the pool, and quiet stretches where
-textures pass the 120 revalidations. Everything the rest of the port sees
-is folded into a trace (back-end creates with their texels, destroys,
-flushes, log lines, the eight maps and the dirty bits after every call, the
-cache's entries, chains, bind memo and counters at every frame end), and
-the two runs must print the same checkpoints.
-
-`test_dl_cull.py` checks `xbox/src/sdk/gx/gx_cull.h`, `gx_dl_culled`'s box
-test with the five clip planes made once per projection (`gx_proj_gen`,
-counted by `GXInit` and `GXSetProjection`, the only writers of
-`g_xgx.proj`), against `tests/xbox/dl_cull_ref.c`, the planes made for
-every box, on the SDK's float flags: 12M boxes against perspective,
-off-centre and orthographic projections shaped as `GXSetProjection`'s and
-random ones, changed every few boxes (sometimes by one ulp, a sign or a
-zero's sign), joint-like and random model-view matrices, then zeros,
-denormals, infinities and NaNs anywhere. Every answer must agree and the
-planes have the same bits (a NaN only has to stay a NaN).
-
-`test_audio_mix.py` does the same for the software AX mixer: it builds
-`src/pc/audio.c` (with the Xbox's SDL3 shim and stubs) next to
-`tests/xbox/audio_mix_ref.c`, the per-sample `next_sample()` and
-`mix_voice()` from before the block decoder, and mixes 200000 random voices
-for up to six frames each through both: ADPCM, PCM16, PCM8 and unknown
-formats, addresses across the end of ARAM, end and loop addresses on header
-nibbles and above the end (HPS), extreme coefficients and histories, ratios
-0, 1.0, up to 4.0 and unclamped ones that wrap `frac`, volume ramps through
-0 and 32767, and every dry/aux send combination. The dry mix, both aux
-busses and the whole `Voice` must have the same bits. Then `render_frame`'s
-output clamp against the scalar loop, NaNs and infinities included, and the
-aux reverb against its per-sample network (random settings, lines and
-positions; the output, the lines and the filter state). It is
-built twice, with the SSE1 loops and as plain C (`PC_AUDIO_SCALAR`); `CC`
-may carry flags and `CFLAGS` adds more, so the Xbox's code generation
-(i686, scalar SSE floats, no SSE2) can be checked on Windows with MSYS2:
-`CC="clang --target=i686-w64-mingw32 --sysroot=C:/msys64/mingw32"
-CFLAGS="-march=pentium3 -msse -mfpmath=sse"`.
-
-`test_mplib.py` guards the per-line rejects in stage collision
-(`src/melee/mp/mplib.c`). The file needs the rest of the game, so the
-script cuts the functions it tests out of it by name (the line loops, the
-intersection tests, `mpLib_8004ED5C`, `mpRemap2d`, the bounding checks and
-the `mpLineBox` helpers) and builds them next to `tests/xbox/mplib_ref.c`,
-the same functions before the rejects, on shared stage globals. Each query
-runs the eight line loops (`mpCheckFloor`, `mpCheckLeftWall`,
-`mpCheckRightWall`, their `Remap` variants, `mpLib_800511A4_RightWall`,
-`mpLib_800515A0_LeftWall`) through both, with outputs that are written or
-not, and compares the return, the outputs, the joints' flags,
-`didCheckBounding` and `mpCheckFloor`'s callback calls bit for bit. The
-stages are a Fountain of Dreams-like outline with moving platforms (and
-fighter-shaped queries: floor probes, ECB sweeps, ECB edges), random
-polylines with scrambled flags, links and ranges, chains of short floor
-lines probed across their ends (where `mpLib_8004ED5C` lengthens most), and
-adversarial ones (null, near-vertical and near-horizontal lines,
-coordinates at the guard, huge ones, infinities, NaNs, queries on the
-margins +- a few ulps). It prints the share of line tests the rejects skip
-on the Fountain-like stage. `CC=i686-w64-mingw32-gcc CFLAGS="-march=pentium3
--mfpmath=sse"` runs it with x87 doubles, as on the Xbox.
+`-DXGX_DEBUG_VPTRACE` log, or a synthetic 4-CPU Fountain frame) through
+residency policies; `--keys`, `--diffuse`/`--spec`/`--point` vary it.
 
 ## Running it
 
-You need your own Melee NTSC-U 1.02 image (`GALE01`, revision 2) as
-`.iso`, `.gcm` or `.ciso`. No game data belongs in this repository: the
-`.gitignore` blocks images, DOLs, BIOS files and saves.
-
-**On an Xbox:** copy `default.xbe`, `default.tbn` (the dashboard icon, for
-XBMC-style dashboards; the XBE also carries it as `$$XTIMAGE`) and the image
-into one folder, for example `E:\Games\Melee-X\`, and launch the XBE from
-your dashboard. Dashboards that cache icons by title ID (UnleashX) read
-`E:\UDATA\4d580001\TitleImage.xbx` and `TitleMeta.xbx`; the build writes
-both next to `default.xbe` to copy there.
-
-**In xemu:** make an XISO of a folder holding `default.xbe` and the image,
-using `extract-xiso -c <folder>`, and load it as the DVD. The image is
-then found on D:. A retail-compatible BIOS, MCPX ROM and HDD image are
-needed, as for any xemu title. xemu is useful for crashes and rendering, but
-timing, audio (it uses the APU fallback there) and memory headroom differ
-from hardware, so check fixes on a console too.
-
-The scripts do all of this for you. On macOS they use Docker (colima works)
-and xemu at `/Applications/Xemu.app`, with its BIOS, MCPX and HDD already
-set up in xemu's settings; on Windows, build with `tools/xbox/msys/build.sh`
-and point `MX_XEMU`/`MX_XISO` at xemu and extract-xiso
-(`docs/toolchain.md`):
+You need your own Melee NTSC-U 1.02 image (`GALE01`, revision 2) as `.iso`,
+`.gcm` or `.ciso`; no game data belongs in this repository. On an Xbox it
+sits next to `default.xbe` and `default.tbn` (the dashboard icon);
+`TitleImage.xbx`/`TitleMeta.xbx` go to `E:\UDATA\4d580001\` (UnleashX's icon
+cache). In xemu it is packed into an XISO with the XBE and found on D:.
+xemu needs your own BIOS, MCPX ROM and HDD image (64 MB); it is good for
+crashes and rendering, but timing, audio (the APU fallback) and memory
+headroom differ from hardware: check fixes on a console.
 
 ```sh
-docker build -t melee-x:sdk tools/xbox/docker   # once
+docker build -t melee-x:sdk tools/xbox/docker   # once (macOS; Windows: tools/xbox/msys/build.sh, docs/toolchain.md)
 tools/xbox/docker/build.sh                      # -> build-xbox/xbe/default.xbe
 MX_ISO=~/roms/melee.iso tools/xbox/xemu_run.sh 120 'melee_main'
 ```
 
-`xemu_run.sh [seconds] [stop-regex]` packs the XISO, boots it, logs COM1 to
-`~/xemu/mx-run/serial.log`, and stops after that many seconds or when the
-regex matches. See the script header for the `MX_*` variables:
+`tools/xbox/xemu_run.sh [seconds] [stop-regex]` packs the XISO, boots it,
+logs COM1 to `$MX_RUN/serial.log`, and stops after that many seconds, when
+the regex matches, or once the scenario's screenshots are out. Variables
+(the script header has them too):
 
-- `MX_STAGE_EXTRA` adds files to the disc, for example `autopad.txt`.
-- `MX_GUI=1` leaves xemu running.
-- `MX_XEMU_ARGS="-monitor unix:/tmp/mxmon.sock,server,nowait"` adds a QEMU
-  monitor. `tools/xbox/xemu_prof.py` then samples where the CPU spends its
-  time.
-- `XBOX_CFLAGS` (for example `-DXHW_AUTOPAD=1`) passes through to the
-  platform build.
+| variable | meaning |
+|---|---|
+| `MX_ISO` | your image, packed next to `default.xbe`; `none` omits it (the missing-disc screen) |
+| `MX_XBE` | the XBE (default `build-xbox/xbe/default.xbe`) |
+| `MX_RUN` | work dir for the XISO and logs (default `~/xemu/mx-run`) |
+| `MX_STAGE_EXTRA` | a folder whose contents are also packed, e.g. `tools/xbox/scenarios/gl` (its `autopad.txt`) |
+| `MX_SHOTS` | stop once this many `[FBDUMP]` screenshots are complete; default the number of `SHOT` lines in `$MX_STAGE_EXTRA/autopad.txt`, `0` runs to the regex or timeout (e.g. for `[PERF]` after the last shot) |
+| `MX_GUI=1` | leave xemu running at the end |
+| `MX_XEMU_ARGS` | extra xemu arguments: `-config_path <xemu.toml>`, a QEMU monitor (`-monitor unix:/tmp/mxmon.sock,server,nowait`, for `tools/xbox/xemu_prof.py` sampling), `-icount` |
+| `MX_XEMU`, `MX_XISO` | xemu binary (default macOS's `/Applications/Xemu.app`) and a native extract-xiso (Windows without Docker) |
 
-Screenshots come out of the serial log as `[FBDUMP]` lines. Decode them
-with `tools/xbox/fbdump_to_png.py serial.log shot`. A run that should end on a screenshot needs
-`'FBDUMP\] END.?$'` as its stop regex (`.?$`: a base64 line can start with END); `SHOT at frame` is logged before the
-dump is written.
-`xemu_run.sh` also stops by itself once the scenario's screenshots are all
-out (one per `SHOT` line in `$MX_STAGE_EXTRA/autopad.txt`, or `MX_SHOTS=N`),
-so a run doesn't idle on the results screen until the timeout; `MX_SHOTS=0`
-keeps it running (e.g. for `[PERF]` lines after the last shot).
+One xemu at a time (Windows: `taskkill //F //IM xemu.exe`). Screenshots come
+out of the serial log as `[FBDUMP]` lines: `tools/xbox/fbdump_to_png.py
+serial.log shot`. To stop on one by regex use `'FBDUMP\] END.?$'` (a base64
+line can start with END).
+
+If the log stops dead, heartbeat included, the guest has bugchecked: the
+monitor's `info registers` shows `HLT=1` with IF clear and the bugcheck code
+on the stack (`0x7F, 8` is a double fault; its EIP and ESP are in the TSS
+the current TSS's link field names).
 
 ### Comparing builds by screenshot
 
-A `SHOT` line names a frame, and a frame shows whichever tick the game had
-reached by then: a faster build has run fewer ticks per frame, so the same
-frame number is a different moment and the shots differ though both builds
-draw the same thing. With `env MX_LOCKSTEP=1` in the script the game's
-clock (`OSGetTime`) moves 1/60 s at each frame boundary and, while the
-frame loop waits for a pad sample, 1 ms at a time instead of sleeping; it
-stands still otherwise, and the frame-rate counter is hidden. Every frame is
-then exactly one tick (`[PERF]`
-"1.0 ticks per render"), frame N shows tick N in any build, and two
-builds' shots must match byte for byte (`cmp` on the PNGs). Use it to gate
-a change that shouldn't alter the picture; for timing, run without it.
-
-If the log stops dead, heartbeat included, the guest has bugchecked. In the
-monitor, `info registers` then shows `HLT=1` with IF clear, and the
-bugcheck code is on the stack (`0x7F, 8` is a double fault). A double fault
-arrives through a task gate, so the faulting EIP and ESP are in the TSS
-that the current TSS's link field names (read the GDT to find it).
-
-## The console loop
-
-What each hardware round looks like (one folder per build in `MX_HW`,
-default `~/xemu/hw/`; `tools/xbox/console.py` does it on any OS, with the
-console's address in `MX_FTP_HOST`):
-
-1. Build. A test round uses `XBOX_CFLAGS=-DXHW_PROF=1` (profiler, BACK
-   screenshots, counter on); a release candidate is a plain build.
-2. `console.py stage vNN` copies `default.xbe`, `default.tbn`,
-   `TitleImage.xbx` and `TitleMeta.xbx` into `stage-vNN/`, the map to
-   `melee_x.vNN.map`, and checks the map against the build's objects
-   (`static_syms.py`: any function the map lacks goes to
-   `melee_x.vNN.map.statics`; none so far).
-3. `console.py deploy vNN` deletes the console's old logs and shots, then
-   uploads (the XBE and icon to `/F/Applications/Melee-X/`, the dashboard
-   files to `/E/UDATA/4d580001/`) and re-downloads each file to compare.
-4. The user plays; BACK takes a screenshot of anything wrong (test builds, or
-   a release with the settings menu's "BACK screenshots" on). `boot.log` of the
-   boot before is kept as `boot_prev.log` (a restart no longer loses it).
-5. `console.py pull vNN` fetches `boot*.log`, `trace.log`, `crash.log`,
-   `hang.log` and the `shotNN.bmp` files into `logsNN/`; symbolize with that
-   build's map. Pull before the game is launched again: each boot deletes
-   the previous boot's logs.
-
-Rendering that differs between xemu and the console has come from state
-xemu doesn't model (the w-buffer bit, PFIFO timing): trust the screenshot.
-
-Console-only faults (xemu doesn't raise NV2A limit faults) are hunted with
-an autopad test build (`-DXHW_AUTOPAD=1`) and a script uploaded over FTP
-as `/F/Applications/Melee-X/autopad.txt` (the game's `D:\autopad.txt`):
-it boots straight into the scripted match, and its `env` lines pick the
-candidate fix and a stress factor (`MX_COPY_FIX`, `MX_COPY_STRESS`,
-`scenarios/stall`), so one deploy covers an A/B and only the script is
-swapped between runs. A run without the fix has to fail reliably before
-a fixed run counts. Delete `autopad.txt` from the console afterwards (a
-release build ignores it).
-
-### Console rounds (many A/B runs, one launch)
-
-`tools/xbox/console_round.py N stage|upload|watch|report|shots|clean`
-(`docs/fps-plan.md` rounds 2-6): each run of round N is an autopad build in
-a folder of its own (`F:\Applications\Melee-X-rN?`, the disc image taken
-from `Melee-X`) with a script from `CHAINS[N]` (scenario plus `env`
-switches). A run ends by launching the next folder (`env MX_NEXT_XBE`, 12 s
-after the match or at `NEXT`), keeping its log as `boot_<folder>.log` and
-its shots as `shot_<folder>_NN.bmp`; the last one returns to the dashboard.
-`watch` waits for the dashboard's FTP and pulls everything into
-`$MX_HW/logs-rN`, `report` tabulates fps, buckets and GPU waits per run,
-`shots` groups byte-identical shots (lockstep runs, `MX_LOCKSTEP=1` and
-`TSHOT`), `clean` takes the folders off. The first run of a chain runs
-~4% slow: make it a warm-up.
-
-## Measuring on the console
-
-Every build logs a `[PERF]` line every 5 s (`xhw_perf.c`): fps and the
-milliseconds per frame spent in the game's simulation (`sim`), its render
-pass (`render`: HSD walking the scene and setting GX state), display-list
-decoding, back-end draws, texture conversion, EFB readback, GPU waits and
-vsync pacing, plus simulation ticks per render, the audio mixer's share of
-the CPU and the draws and vertices per frame.
-
-Melee runs one simulation tick per pad poll queued since the last frame (up
-to 5, `gm_801A4D34`), then renders once. A slow frame makes the next one run
-more ticks, so `sim` per frame is `ticks per render` times the cost of one
-tick, and cutting a tick's cost pays twice: less time per tick, and fewer
-ticks per render as the frame rate rises.
-
-Built with `XBOX_CFLAGS=-DXHW_PROF=1`, a sampling profiler (`xhw_prof.c`)
-also records where the game thread is, about 1000 times a second, and logs
-the hottest code every 20 s as `[PROF]` lines, written as one block (one
-disk flush: flushed line by line during a load, the report once starved the
-disc reads for ~10 s). Fold them into functions with the link map of the
-same build:
-
-```sh
-tools/xbox/prof_report.py boot.log --map path/to/melee_x.map
-```
-
-Profile buckets are 64 bytes; three functions in four start inside one and
-half are shorter than one. `prof_report.py` shares a bucket out among the
-functions it overlaps, by their bytes in it weighted by each function's
-sample density over the whole profile. Crediting the whole bucket to the
-function at its start (`--first`, the old way) put `pc_atanf`'s samples on
-the end of `pc_load_disc_fonts`, `memcpy`'s on `xhw_splash_release` and
-pdclib's `memcmp`'s on `longjmp`. The map itself is complete: lld-link
-lists the static functions after the public ones, and `static_syms.py`
-checks every function of the build's objects against it.
-
-Each sample also records a caller: the first word above the interrupted
-stack pointer that points into the XBE right after a call instruction (the
-function's return address, or its caller's once it has made a call itself).
-`[PROFL]` lines count them for samples inside memcpy/memset/memcmp/memmove
-(who copies), `[PROFC]` lines for every sample (the hottest call sites one
-level up). `prof_report.py` folds both into functions after the main table.
-`[PROFS]` lines (v33 on) count only the samples taken while `[PERF]`'s
-current bucket was the simulation: `prof_report.py` lists them last, as the
-simulation's own profile (HSD's animation and matrix code runs in both).
-
-The periodic report lists the hottest 192 buckets only (~60% of the
-samples). The whole profile of a match is kept too: every bucket of the
-code, all samples and the simulation's, in 32-bit counts the periodic
-report doesn't reset. It restarts at each scene's entry and is written
-once at the match's end (TIME!/GAME!, from `xhw_led_match_end`; the
-sampler thread does the writing): as `E:\UDATA\4d580001\prof.bin` in every
-profiler build (`console.py pull` fetches it; a profiler build deletes the
-previous boot's at startup), and in autopad builds also as `[PROFH]` lines
-on COM1 and in the log, so an xemu run has it in `serial.log`. A
-`[PROF] whole-match profile N written` line follows. It costs 8 bytes per
-64 bytes of `.text` (~550 KB), on top of the periodic report's 4 per 64
-bytes of the whole image (~490 KB).
-
-```sh
-tools/xbox/prof_report.py --full serial.log --map path/to/melee_x.map   # [PROFH]: every match in the log
-tools/xbox/prof_report.py --full prof.bin --map ... --csv match.csv     # the console's file; --last, -n N
-```
-
-lists every function with samples, its share and the cumulative share,
-for all samples and for the simulation's alone; `--csv` writes both to a
-spreadsheet. The formats (counts in hex; buckets of 64 bytes counted from
-the image base):
-
-```
-[PROFH] begin match 1: base 00010000 shift 6 buckets 111c0, 61000 ms, 60512 samples: 60400 in image, 112 outside, 830 while waiting, 20 unreadable, 17020 in the simulation
-[PROFH] all 141 2a,3,+4,1f,...   first bucket, then its count and the next ones'; +n skips n empty buckets
-[PROFH] sim 2b7 5,+1c,9,...      (lines stay under 500 bytes, written ~23 KB per log call)
-[PROFH] end match 1: all 60400 sim 17020   the sums, which prof_report.py checks
-```
-
-`prof.bin` is little-endian: twelve u32 (magic `MXPH`, version 1, image
-base, bucket shift, bucket count, match number, milliseconds, samples in
-the image, outside it, while waiting, unreadable, in the simulation), then
-`u32 all[count]` and `u32 sim[count]`. A second match in the same boot
-overwrites it (match number 2); the `[PROFH]` lines keep every match.
+A `SHOT` frame shows whichever tick the game had reached, so a faster build
+shows a different moment at the same frame number. With `env MX_LOCKSTEP=1`
+in the script the game's clock (`OSGetTime`) moves 1/60 s per frame
+boundary (and 1 ms at a time while the frame loop waits for a pad sample),
+so every frame is one tick (`[PERF]` "1.0 ticks per render"), frame N shows
+tick N in any build, and two builds' shots must match byte for byte (`cmp`
+the PNGs). The frame-rate counter is hidden. Use it to gate a change that
+shouldn't alter the picture; time without it. On the console use `N TSHOT`
+(tick-based) since loading times vary.
 
 ### Performance runs in xemu
 
-The standard run is a 60-second 4-CPU timed match on Green Greens with
-screenshots mid-match, at TIME! and on the results screen
-(`tools/xbox/scenarios/gl/autopad.txt`; the other scenarios are listed in
-`docs/handoff.md`):
+The standard run is `tools/xbox/scenarios/gl` (other scenarios:
+`docs/handoff.md`): `env` lines for a 60-second 4-CPU timed match on Green
+Greens (`MELEE_BOOT_SCENE=vs`, `MELEE_DEBUG_VS_STAGE=17`,
+`MELEE_DEBUG_VS=cpu4`, `MELEE_DEBUG_VS_TIME=60`, `MELEE_SEED=1`) and `SHOT`s
+at frames 200, 500, 800 and 1200 (mid-match, TIME!, results). Build with
+`XBOX_CFLAGS=-DXHW_AUTOPAD=1` (add `-DXHW_PROF=1` for a profile), run
+`xemu_run.sh 330`, read the match's `[PERF]` lines and compare what the
+shots draw with the last good run. Each `[FBDUMP]` stalls the game for
+seconds (each profiler report briefly): `[PERF]` intervals containing one
+are outliers.
 
-```
-env MELEE_BOOT_SCENE=vs
-env MELEE_DEBUG_VS_STAGE=17
-env MELEE_DEBUG_VS=cpu4
-env MELEE_DEBUG_VS_TIME=60
-env MELEE_SEED=1
-200 SHOT
-500 SHOT
-800 SHOT
-1200 SHOT
-```
-
-Build with `XBOX_CFLAGS=-DXHW_AUTOPAD=1` (add `-DXHW_PROF=1` for a profile),
-run `xemu_run.sh 330`, then read the `[PERF]` lines of the match and compare
-the screenshots with the last good run's. Frame timing, and so the frame a
-`SHOT` lands on, varies between runs, so compare what is drawn, not
-positions. Each `[FBDUMP]` stalls the game for seconds while it streams over
-COM1, and each profiler report briefly: the hitches in a watched run are
-those, and the `[PERF]` intervals that contain one are outliers.
-
-xemu is not a proxy for the console's GPU. Its OpenGL renderer runs every
-non-point draw through a geometry shader, and macOS's GL runs a geometry
-shader as a compute pass that ends the render pass, so each draw costs ~70 µs
-there whatever its size; the frame is then bound by `gpu` (the wait at
-present). Its CPU numbers are a rough proxy (TCG runs float code slowly, so
-float-heavy functions look hotter than on a Pentium III). To see where xemu
-itself spends its time, sample the host process during a match:
-`sample $(pgrep -x xemu) 5 -file xemu.txt` and read the `pfifo_thread` tree.
-The xemu source is in `~/xemu/xemu-src` (`hw/xbox/nv2a/pgraph/gl`).
+xemu is not a proxy for the console's GPU: its GL renderer runs every
+non-point draw through a geometry shader (on macOS a compute pass, ~70 µs per
+draw), so frames are bound by `gpu`. CPU numbers are a rough proxy (TCG makes
+float code look hot). To profile xemu itself on macOS: `sample $(pgrep -x
+xemu) 5 -file xemu.txt`, the `pfifo_thread` tree.
 
 ### Instruction counts in xemu (`-icount`)
 
-For comparing builds (`docs/fps-plan.md` step 0.1), run xemu with
-`MX_XEMU_ARGS="... -icount shift=1,sleep=off"` (TCG only; on Windows xemu
-already runs TCG). Guest time then counts instructions, 2 ns each, free of
-softfloat skew and host noise, so a test build's `[PERFX]` buckets are
-instruction counts (500 per microsecond; `[CAL]` at boot checks it). Drop
-the `SHOT` lines (screenshots stall the game) and stop at the results:
+For comparing builds (`docs/fps-plan.md` step 0.1) add
+`-icount shift=1,sleep=off` to `MX_XEMU_ARGS` (TCG only). Guest time then
+counts instructions (2 ns each), so `[PERFX]` buckets are instruction
+counts (500 per µs; `[CAL]` at boot checks it). Drop the `SHOT` lines and
+stop at the results:
 
 ```sh
 sed -i '/^[0-9]* *SHOT/d' <staged copy>/autopad.txt
@@ -403,174 +138,203 @@ tools/xbox/xemu_run.sh 1500 '\[GAME\] end banner done'
 python3 tools/xbox/icount_report.py base.log new.log   # per draw, per tick, [SIMH] compared
 ```
 
-`icount_report.py` takes the match's `[PERFX]` periods, takes the audio
-mixer's time out of the buckets it preempted, and prints instructions per
-draw (render, dlist, draw) and per simulation tick, as medians and as
-aggregates; with two logs it also compares their `[SIMH]` hashes and exits
-non-zero if they differ. Two runs of one build agree within ~0.6%. On the
-Windows PC a `gl` match takes ~2.5 minutes this way. `gpu` and `vsync` are
-spin loops and mean nothing here.
+`icount_report.py` takes the audio mixer's time out of the buckets it
+preempted, prints instructions per draw and per tick (medians and
+aggregates), and with two logs exits non-zero if their `[SIMH]` hashes
+differ. Two runs of one build agree within ~0.6%. `gpu` and `vsync` are spin
+loops and mean nothing here. Census counts (`-DXGX_CENSUS=1`) are the same
+in xemu and on the console.
 
-Census builds (`-DXGX_CENSUS=1`) add `[CENSUS]` and `[DLCC]` blocks every
-600 frames: draws, vertices and changed state by pass (main, fighter
-shadow maps, Fountain's reflection) and owner (the p_link class of the
-GObj that drew), and the display-list cache by owner, lists cached under a
-second key and the lists rebuilt most. `tools/xbox/census_report.py` sums
-them. The counts are the same on the console.
+## The console loop
+
+Two test consoles on the LAN, FTP login `xbox`/`xbox`, address in
+`MX_FTP_HOST`:
+
+| console | address | game folder |
+|---|---|---|
+| red | 192.168.158.113 | `F:\Applications\Melee-X` (`console.py` and `console_round.py` work as is) |
+| gold | 192.168.158.125, softmod, no F: | `E:\Applications\Melee-X`: `console.py deploy` targets F:, so upload `default.xbe`/`default.tbn` by FTP to `/E/Applications/Melee-X/` (`pull` works) |
+
+The FTP server is UnleashX's: `LIST` ignores a path argument (CWD first),
+and the 220 banner shows each drive's free space. Test builds without an
+image in their own folder take `F:\Applications\Melee-X\`'s, so console
+rounds are red only.
+
+`tools/xbox/console.py` (any OS; one folder per build in `MX_HW`, default
+`~/xemu/hw/`):
+
+1. Build: `XBOX_CFLAGS=-DXHW_PROF=1` for a test round, plain for a release.
+2. `stage vNN`: the four files into `stage-vNN/`, the map to
+   `melee_x.vNN.map`, checked against the build's objects (`static_syms.py`).
+3. `deploy vNN`: deletes the console's old logs and shots, uploads (XBE and
+   icon to `/F/Applications/Melee-X/`, `.xbx` files to `/E/UDATA/4d580001/`)
+   and re-downloads each file to compare.
+4. Play; BACK screenshots anything wrong (test builds, or the settings
+   menu's "BACK screenshots").
+5. `pull vNN`: `boot*.log`, `boot_prev.log`, `trace.log`, `crash.log`,
+   `hang.log`, `shotNN.bmp`, `prof.bin` into `logsNN/` (`ls` lists them).
+   Pull before launching again: each boot deletes the previous boot's logs
+   but `boot.log`, kept as `boot_prev.log`.
+
+Where xemu and the console render differently, trust the console (xemu
+doesn't model the w-buffer, PFIFO timing or tile regions).
+
+Console-only faults (xemu raises no NV2A limit faults): an autopad test build
+plus `autopad.txt` uploaded next to it (the game's `D:\autopad.txt`) whose
+`env` lines pick the fix and stress (`MX_COPY_FIX`, `MX_COPY_STRESS`,
+`scenarios/stall`), so one deploy covers an A/B. A run without the fix must
+fail reliably before a fixed run counts. Delete `autopad.txt` afterwards.
+
+### Console rounds (many A/B runs, one launch)
+
+`tools/xbox/console_round.py N stage|upload|watch|report|shots|clean`
+(`docs/fps-plan.md`): each run of round N is an autopad build in its own
+folder (`F:\Applications\Melee-X-rN?`, image from `Melee-X`) with a script
+from `CHAINS[N]`. A run ends by launching the next folder (`env
+MX_NEXT_XBE`, 12 s after the match or at `NEXT`), keeping its log as
+`boot_<folder>.log` and shots as `shot_<folder>_NN.bmp`; the last run (the
+baseline in `Melee-X`) returns to the dashboard. `watch` waits for the
+dashboard's FTP and pulls into `$MX_HW/logs-rN`, `report` tabulates fps,
+buckets and GPU waits per run, `shots` groups byte-identical shots (with
+`MX_LOCKSTEP=1` and `TSHOT`), `clean` removes the folders. The first run of
+a chain is ~4% slow: make it a warm-up.
+
+## Measuring on the console
+
+Every build logs `[PERF]` every 5 s (`xhw_perf.c`): fps and ms per frame in
+the simulation (`sim`), the render pass (`render`: HSD walking the scene,
+GX state), display-list decoding, back-end draws, texture conversion, EFB
+readback, GPU waits and vsync pacing, plus ticks per render, the mixer's CPU
+share, draws and vertices per frame. Melee runs one tick per pad poll queued
+since the last frame (up to 5), then renders once, so `sim` = ticks per
+render times one tick's cost: cutting a tick's cost pays twice.
+
+`-DXHW_PROF=1` adds a sampling profiler (`xhw_prof.c`, ~1000 Hz on the game
+thread) whose hottest 192 buckets are logged every 20 s as `[PROF]` lines.
+Fold them with the same build's map:
+
+```sh
+tools/xbox/prof_report.py boot.log --map path/to/melee_x.map
+tools/xbox/prof_report.py --full serial.log --map ...                 # [PROFH]: every match in the log
+tools/xbox/prof_report.py --full prof.bin --map ... --csv match.csv   # the console's file; --last, -n N
+```
+
+Buckets are 64 bytes; `prof_report.py` shares a bucket among the functions
+it overlaps, weighted by each one's sample density (`--first`: all to the
+first). `[PROFL]` counts callers of samples in memcpy/memset/memcmp/memmove,
+`[PROFC]` the hottest call sites one level up, `[PROFS]` only samples taken
+in the simulation bucket (listed last). The whole-match profile (every
+bucket, restarted at each scene entry) is written at TIME!/GAME! to
+`E:\UDATA\4d580001\prof.bin`, and with autopad also as `[PROFH]` lines, then
+`[PROF] whole-match profile N written`. `prof.bin` is little-endian: twelve
+u32 (`MXPH`, version 1, image base, bucket shift, bucket count, match
+number, ms, samples in the image, outside, while waiting, unreadable, in the
+simulation), `u32 all[count]`, `u32 sim[count]`; a later match overwrites it.
 
 ## Logs
 
-Everything is written to `E:\UDATA\4d580001\` (the title ID is `4d580001`):
+Everything goes to `E:\UDATA\4d580001\` (title ID `4d580001`) and to COM1;
+if E: can't be written, `[BOOT] can't write` and the log is `D:\boot.log`.
 
 | file | contents |
 |---|---|
-| `boot.log` | the log's first 4 MB; after that it goes on in `boot2.log` and `boot3.log` in turn, each restarted at 2 MB, so the newest 2-4 MB before a late hang survive (all three are deleted at boot). Every line is flushed to disk during the first 600 frames; after that urgent lines (`[SCENE]` `[GAME]` `[MEM]` `[CARD]` `[WDOG]` `[NV2A] GPU`/`flip` `[TEX] drop` `[FATAL]` `[CRASH]` `[BOOT]` `[WARN]`) at once and the rest within a second (the watchdog thread flushes what is pending every second). Tags: `[BOOT]` `[MEM]` `[OS]` `[DVD]` `[NV2A]` `[PAD]` `[AUDIO]` `[CARD]` `[SCENE]` `[GAME]` `[BEAT]` |
-| `trace.log` | the `[DRAW]` lines of a `-DXGX_DEBUG_TRACE` build (COM1 still gets them), restarted at 64 MB |
-| `hang.log` | written by the watchdog: the log tail and a dump of every thread (also appended to `boot.log`) |
-| `crash.log` | written on a CPU exception: the last log lines, the fault, registers, XBE addresses found on the stack |
-| `lastexit.txt` | how this boot ended, one line: quit to the dashboard, in-game reset, settings restart, game reset, fatal error screen, relaunch, next XBE, crash, hang report on screen (with the retrace count). Read, logged as `[BOOT] previous exit: ...` and deleted at the next boot; none (`not recorded`) means the console was switched off or reset, or the XBE was killed |
-| `shot00.bmp` .. `shot99.bmp` | screenshots, test builds only (`XHW_TEST_BUILD`): BACK on any controller (unmapped by default in `settings.ini`) writes the next frame as a 24-bit BMP and logs `[SHOT] wrote ...`; numbering restarts at 00 each boot. An autopad `BACK` line does the same in xemu. On the title screen BACK also opens the settings menu (in every build). Y pressed while BACK is held drops every cached texture and display list at the frame end (`[DEBUG] ... caches flushed`): a surface that comes back right afterwards had its cached copy corrupted |
+| `boot.log` | the first 4 MB; then `boot2.log` and `boot3.log` in turn, each restarted at 2 MB, so the newest 2-4 MB survive. Every line is flushed during the first 600 frames; after that urgent tags (`[SCENE]` `[GAME]` `[MEM]` `[CARD]` `[WDOG]` `[NV2A] GPU`/`flip` `[TEX] drop` `[FATAL]` `[CRASH]` `[BOOT]` `[WARN]`) at once, the rest within a second |
+| `boot_prev.log` | the previous boot's `boot.log` |
+| `trace.log` | `[DRAW]` lines of a `-DXGX_DEBUG_TRACE` build, restarted at 64 MB |
+| `hang.log` | the watchdog's dump: log tail and every thread (also appended to `boot.log`) |
+| `crash.log` | a CPU exception: last log lines, fault, registers, XBE addresses on the stack |
+| `lastexit.txt` | how the boot ended (dashboard, resets, restart, fatal screen, relaunch, next XBE, crash, hang); logged at the next boot as `[BOOT] previous exit: ...` and deleted. `not recorded`: switched off, reset or killed |
+| `shot00.bmp`.. | BACK screenshots, test builds (24-bit BMP, `[SHOT] wrote ...`, numbering restarts each boot). BACK on the title screen opens the settings menu in every build; Y while BACK is held flushes every cached texture and display list (`[DEBUG] ... caches flushed`) |
+| `prof.bin` | profiler builds: the last match's whole profile |
 | `settings.ini` | options (`docs/platform.md`) |
 | `card_a\*.gci` | memory card saves |
 
-The log also goes to COM1 (the serial port), which xemu can redirect to a terminal or file.
+Tags (switch-only tags such as `[EFB]`, `[DRAW]`, `[VPT]`, `[PBCHECK]`,
+`[CENSUS]`, `[PMC]`, `[PGOC]` are in the switch table):
 
-Lines worth reading first:
-
-- `[MEM] boot` and `[MEM] after nv2a`: free RAM, plus how much of MEM1 and
-  ARAM has been committed so far. If free RAM runs low while the game is
-  still loading, that is the 64 MB budget (`docs/architecture.md`).
+- `[MEM] boot`, `[MEM] after nv2a`: free RAM, committed MEM1 and ARAM (low
+  while loading: the 64 MB budget, `docs/architecture.md`). `[MEM] 128 MB
+  console: running in 64 MB` (`settings.ini` `ram128 = 0`). Test builds:
+  `[MEM] lazy <base>:` at scene leave, committed 64 KB chunks per 4 MB.
 - `[DVD] GALE01 rev 2, N FST entries`: the image was accepted.
-- `[NV2A] layout:` the physical addresses and sizes of the pushbuffer,
-  framebuffers, depth buffer, nxdk's video framebuffer, the vertex ring and
-  the texture and vertex pools: a write past one lands in its neighbour.
-- `[NV2A] first GPU fault: kind K ...`: the first fault the patched pbkit
-  reported (1 PGRAPH: nsource, class, trapped method, data; 2 DMA pusher:
-  software put, put, get), with the pusher's GET and PUT at that moment,
-  the pushbuffer's base, the frame and the draw count, then the 96
-  pushbuffer words around that GET. Later faults are usually its
-  consequences. `[NV2A]  first fault pgraph 400800:` follows with PGRAPH
-  0x400800-0x40080C read at the fault (pbkit's "limit details" for
-  `LIMIT_COLOR`/`LIMIT_ZETA`, nsource 0x10/0x20) and the last EFB copy's
-  target (offset, size, frame).
-- `[MEM] 128 MB console: running in 64 MB, N KB above it held back`: the
-  RAM above 64 MB was allocated at boot and is never used
-  (`settings.ini` `ram128 = 0`, the default; `xhw_mem_hold_upper`). `[NV2A] GPU stalled` dumps the words at the current GET only
-  when that address is mapped.
-- `[PERF]`: see "Measuring on the console". Test builds add `[PERFX]`:
-  the same buckets in microseconds, the raw counts, the audio mixer's time
-  inside each bucket, and the game thread's x87 control word and MXCSR
-  (`027f`: 53-bit precision). `[CAL]` at boot: 20M instructions timed
-  (40000 us under `-icount shift=1`).
-- `[SIMH] tick N: hash`: test builds, every 60 simulation ticks of a match:
-  each fighter's kind, port, action, facing, position, velocities, damage
-  and the random seed, hashed. Equal lines = the same simulation.
-- `[CPU]`: test builds, at boot: CPUID 1 and 2, CR0/CR3/CR4, MXCSR and its
-  mask (DAZ), the x87 control word, and on the console the MTRRs, PAT and
-  the page directory's 4 MB entries. `[MEM] lazy <base>: ...` at each scene
-  leave: committed 64 KB chunks of each 4 MB range (of 64). `ticks per render` near 5 means
-  the game can't keep up and is slowing down (5 is the cap).
-- `[NV2A] per N draws: ...`: what changed before each draw (nothing, only a
-  position matrix, then per dirty group) and draws by primitive; `[DLC]`
-  lines: cached, dynamic and volatile lists, joined batches, immediate-mode
-  batches and joins, the calls that drew a waiting batch, and the first
-  lists to go volatile with the reason.
-- `[NV2A] frame N: D draws (A approximated), tex pool K KB free (largest L
-  KB)`: logged every 600 frames. A high `approximated` count means TEV
-  setups the combiners only approximate; a tex pool near 0 means a full
-  pool (normal in a long session), and `pool allocations failed` counts
-  uploads that only fit after evicting: harmless while `[TEX]`'s `drops`
-  stays 0.
-  `pushbuffer peak P of 1024 KB (R restarts)`: the fullest a frame got,
-  and how often a frame had to wait for the GPU and restart at the head.
-- `[NV2A] per N frames: L vertex programs loaded (I instructions), S program
-  switches`: program-memory traffic (`docs/renderer.md` "Program memory").
-- `[TEX] ... fmt n/KB/pool KB`: the textures drawn in the last frame by GX
-  format (hex): count, KB of GX data, KB they take in the pool. `[TEX] pool
-  holds ...`: every cached texture and EFB copy in the pool, and how many
-  copies went to a destination that had none.
-- `[TEX] ... N drops`: textures that could not be uploaded even after
-  evicting (drawn untextured). The first one of each interval has its own
-  `[TEX] drop:` line.
-- `[SCENE] enter/leave: mode M state S scene K` and the `[MEM] scene` line
-  after it: every scene transition with free RAM, committed MEM1+ARAM (and
-  how much of ARAM is only on the disc image, `ar.c`), the texture pool and
-  the vertex cache. `[GAME] match ends: outcome N` is
-  TIME!/GAME!, `[GAME] end banner done` the moment the results take over.
-- `[LED] ROGO sweep (retrace R)`, `[LED] SMC`: each front LED write (the
-  four steps, `-` for off, and the effect), from its worker; two per KO,
-  three in a timed match's last 10 s (at 10, 5 and 2), two per match end,
-  none per frame. xemu doesn't show the LED, so these are what a run checks
-  (`docs/platform.md` "Front LED").
-- `[BEAT] Ns: retrace R, presented P, free ...`: every 5 s from the
-  watchdog thread. If the log ends with `[BEAT]` lines whose `retrace` still
-  climbs while `presented` stands still, the game is looping without
-  drawing; if the `[BEAT]` lines stop too, the whole machine stopped.
-- `[WDOG] presents stopped, retrace running`: after 10 s of that the
-  watchdog dumps every thread to `boot.log` and `hang.log` (the game thread
-  marked, with the EIP it was interrupted at); after a minute it shows the
-  dump on screen too. `frames stopped` (no retrace for 6 s) shows it at
-  once. If the frames (or presents) come back, `[WDOG] frames again after
-  N s` is logged and the game gets the screen back: that was a long stall
-  (a load), not a hang.
-- `[DLC] N of 2048 lists ... vertex pool K of 4096 KB free`: a long
-  session fills both and evicts least recently used lists; `builds` per
-  interval is the rebuild cost. Only `uncached:`/volatile lists mean lists
-  drawn without the cache.
-- `[CARD] save data big-endian (votes be N, le M)`, and `looks mixed` when
-  an older build rewrote some fields (`docs/platform.md`, CARD).
-- `[WARN] hit` / `[WARN] hit by item kind`: the knockback diagnostic
-  (`docs/decisions.md`), its first 32 hits a boot; expected in any match
-  with items or stage hazards.
+- `[SCENE] enter/leave: mode M state S scene K` and its `[MEM] scene` line:
+  free RAM, MEM1+ARAM (and ARAM left on the disc), texture pool, vertex
+  cache. `[GAME] match ends: outcome N` is TIME!/GAME!, `[GAME] end banner
+  done` the results taking over.
+- `[PERF]`: above. Test builds add `[PERFX]` (buckets in µs, raw counts, the
+  mixer's time per bucket, x87 control word and MXCSR; `027f` = 53-bit) and
+  `[CAL]` (20M instructions timed; 40000 µs under `-icount shift=1`).
+- `[SIMH] tick N: hash`: test builds, every 60 ticks of a match: fighters'
+  state and the random seed hashed. Equal lines = the same simulation.
+- `[CPU]`: test builds at boot: CPUID, CR0/CR3/CR4, MXCSR, x87 control word;
+  on the console MTRRs, PAT and 4 MB page entries.
+- `[NV2A] layout:` pushbuffer, framebuffers, depth buffer, vertex ring and
+  pools (a write past one lands in its neighbour); `[NV2A] tiles`.
+- `[NV2A] first GPU fault: kind K ...` (1 PGRAPH, 2 DMA pusher) with
+  GET/PUT, frame, draw count and 96 pushbuffer words around GET; later
+  faults are usually consequences. `first fault pgraph 400800:` adds the
+  `LIMIT_COLOR`/`LIMIT_ZETA` details and the last EFB copy's target.
+- `[NV2A] frame N: D draws (A approximated), tex pool ...` every 600 frames:
+  `approximated` = TEV setups the combiners only approximate; `pool
+  allocations failed` is harmless while `[TEX]` drops stay 0; `pushbuffer
+  peak P of 1024 KB (R restarts)`. `[NV2A] per N draws:` state changed per
+  draw; `per N frames: L vertex programs loaded` (`renderer.md`).
+- `[DLC]`: cached, dynamic and volatile display lists, batches, `N of 2048
+  lists ... vertex pool K of 4096 KB free` (full in a long session, LRU;
+  only `uncached:`/volatile lists bypass the cache).
+- `[TEX]`: last frame's textures by format, `pool holds ...`, `N drops`
+  (couldn't upload even after evicting: drawn untextured; first one gets a
+  `[TEX] drop:` line), `copy dropped` (an EFB copy with no room).
+- `[LED] ROGO sweep`, `[LED] SMC`: front-LED writes (two per KO, three in a
+  timed match's last 10 s, two per match end); xemu has no LED, so runs
+  check these (`docs/platform.md` "Front LED").
+- `[BEAT] Ns: retrace R, presented P, free ...` every 5 s: `retrace`
+  climbing with `presented` still = the game loops without drawing; no
+  `[BEAT]` = the machine stopped.
+- `[WDOG] presents stopped, retrace running`: after 10 s every thread is
+  dumped (game thread's EIP marked) to `boot.log` and `hang.log`, after a
+  minute on screen too; `frames stopped` (no retrace for 6 s) at once.
+  `[WDOG] frames again after N s`: a long stall (a load), not a hang.
+- `[CARD] save data big-endian (votes be N, le M)`, `looks mixed`.
+- `[WARN] hit`: the knockback diagnostic (`docs/decisions.md`), first 32 per
+  boot, expected with items or hazards. `[WARN] dlist`: `-DXGX_CHECK_VERTS`.
+- `[AUDIO]`, `[BOOT] previous exit:`: "Audio at boot".
 
 A healthy console session: one `[AUDIO] AC97 polled` line and no `halted`,
-`stuck` or `cold reset` (`[AUDIO] found` and `[AUDIO] idle` before it are
-the boot's record of the audio hardware as found, see "Audio at boot"); `[BEAT]` lines to the end with `presented`
-following `retrace`; `[PERF]` `ticks per render` well under 5; no
-`crash.log` or `hang.log`.
+`stuck` or `cold reset`; `[BEAT]` lines to the end with `presented`
+following `retrace`; `ticks per render` well under 5; no `crash.log` or
+`hang.log`.
 
 ### Audio at boot
 
-Every boot logs the audio hardware as the previous XBE left it, before the
-driver touches it, then what the driver did to bring it to idle
-(`xhw_audio.c`, roadmap item 9):
+Every boot logs the audio hardware as the previous XBE left it, then what
+the driver did to bring it to idle (`xhw_audio.c`):
 
-- `[AUDIO] found: pci aci .. apu .., global control .. status .., pcm bd ..
-  civ a->b lvi .. sr .. picb a->b cr .., spdif ...`: the AC97 controller's
-  PCI command/status words, its global control and status, and per bus
-  master (PCM out, S/PDIF out) the descriptor list address, CIV, LVI, SR,
-  PICB and CR; CIV and PICB are read twice 5 ms apart, so a running engine
-  shows them moving. `cr 01` with `sr` bit 0 clear is an engine left
-  running.
-- `[AUDIO] found: apu ists .. ien .. fectl .. sectl .. xgscnt a->b gprst ..
-  eprst .. gp fifo0 a->b ep fifo0 a->b`: the MCPX APU (register names from
-  xemu's `hw/xbox/mcpx/apu/apu_regs.h`): a moving `xgscnt` is the setup
-  engine running, `gprst`/`eprst` 3 are the DSPs out of reset, moving FIFO
-  positions are the DSPs writing output to memory (DirectSound).
-- `[AUDIO] found: codec 26 .. 2a .. 2c .. 02 .. 18 .. vendor ..`: AC97
-  codec registers (power-down/status, extended audio, DAC rate, volumes,
-  vendor ID), or `codec not ready`.
-- `[AUDIO] idle: pci aci .., halt pcm ok N us spdif ok N us, apu stopped,
-  bus-master reset N polls, codec 26 ..`: both bus masters halted (`TIMEOUT`
-  after 20 ms), the APU's interrupts, setup engine and DSPs stopped (AC97
-  path only; `left (xemu voice)` in xemu's default APU path), the polls the
-  bus-master reset took, and the codec's power-down register (`(powered
-  up)` when parts of it were off and were switched on).
-- `[BOOT] previous exit: ...`: how the previous boot ended (`lastexit.txt`).
+- `[AUDIO] found: pci aci .. pcm bd .. civ a->b ... cr .., spdif ...`: the
+  AC97 controller and, per bus master (PCM, S/PDIF), descriptor list, CIV,
+  LVI, SR, PICB, CR; CIV and PICB read 5 ms apart move if an engine runs
+  (`cr 01` with `sr` bit 0 clear: one left running).
+- `[AUDIO] found: apu ... xgscnt a->b gprst .. eprst .. gp fifo0 a->b ...`:
+  the MCPX APU (names from xemu's `apu_regs.h`): moving `xgscnt` = setup
+  engine running, `gprst`/`eprst` 3 = DSPs out of reset, moving FIFOs = DSPs
+  writing output (DirectSound).
+- `[AUDIO] found: codec 26 .. vendor ..`: AC97 codec registers, or `codec
+  not ready`.
+- `[AUDIO] idle: ... halt pcm ok N us spdif ok N us, apu stopped, ...`: bus
+  masters halted (`TIMEOUT` after 20 ms), APU stopped (`left (xemu voice)`
+  in xemu), codec powered up if needed.
+- `[BOOT] previous exit: ...`: from `lastexit.txt`.
 
-An engine that never finishes a buffer from the boot on (the boot's reset
-sequence, then three restarts, one cold reset, three more restarts) is
-given up: `[AUDIO] stuck since boot: ...` once, the engine stopped, the
-mixer drained in real time (the game runs on, silent, without the cold
-resets' freezes), and the player sees "Sound hardware is stuck. Turn the
-Xbox off and on to get sound back." for 10 s at the top of the picture.
-`-DXHW_AUDIO_TEST` exercises both ends in xemu.
+An engine that never finishes a buffer from the boot on (reset, three
+restarts, a cold reset, three more) is given up: `[AUDIO] stuck since boot:
+...` once, the game runs on silent, and "Sound hardware is stuck. Turn the
+Xbox off and on to get sound back." shows for 10 s. `-DXHW_AUDIO_TEST`
+exercises this in xemu (`scenarios/relaunch`).
 
 ## Crashes
 
-The crash guard catches the exception and shows the report on screen. It
-also writes `crash.log`, then parks the thread. Symbolize the log with the
-link map from the **same** build:
+The crash guard shows the report on screen, writes `crash.log` and parks the
+thread. Symbolize with the link map of the **same** build:
 
 ```sh
 tools/xbox/sym.py crash.log                          # map: build-xbox/melee_x.map
@@ -578,101 +342,104 @@ tools/xbox/sym.py --map path/to/melee_x.map crash.log
 tools/xbox/sym.py 0036c4f4 0014b6d0                  # single addresses
 ```
 
-A fault at raised IRQL (inside a DPC) can't write files. It shows only the
-screen report, so photograph it.
-
-A fault address inside 0x10000000-0x11800000 (MEM1) or
-0x12000000-0x13000000 (ARAM) that is reported as a crash, and not quietly
-committed, means one of two things: the fault happened at raised IRQL, or
-the commit failed because RAM ran out. Compare with `free` on the same
-report.
+A fault at raised IRQL (in a DPC) can't write files: photograph the screen.
+A reported fault inside 0x10000000-0x11800000 (MEM1) or
+0x12000000-0x13000000 (ARAM), which is normally committed on demand, means
+raised IRQL or RAM ran out: compare `free` on the same report.
 
 ## Build switches
 
+`-D` switches go in `XBOX_CFLAGS`; `env` and script lines go in an autopad
+script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
+`-DXHW_PROF=1` and `-DXHW_AUTOPAD=1`.
+
 | switch | effect |
 |---|---|
-| `-DXHW_CRASH_GUARD=0` | no SEH guard. Crashes become bugchecks, and demand-committed memory stops working, so debug only |
-| `-DXHW_AUDIO_APU=0` | never use the xemu APU fallback |
-| `-DXHW_AUDIO_TEST=<bits>` | audio tests for xemu (with `-DXHW_AUDIO_APU=0`, `scenarios/relaunch`): 1 leaves the AC97 engine running into the next boot at a relaunch (every descriptor ~0.7 s long), as a crash or another XBE might; 2 reads CIV as 0 for good, an engine stuck from the boot on (the give-up: `[AUDIO] stuck since boot`, the on-screen notice, silent play). Never on a console build |
-| `-DXHW_AUTOPAD=1` | scripted input from `D:\autopad.txt`: `<frame> <buttons/SHOT> [for N]` per line (`xhw_autopad.c`). `env NAME=VALUE` lines feed `getenv`, which reaches melee-pc's test hooks (below) |
-| `-DXSDK_ARAM_VERIFY=1` | compares every ARAM copy left on the disc (`ar.c`) with the image; `[AR] verify:` lines |
-| `XBOX_LTO=1`, `XBOX_PGO=gen\|<file>` | build knobs (not `-D` switches; `docs/toolchain.md`): ThinLTO over the game and sdk code; PGO instrumented (`[PGOC]` counters at each scene's exit) or optimized with a `.profdata` |
-| `-DXGX_CENSUS=1` | draw and display-list census: `[CENSUS]`/`[DLCC]` every 600 frames (`nv2a.c`, `gx_vtx.c`, `tools/xbox/census_report.py`) |
-| `-DXHW_PMC=1` | the console probe build's counters (`xhw_pmc.c`, with `-DXHW_PROF=1 -DXHW_AUTOPAD=1`): one pair of Pentium III performance-counter events per `[PERF]` period, summed per bucket, as `[PMC]` lines (ten pairs in turn; off in xemu). With `env MX_ABLATE=1` in the autopad script the ablation windows rotate every two periods (`[AB]` lines: FTZ, no shadow maps, no reflection, no back end, no display-list rechecks, no audio); `env MX_ABLATE=0,2,3,8,9` rotates the listed windows only (8: every draw scissored to one pixel, 9: no EFB copies). Each period also logs `[GPUP]`: frames that found the GPU still busy, the wait, each frame's span from its opening to its present and the late frames' finish after the present (span + lag: the GPU's frame when it is the limit). `tools/xbox/probe_report.py`; `scenarios/probe`, `probe2` |
-| `-DXHW_PROF=1` | sampling profiler: `[PROF]` lines every 20 s (`xhw_prof.c`, `tools/xbox/prof_report.py`), and each match's whole profile at its end in `prof.bin` (with `-DXHW_AUTOPAD=1` also as `[PROFH]` lines; `prof_report.py --full`) |
+| `-DXHW_TEST_BUILD=1` | console test tools: BACK screenshots (BACK+Y flushes caches), counter on by default, and without an image in its own folder the XBE uses `F:\Applications\Melee-X\`'s (so variants can sit in folders of their own). A plain build is a release. `-DXHW_AUTOPAD=1 -DXHW_TEST_BUILD=0` is a release with scripted input |
+| `-DXHW_AUTOPAD=1` | scripted input from `D:\autopad.txt` (`xhw_autopad.c`): `<frame> <buttons/SHOT/TSHOT/NEXT> [for N]` per line; `env NAME=VALUE` lines feed `getenv` ("Straight into a match") |
+| `-DXHW_PROF=1` | sampling profiler: `[PROF]` every 20 s, `prof.bin` per match (`[PROFH]` with autopad) |
 | `-DXHW_PROF_SECS=<n>`, `-DXHW_PROF_TOP=<n>` | profiler report period (default 20 s); buckets and call sites per report (default 192) |
-| `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU (into A8R8G8B8 textures) instead of drawn by the GPU, at every bpp; 720p used the CPU readback always until the GPU copy learned R5G6B5 targets |
-| `-DXHW_VIDEO_480_BPP=16` | 640x480 at 16 bits: R5G6B5 colour, Z16 depth and 720p's pool sizes, the 720p rendering path at a size xemu can show (xemu has no 720p). Test only: shots and `[FBDUMP]` are 16-bit |
-| `-DXGX_Z16_DEPTH_RATIO=<n>` | Z16 depth (720p, `-DXHW_VIDEO_480_BPP=16`) as if the extreme camera's near plane were at far / n (default 4096; `renderer.md` "Depth"); 0: GX's depth as is, the z-fighting crates and grass of v41 |
-| `-DOCX_Z16_TILE_FLAGS=<flags>` | pbkit's tile flags for a Z16 depth buffer (720p, or the switch above); default `0x84000001`, pbkit's own: compression tags with the 32-bit flag. Console A/B: `0x80000001` (tags, no 32-bit flag), `0x00000001` (uncompressed); a console-only test |
-| `-DXGX_TILE=<bits>` | re-programs pbkit's tile regions after `pb_init` (`tiles_setup`, `renderer.md` "Tile regions"): 1 the Z16 depth tile compresses as Z16 (as `OCX_Z16_TILE_FLAGS=0x80000001`, at run time), 2 the framebuffers' tile 0 gets the enable bit as envytools/nouveau/xemu define it (`base \| 1`), 4 tile 0 gets both low bits (`base \| 3`, wins over 2), 8 no Z compression (A/B baseline); default 4 (console rounds 4 and 5: +11% at 720p, picture the same), 0 pbkit's setup. With tile 0 on, the CPU reaches the framebuffers through the NV2A's aperture (`fb_cpu`, logged as `[NV2A] tiled framebuffers ... aperture`) Layout only, the picture must not change: a console A/B compares fps and shots. Test builds also read `env MX_TILE=` from the autopad script; every build logs the eight regions as read back (`[NV2A] tiles`). xemu ignores tile regions: a console-only test |
-| `-DXGX_DEPTH_CULL=1` | cull pixels whose depth falls outside the clip range instead of clamping it (the pre-v15 behaviour) |
-| `-DXGX_DEBUG_EFBLOG` | log the first 200 EFB copies (source rect, size, format, copy-clear depth) as `[EFB]` lines |
-| `-DXHW_TEST_BUILD=1` | console test tools (and: without a disc image in its own folder, the XBE uses `F:\Applications\Melee-X\`'s, so build variants can sit in folders of their own): BACK takes a screenshot (BACK+Y flushes the caches) and the frame-rate counter defaults to on. Implied by `-DXHW_PROF=1` and `-DXHW_AUTOPAD=1`; a plain build is a release and has neither. `-DXHW_AUTOPAD=1 -DXHW_TEST_BUILD=0` is a release with scripted input (release defaults in xemu) |
-| `-DXSDK_FPS_DEFAULT=<0/1>` | the frame-rate counter's default when `settings.ini` has no `fps` line (default: `XHW_TEST_BUILD`) |
-| `-DXGX_DEBUG_TRACE` | log every draw (TEV stages, textures and their colours, konst, channels, lights, texgen matrices, screen box, blend, fog) of the frame an autopad `SHOT` or a console BACK screenshot captures, as `[DRAW]` lines (~400 KB each, in `trace.log`, not `boot.log`); on a BACK frame each EFB copy's source is also written as a `shotNN.bmp` (up to 8, announced by a `[DRAW] efb copy` line), and with `-DXHW_AUTOPAD=1` also streamed as `[FBDUMP]` (an autopad `BACK` in xemu, whose HDD is out of reach) |
-| `-DXGX_CHECK_VERTS` | check every position a display-list build decodes (model space): one at 2^20 or more, infinite or NaN is logged as `[WARN] dlist` (first 32) |
-| `-DXGX_PB_KICK=<words>` | pushbuffer words per kick (default 8192; v25 and before 4096) |
-| `-DXGX_VB_CACHE_BREAK=0` | no `BREAK_VERTEX_BUFFER_CACHE` at each batch start (v26 added it) |
-| `-DXGX_VBUF_FREE_NOW=0` | evicted display-list vertex buffers go through the deferred free like the rest (v26 freed them at once) |
-| `-DXGX_COPY_FIX=<bits>` | the EFB copy's surface switches (the post-copy GPU stalls): 1 the retarget sends the pitch again after the format, 4 the copy's target and the retarget's DMA objects, pitch and offsets again after a wait for idle, 2 colour and depth cleared by one `CLEAR_SURFACE` (untried); default 5, 0 is v45's. Test builds also read `env MX_COPY_FIX=` from the autopad script |
-| `-DXGX_COPY_STRESS=<n>` | repeat each EFB copy that clears after itself n more times into a scratch texture, with its clear (picture unchanged): makes copy-related GPU faults frequent on the console. Test builds also read `env MX_COPY_STRESS=`; `scenarios/stall` |
-| `env MX_NEXT_XBE=<path>` | (autopad script, test builds) 12 s after the match ends, launch that XBE (`F:\Applications\<folder>\default.xbe`, or a `\Device\` path), or `dashboard` to go back to it (a round's last build, so FTP is up for its logs), which reads its own folder's script: a console round chains its builds and runs unattended. Each boot keeps the one before's log as `boot_prev.log`; pull as the chain goes (`docs/fps-plan.md` round 2) |
-| `N TSHOT` | (autopad script, test builds) a screenshot at the match's tick N (as `[SIMH]` counts) instead of frame N: with `MX_LOCKSTEP=1` the same moment in every run on the console too, where loading times vary. On the console autopad shots are BMPs (`shotNN.bmp`, `shot_<folder>_NN.bmp` in a round's chain) |
-| `N NEXT` | (autopad script, test builds) launch `MX_NEXT_XBE` at frame N: a console round's run without a match (round 5's settings-menu runs) chains on, as a match's end does 12 s after it; logs `[AUTOPAD] NEXT`, which `console_round.py watch` takes as the run's end |
-| `env MX_VIDEO=480\|480i\|720` | (autopad script, test builds) the video mode over settings.ini's (`xhw_video_boot`, logged as `[VIDEO] MX_VIDEO=`): a console round runs 480p, 480i or 720p without touching the user's settings. 720 still needs the dashboard to allow it |
-| `env MX_LOCKSTEP=1` | (autopad script, test builds) the game's clock moves 1/60 s per frame and stands still in between, so every rendered frame is one simulation tick: screenshots by frame number show the same moment in builds of any speed ("Comparing builds by screenshot"). Pacing is off; `[PERF]` keeps the real clock |
-| `env MX_FILL_E=1` | (autopad script, test builds) fills E: to the last cluster with `E:\mx_fillN.bin` (several: FATX files stop at 4 GB) at boot, so a run takes the full-disk paths: card saves and BMP shots fail with a notice and the old save kept, the settings menu says it could not save, and the next boot logs `[BOOT] can't write` and writes boot.log to `D:\`. Use a copy of xemu's HDD image (it keeps the size); without the line the file is deleted |
-| `-DXGX_OVERLAP=0` | `xgx_present` waits for the GPU before the flip, as up to v32, instead of the next frame's first GPU use (v33) |
-| `-DXGX_DEBUG_VPTRACE[=<n>]` | log the vertex-program selects of two consecutive frames every n (default 600) as `[VPT]` lines: each program (key hash, instructions, key bytes), then the selects in order with `L` where one was loaded; replay with `tools/xbox/vp_policy.py boot.log` |
-| `-DXGX_DEBUG_NOMIP` | bind only the base level of every texture |
-| `-DXGX_NO_INDIRECT=1` | GX indirect stages draw direct (no BUMPENVMAP units, as up to v40): the cloak's refraction shows the frame copy unshifted |
-| `-DXHW_FBDUMP_EVERY=<n>` | screenshot every n presented frames |
-| `-DXGX_STATS_EVERY=<n>` | `[NV2A]` / `[TEX]` stats period, in frames (default 600) |
+| `-DXHW_PERF_SECS=<n>` | `[PERF]` period (default 5 s) |
+| `-DXHW_PMC=1` | console probe (with `-DXHW_PROF=1 -DXHW_AUTOPAD=1`): one pair of Pentium III counter events per `[PERF]` period as `[PMC]` (ten pairs in turn; off in xemu), and `[GPUP]` per period (frames that found the GPU busy, the wait, frame span and lag). `env MX_ABLATE=1` rotates ablation windows every two periods (`[AB]`: FTZ, no shadow maps, no reflection, no back end, no display-list rechecks, no audio); `env MX_ABLATE=0,2,3,8,9` only those (8: every draw scissored to one pixel, 9: no EFB copies). `tools/xbox/probe_report.py`; `scenarios/probe`, `probe2` |
+| `-DXGX_CENSUS=1` | `[CENSUS]`/`[DLCC]` every 600 frames (`tools/xbox/census_report.py`) |
+| `-DXHW_CRASH_GUARD=0` | no SEH guard: crashes become bugchecks and demand-committed memory stops working; debug only |
 | `-DXHW_WATCHDOG=0`, `-DXHW_HEARTBEAT_SECS=<n>` | hang dumper off; `[BEAT]` period (0 = off) |
-| `-DXHW_WATCHDOG_PRESENT_SECS=<n>` | seconds of retraces without presents before the watchdog reports (default 10) |
+| `-DXHW_WATCHDOG_SECS=<n>`, `-DXHW_WATCHDOG_BOOT_SECS=<n>`, `-DXHW_WATCHDOG_PRESENT_SECS=<n>` | watchdog: seconds without retraces (default 6), without a first frame after boot (45), of retraces without presents (10) |
+| `-DXHW_AUDIO_APU=0` | never use the xemu APU fallback |
+| `-DXHW_AUDIO_TEST=<bits>` | xemu audio tests (with `-DXHW_AUDIO_APU=0`, `scenarios/relaunch`): 1 leaves the AC97 engine running into the next boot at a relaunch; 2 reads CIV as 0 for good (an engine stuck from boot: the give-up path). Never on a console build |
+| `-DXHW_NO_SPLASH`, `-DXHW_SPLASH_MS=<n>`, `-DXHW_SPLASH_DUMP` | boot title card off; its hold time; stream it as `[FBDUMP]` |
+| `-DXHW_FBDUMP_EVERY=<n>` | screenshot every n presented frames |
+| `-DXHW_VIDEO_480_BPP=16` | 640x480 at 16 bits (R5G6B5, Z16, 720p's pool sizes): the 720p path at a size xemu can show. Test only: shots are 16-bit |
+| `-DXSDK_FPS_DEFAULT=<0/1>` | the counter's default when `settings.ini` has no `fps` line (default `XHW_TEST_BUILD`) |
+| `-DXSDK_SETTINGS_RESET` | test builds: delete `settings.ini` at boot, then copy `D:\settings.ini` over it if staged (`MX_STAGE_EXTRA`) |
+| `-DXSDK_ARAM_VERIFY=1` | compare every ARAM copy left on the disc (`ar.c`) with the image; `[AR] verify:` |
+| `-DXSDK_MEM1_VA`, `-DXSDK_MEM1_SIZE`, `-DXSDK_ARAM_VA` | MEM1 and ARAM placement (0x10000000, 24 MB; 0x12000000): layout constants, not test knobs |
+| `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU (into A8R8G8B8 textures) instead of drawn by the GPU |
+| `-DXGX_COPY_FIX=<bits>` | EFB copy surface switches: 1 resend the pitch after the format, 4 resend target DMA objects, pitch and offsets after a wait for idle, 2 one `CLEAR_SURFACE` for colour and depth (untried); default 5, 0 is v45's. Test builds read `env MX_COPY_FIX=` |
+| `-DXGX_COPY_STRESS=<n>` | repeat each self-clearing EFB copy n more times into a scratch texture (picture unchanged): makes copy GPU faults frequent. Test builds read `env MX_COPY_STRESS=`; `scenarios/stall` |
+| `-DXGX_TILE=<bits>` | re-program pbkit's tile regions (`renderer.md` "Tile regions"): 1 Z16 depth compresses as Z16, 2 tile 0 enable bit `base \| 1`, 4 `base \| 3` (wins over 2), 8 no Z compression; default 4, 0 pbkit's. With tile 0 on the CPU reaches the framebuffers through the aperture (`[NV2A] tiled framebuffers ... aperture`). Picture must not change. Test builds read `env MX_TILE=`. Console only (xemu ignores tiles) |
+| `-DOCX_Z16_TILE_FLAGS=<flags>` | pbkit's Z16 depth tile flags (`patch_pbkit.py`); default `0x84000001`; A/B `0x80000001` (no 32-bit flag), `0x00000001` (uncompressed). Console only |
+| `-DXGX_Z16_DEPTH_RATIO=<n>` | Z16 depth as if the extreme camera's near plane were at far / n (default 4096; `renderer.md` "Depth"); 0: GX's depth as is |
+| `-DXGX_DEPTH_CULL=1` | cull pixels outside the clip depth range instead of clamping (pre-v15) |
+| `-DXGX_OVERLAP=0` | `xgx_present` waits for the GPU before the flip (up to v32) instead of at the next frame's first GPU use |
+| `-DXGX_PB_KICK=<words>` | pushbuffer words per kick (default 8192) |
+| `-DXGX_VB_CACHE_BREAK=0` | no `BREAK_VERTEX_BUFFER_CACHE` at each batch start |
+| `-DXGX_VBUF_FREE_NOW=0` | evicted display-list vertex buffers go through the deferred free |
 | `-DXGX_TEX_POOL_KB=<n>` | texture pool size (default 8192 at 480, 6144 at 720p) |
-| `-DXGX_DEBUG_MAGENTA` | textures the pool could not take draw magenta instead of untextured |
-| `-DXHW_NO_SPLASH`, `-DXHW_SPLASH_MS=<n>` | boot title card off; its hold time |
-| `-DXGX_DEBUG_PBCHECK` | parse every pushbuffer segment before its kick and log malformed headers as `[PBCHECK]` (first 16): tells a bad command stream from a GPU fault on a good one in xemu, which forgives both |
-| `-DXSDK_SETTINGS_RESET` | test builds: delete `settings.ini` at boot (a first boot), then copy `D:\settings.ini` over it if the disc has one (stage it with `MX_STAGE_EXTRA`) |
-| `XBOX_FORCE=1 tools/xbox/compile_game.py` | rebuild every game unit |
-| `XBOX_KEEP_TEMPS=1` | keep the `.i` / `.lowered.c` intermediates |
-| `XBOX_CFLAGS`, `XBOX_CMAKE_ARGS`, `XBOX_NINJA_ARGS` | passed through by `xbox/build.sh`; `XBOX_CFLAGS` sets the platform's C flags |
+| `-DXGX_STATS_EVERY=<n>` | `[NV2A]`/`[TEX]` stats period in frames (default 600) |
+| `-DXGX_NO_INDIRECT=1` | GX indirect stages draw direct (no BUMPENVMAP; up to v40) |
+| `-DXGX_DEBUG_TRACE` | log every draw of the frame a `SHOT` or BACK captures as `[DRAW]` lines (~400 KB, in `trace.log`); on a BACK frame each EFB copy's source is also a `shotNN.bmp` (up to 8), with autopad also `[FBDUMP]`. `env XGX_SKIP=a-b` leaves those draws out of the traced frame |
+| `-DXGX_DEBUG_VPTRACE[=<n>]` | vertex-program selects of two frames every n (default 600) as `[VPT]`; replay with `vp_policy.py boot.log` |
+| `-DXGX_DEBUG_EFBLOG` | first 200 EFB copies as `[EFB]` lines |
+| `-DXGX_DEBUG_PBCHECK` | parse every pushbuffer segment before its kick, `[PBCHECK]` on malformed headers (first 16): a bad stream vs a GPU fault in xemu |
+| `-DXGX_CHECK_VERTS` | positions decoded by display-list builds at 2^20+, infinite or NaN logged as `[WARN] dlist` (first 32) |
+| `-DXGX_DEBUG_NOMIP`, `-DXGX_DEBUG_NOZ`, `-DXGX_DEBUG_NOCULL`, `-DXGX_DEBUG_NOEFB` | bind only base mip levels; depth test off; face culling off; every EFB-to-texture copy dropped |
+| `-DXGX_DEBUG_MAGENTA` | textures the pool couldn't take draw magenta instead of untextured |
+| `-DPC_AUDIO_SCALAR` | the mixer in plain C instead of SSE1 (`test_audio_mix.py` builds both) |
+| `env MX_LOCKSTEP=1` | game clock moves 1/60 s per frame: every frame is one tick ("Comparing builds by screenshot"); pacing off, `[PERF]` keeps the real clock |
+| `env MX_SIMH_VERBOSE=1` | `[SIMH]` every tick |
+| `env MX_NEXT_XBE=<path>` | 12 s after the match (or at `NEXT`) launch that XBE (`F:\Applications\<folder>\default.xbe` or a `\Device\` path), or `dashboard`; chains a console round |
+| `env MX_VIDEO=480\|480i\|720` | video mode over settings.ini's (`[VIDEO] MX_VIDEO=`); 720 still needs the dashboard to allow it |
+| `env MX_FILL_E=1` | fill E: at boot (`E:\mx_fillN.bin`) to test the full-disk paths (failed saves and shots with notices, `[BOOT] can't write`, log on `D:\`). Use a copy of xemu's HDD; without the line the files are deleted |
+| `env MX_COPY_FIX`, `MX_COPY_STRESS`, `MX_TILE`, `MX_ABLATE` | run-time overrides of the switches above |
+| `N SHOT` | (script) screenshot at frame N: `[FBDUMP]` in xemu, `shotNN.bmp` on the console |
+| `N TSHOT` | (script) screenshot at the match's tick N (as `[SIMH]` counts): the same moment on every run with `MX_LOCKSTEP=1` |
+| `N NEXT` | (script) launch `MX_NEXT_XBE` at frame N (runs without a match); logs `[AUTOPAD] NEXT` |
+| `N BACK` | (script) press BACK: a screenshot in a test build (with `-DXGX_DEBUG_TRACE` the traced frame) |
+| `XBOX_LTO=1`, `XBOX_PGO=gen\|<file>` | build knobs (`docs/toolchain.md`, `docs/pgo.md`): ThinLTO; PGO instrumented (`XHW_PGO`, `[PGOC]` counters at each scene exit) or optimized with a `.profdata` |
+| `XBOX_FORCE=1`, `XBOX_KEEP_TEMPS=1` | `compile_game.py` rebuilds every game unit; keeps the `.i`/`.lowered.c` intermediates |
+| `XBOX_CFLAGS`, `XBOX_CMAKE_ARGS`, `XBOX_NINJA_ARGS` | passed through by `xbox/build.sh` |
 
 ## Straight into a match
 
-With an autopad build, `env` lines in `autopad.txt` set what `getenv`
-returns, so melee-pc's harness hooks work on the Xbox too:
+With an autopad build, `env` lines set what `getenv` returns, so
+melee-pc's harness hooks work on the Xbox:
 
 ```
-env MELEE_BOOT_SCENE=vs        # skip the menus: debug VS (onEnterDebugVs, gmvsmode.c)
+env MELEE_BOOT_SCENE=vs        # skip the menus: debug VS (gmvsmode.c); =title: the title screen (BACK: settings menu, scenarios/settings)
 env MELEE_DEBUG_VS_STAGE=10    # StKind (src/melee/gr/forward.h): 10 = Mute City
 env MELEE_DEBUG_VS=cpu4        # Link, Mario, Fox and DK as four CPUs
 env MELEE_DEBUG_VS_TIME=20     # a 20-second timed match: ends on TIME!
+env MELEE_DEBUG_VS_STOCKS=3    # stock match
 env MELEE_DEBUG_VS_CHARS=4:1h,0 # CKind[:costume][h] (yellow Kirby on port 1, Falcon CPU)
 env MELEE_DEBUG_VS_ITEMS=3     # items on, hex ItemKind mask (capsules, crates)
-env MELEE_DEBUG_VS_INVISIBLE=3 # players 1 and 2 cloaked all match (Invisible Melee: indirect refraction)
+env MELEE_DEBUG_VS_INVISIBLE=3 # players 1 and 2 cloaked (indirect refraction)
 env MELEE_DEBUG_KIRBY_HAT=2    # Kirby spawns with that FighterKind's copy
-env XGX_SKIP=569-570           # -DXGX_DEBUG_TRACE: the traced frame leaves those draws out
+env MELEE_SEED=1               # fixed random seed (also the attract demo's pick)
+env MELEE_NO_ATTRACT=1         # no attract loop
 300 SHOT
 ```
 
-`MELEE_SEED=<n>` fixes the attract demo's pick, and `MELEE_NO_ATTRACT=1`
-turns the attract loop off. `MELEE_BOOT_SCENE=title` starts on the title
-screen, where BACK opens the settings menu (`scenarios/settings`). If a load in xemu is slow enough to trip the
-watchdog ("frames stopped"), it logs `frames again` and the run carries on.
+A slow load in xemu may trip the watchdog ("frames stopped"); it logs
+`frames again` and the run carries on.
 
 ## First-boot checklist
 
-1. Boots past the "no disc image" screen, and `boot.log` shows the
-   `[DVD]` line.
+1. Boots past the "no disc image" screen; `boot.log` has the `[DVD]` line.
 2. The title screen draws, and `[NV2A]` lines appear.
 3. Audio plays on hardware and in xemu.
-4. All four controllers map to players 1-4 by port, and hot-plugging
-   doesn't shuffle them.
-5. At 720p the picture is 16:9 with the HUD at the screen edges. At 480
-   (4:3 dashboard) it matches the GameCube framing.
-6. A 4-player VS match on a busy stage keeps full game speed (`[PERF]`
-   ticks per render under 5) at 30 fps or more.
+4. Controllers map to players 1-4 by port; hot-plugging doesn't shuffle them.
+5. 720p is 16:9 with the HUD at the edges; 480 (4:3) matches the GameCube.
+6. A 4-player VS match on a busy stage keeps full speed (`ticks per render`
+   under 5) at 30 fps or more.
 7. Saving creates `card_a\01-GALE-*.gci`, and it loads back after a reboot.
