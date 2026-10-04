@@ -171,7 +171,8 @@ void xhw_reboot_self(void) {
 }
 
 /* F:\ and E:\ as the kernel names them (xhw_reboot_self: XLaunchXBE wants
- * \Device\ paths) */
+ * \Device\ paths); "dashboard": back to the dashboard, as the in-game reset
+ * does (a round's last build, so its logs can be pulled over FTP) */
 void xhw_launch_xbe(const char* dos_path) {
     char path[300], line[340];
     const char* part = (dos_path[0] | 0x20) == 'f' ? "Partition6" : (dos_path[0] | 0x20) == 'e' ? "Partition1" : NULL;
@@ -191,5 +192,6 @@ void xhw_launch_xbe(const char* dos_path) {
             xhw_log_keep(line);
         }
     }
+    if (strcmp(dos_path, "dashboard") == 0) xhw_quit_to_dashboard();
     launch(path);
 }
