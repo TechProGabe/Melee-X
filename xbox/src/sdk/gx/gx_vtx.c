@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "gx_cull.h"
 #include "gx_internal.h"
 #include "xgx_probe.h"
 #include "xhw.h"
@@ -1753,7 +1754,7 @@ void gx_vtx_frame_end(void) {
  * dynamic, per-vertex matrices, contents changed. */
 int gx_dl_culled(const void* list, u32 nbytes, const float mtx[3][4]) {
     const DlEntry* e = NULL;
-    int i, k;
+    int i;
     if (s_dlc_ready)
         for (i = s_dlc_bucket[dl_bucket((const uint8_t*)list)]; i >= 0; i = s_dlc[i].next)
             if (s_dlc[i].dl == (const uint8_t*)list && s_dlc[i].nbytes == nbytes) {
@@ -1777,29 +1778,11 @@ int gx_dl_culled(const void* list, u32 nbytes, const float mtx[3][4]) {
      * holds for it only when it holds for every corner: it culls a little
      * less than testing the corners, never more, at a third of the cost
      * (the 8-corner version was ~2% of the console's CPU on Fountain of
-     * Dreams). Clip planes x >= -w, x <= w, y >= -w, y <= w and w > 0, each
-     * a row combination of the projection, tested at the box's support
-     * point: n.c + |n|.h < 0 (or <= 0 for w). */
+     * Dreams). The clip planes are kept per projection (gx_cull.h). */
     {
-        float c[3], h[3], v[3], hv[3];
-        static const float sx[5] = { 1, -1, 0, 0, 0 }, sy[5] = { 0, 0, 1, -1, 0 };
-        for (k = 0; k < 3; k++) {
-            c[k] = (e->bmin[k] + e->bmax[k]) * 0.5f;
-            h[k] = (e->bmax[k] - e->bmin[k]) * 0.5f;
-        }
-        for (k = 0; k < 3; k++) {
-            v[k] = mtx[k][0] * c[0] + mtx[k][1] * c[1] + mtx[k][2] * c[2] + mtx[k][3];
-            hv[k] = __builtin_fabsf(mtx[k][0]) * h[0] + __builtin_fabsf(mtx[k][1]) * h[1] + __builtin_fabsf(mtx[k][2]) * h[2];
-        }
-        for (i = 0; i < 5; i++) {
-            float n[4], d, r;
-            for (k = 0; k < 4; k++) n[k] = g_xgx.proj[3][k] + sx[i] * g_xgx.proj[0][k] + sy[i] * g_xgx.proj[1][k];
-            d = n[0] * v[0] + n[1] * v[1] + n[2] * v[2] + n[3];
-            r = __builtin_fabsf(n[0]) * hv[0] + __builtin_fabsf(n[1]) * hv[1] + __builtin_fabsf(n[2]) * hv[2];
-            if (i < 4 ? d + r < 0 : d + r <= 0) return 1;
-        }
+        static GxCullPlanes s_planes;
+        return gx_cull_box(gx_cull_planes(&s_planes, g_xgx.proj, gx_proj_gen), e->bmin, e->bmax, mtx);
     }
-    return 0;
 }
 
 void GXCallDisplayList(const void* list, u32 nbytes) {

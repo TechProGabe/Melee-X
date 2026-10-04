@@ -10,6 +10,7 @@
 
 XgxState g_xgx;
 GxFront g_gx;
+uint32_t gx_proj_gen;
 
 static GXDrawDoneCallback s_draw_done_cb;
 
@@ -33,6 +34,7 @@ GXFifoObj* GXInit(void* base, u32 size) {
     (void)base;
     (void)size;
     memset(&g_xgx, 0, sizeof g_xgx);
+    gx_proj_gen++;   /* the projection is zeros now */
     memset(&g_gx, 0, sizeof g_gx);
     for (i = 0; i < XGX_NUM_POSMTX; i++) {
         identity34(g_xgx.posmtx[i]);
@@ -138,6 +140,7 @@ void GXSetProjection(const void* mtx, GXProjectionType type) {
     if (g_xgx.proj_ortho == (type == GX_ORTHOGRAPHIC) && memcmp(g_xgx.proj, p, sizeof p) == 0) return;
     FLUSH();
     memcpy(g_xgx.proj, p, sizeof p);
+    gx_proj_gen++;
     g_xgx.proj_ortho = type == GX_ORTHOGRAPHIC;
     DIRTY(XGX_DIRTY_PROJ);
 }
