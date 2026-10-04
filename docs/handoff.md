@@ -33,6 +33,35 @@ Updated 2026-10-04 (Windows PC, the frame-rate work).
   "Release"). The repo stays private until the user says to make it public.
   Never commit or push without the user's go-ahead; `dev` is the working
   branch, `main` is releases only.
+- **LAN play:** planned in `docs/lan-plan.md` (two Xboxes, one or two
+  players each, phases 0A-5); 0A and 0B started and paused (below).
+
+## Paused work (2026-10-04, pick up here)
+
+Four agent branches were stopped mid-work at the user's request (usage).
+Each has one local WIP commit on top of `dev` (not pushed) and a
+`HANDOFF-*.md` at its root with what was verified, what is left and the
+next steps; read that first, then finish the gate and merge through the
+merge gate above. The worktrees are under `.claude/worktrees/` (untracked);
+`git worktree list` shows them, and the branches survive if a worktree is
+removed. Agent scratch folders are in `C:\xemu` (`run-0a`, `base-0a`,
+`b`, `run-tex`, `run-audio`); no xemu instance or `C:\xemu\xemu.lock.*`
+slot is left. Up to two xemu instances may run at once (user, 2026-10-04):
+agents take a slot with `mkdir C:/xemu/xemu.lock.1` (or `.2`), use their
+own `MX_RUN`, and kill only their own instances by PID.
+
+| branch | commit | what | state |
+|---|---|---|---|
+| `fix-ac97-boot` | f79352e | roadmap item 9: silent boot. Logs the AC97 and APU state as found at boot (`[AUDIO] found`, `idle`), idles both bus masters and the APU before the first buffer, gives up after one failed recovery (`[AUDIO] stuck since boot`, a 10 s notice, no more cold-reset freezes), records how the last boot ended (`lastexit.txt`, `[BOOT] previous exit`); `-DXHW_AUDIO_TEST`, scenario `relaunch` | builds; not run in xemu or on the console. Next: the xemu runs in `HANDOFF-audio.md` (builds in `C:\xemu\run-audio\builds`), a console test build in `C:\xemu\hw\stage-audio`, the user reproduces (power off mid-match, dashboard, launch), roadmap item 9 |
+| `fix-stadium-tex` | e227b7f | Pokémon Stadium on the console (v51, 720p; shots in `C:\xemu\hw\logs-stadium-tex`): the red lights and platform marks break up because of 16-bit depth at 720p (roadmap item 11 on the branch: lights 0.25 units over the frame, ~0.5-0.7 units a depth step; 32-bit depth is clean in xemu), no fix yet; the faint screen static is the game's own texture (intended); a one-frame garbage screen after ~10 s on other views is roadmap item 3, and the diff (`gx_tex.c`: screen copies kept, bound only at their copy size, dropped at a scene change, longer grace) targets it | `test_tex_cache.py` passes; not verified in xemu. Next: the long Stadium run, `scenarios/clear` (Stage Clear), Stadium shots against `base16`, the other host tests, a console A/B; PGO retrain later |
+| `lan-0a-probes` | 08c7598 | LAN plan phase 0A: RNG trace (`random.c` `PORT:`, `simhash.c`), `MX_JITTER`, `[NETM]`, `simh_diff.py`, round 7 (staged in `C:\xemu\hw\stage-r7`), scenarios `det`, `v1-*` | G0 on gl passes ([SIMH] 62/62, +0.4% instructions, lockstep shots 4/4); fodperf -4.4% (rerun, likely host load); `det` under `-icount` parts at tick 4447 (item 10 reproduces in xemu, lan-plan.md F6); left: jitter runs, final G0, dev control, lan-plan.md, the S1 hand-over |
+| `lan-0b-net` | 3e91404 | LAN plan phase 0B: `xhw_net.c` with D14 enforced below every caller, `xhw_netprobe.c`, `xemu_pair.sh`, `xemu_tap.py`, `net_audit.py`, `eeprom_mac.py`, `lan_probe.py`, `lan_logd.py`, `console2.py`, host tests `test_net_ring`, `test_net_gov`, `test_net_audit` | host tests pass; image +248 KB (autopad build); xemu NAT: DHCP 10.0.2.15 after 10-12 s, PC beacon heard, rtt 0 replies (open decision in lan-plan.md); left: pair, tap, flood, relaunch, new side of G0 (base runs in `C:\xemu\b\g0`), lan-plan.md, the S1 folder |
+
+Host tests that fail on this PC for setup reasons, not code (seen by the
+agents): `test_lower.py` (fails the same on `dev`), `test_vp_encoder.py`
+(no `nv2a_vsh` module in this Python), `vp_policy --check` (prints ok, then
+a Windows temp-file error). Python here: `C:/msys64/mingw64/bin/python3.exe`
+(the `python3` on PATH is the Store stub).
 
 ## Windows setup
 

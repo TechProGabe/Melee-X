@@ -289,9 +289,11 @@ memory in the match within 64 KB of the base (or the difference explained).
   alone is 1,048,833 bytes), leaving ~0.77 MB.
 - Heaps: upstream measured 5.6 MB a snapshot on a PC, 2.2 MB of it statics
   (melee-pc's `netcode-plan.md:50`, `:155`), with 8-byte pointers. On the Xbox 2-3 MB
-  of live heap is a guess (**unverified**; phase 0A logs it). So 3-4 MB a
-  snapshot, 8 slots (`SNAPS`, `net_internal.h:125`): 24-32 MB against
-  6.8-9 MB free in a match (`fps-plan.md:397`, `architecture.md:74-76`).
+  of live heap was the guess; phase 0A's `[NETM]` in xemu measured about
+  6.7 MB (2026-10-04). So ~7.5 MB a snapshot, 8 slots (`SNAPS`,
+  `net_internal.h:125`): ~60 MB against 6.8-9 MB free in a match
+  (`fps-plan.md:397`, `architecture.md:74-76`); D2 (no rollback) holds by
+  a wider margin than planned.
 - Copying 3-4 MB on the console: 10-25 ms (**unverified** estimate from
   150-300 MB/s for uncached copies; phase 0A times it). A tick period is
   16.7 ms.
@@ -305,7 +307,12 @@ memory in the match within 64 KB of the base (or the difference explained).
 - On the console, runs of one build part at tick 4440-4500 on Fountain
   4-CPU seed 1 into the same three outcomes, the seed first
   (`roadmap.md:119-131`, `fps-plan.md:263-267`). xemu under `-icount`
-  never parts; a real-time xemu run parted once (`fps-plan.md:698-702`).
+  was thought never to part; a real-time xemu run parted once
+  (`fps-plan.md:698-702`). **Phase 0A (2026-10-04): `det` twice under
+  `-icount` parts at tick 4447** (first `[SIMH]` difference at 4500), so
+  item 10 reproduces in xemu. One run has 8 more HUD damage-shake draws
+  and no RNG difference before them: the render-written off-screen flag
+  (item 3 below) is the first suspect, ahead of the audio answers.
 - What upstream found on PCs, each a timing input to the simulation, each
   already behind a hook in the imported game code:
   1. "is that voice still playing" decides RNG draws in `crowdsfx.c` and
@@ -412,7 +419,7 @@ format of D5 ends compatibility with melee-pc's v9 peers (out of scope
 anyway); the code stays close enough that a later melee-pc sync is a merge,
 not a rewrite.
 
-**D2. Delay-based lockstep, no rollback.** F5: a snapshot ring needs 24-32
+**D2. Delay-based lockstep, no rollback.** F5: a snapshot ring needs ~60 (measured heap; 24-32 planned)
 MB where 7-9 are free, one snapshot copy costs most of a tick, and a
 seven-frame re-run costs more than a frame on a CPU that already misses 60
 fps. The engine's lockstep path needs none of it. Default input delay 2
@@ -1197,8 +1204,8 @@ Two players a console is not a phase of its own: D5 puts it in phases 1,
 | plan | written 2026-10-04 | this file |
 | D5 players per console | decided 2026-10-04 (the user) | one or two per console, ports 1-2; built from phase 1 |
 | console B | 480i only (the user, F9) | address given when S1 part 2 is due (`MX_FTP_HOST_B`); dashboard and disc image still open |
-| phase 0A offline probes | not started | |
-| phase 0B network layer, probe, xemu pair | not started | |
+| phase 0A offline probes | paused 2026-10-04: branch `lan-0a-probes` (08c7598, WIP), `HANDOFF-0a.md` | G0 on gl passes; `det` parts under `-icount` (F6); left: jitter runs, final G0, the S1 hand-over |
+| phase 0B network layer, probe, xemu pair | paused 2026-10-04: branch `lan-0b-net` (3e91404, WIP), `HANDOFF-0b.md` | host tests pass, +248 KB; NAT: DHCP after 10-12 s, rtt open (question 4); left: pair, tap, flood, relaunch, G0 |
 | S1 console session | not run | item 10's first differing draw; 1v1 and four-fighter fps (B at 480i); `[NETM]`; link, DHCP, RTT; pair on the LAN |
 | phase 1 engine, two-pad wire, reflect session | not started | |
 | phase 2 determinism | not started | |
@@ -1250,6 +1257,21 @@ Still open:
    the user can still say no before phase 3.
 3. D13: hide the ONLINE entry on `dev` now (it leads nowhere until phase
    3), or leave it until LAN PLAY replaces it?
+4. (phase 0B) xemu's NAT hands the PC's datagrams in from 127.0.0.1,
+   which D14 rule 9 drops, and TTL 1 may die in the NAT: measure RTT in
+   the xemu pair (no exception to D14; the plan's choice, unless the user
+   wants a test-only exception for the NAT gate).
+5. (phase 0B) AutoIP binds at least 10 s after link up (lwIP's ACD
+   probes, RFC 3927), and DHCP took 10-12 s in xemu, so Goal 1's "lists
+   the other within 5 s" holds only if the NIC starts before the lobby
+   opens (at the menu, or when VS. Mode opens), or if the 5 s is counted
+   from "address up". Phase 3 decides with the user.
+6. (phase 0B) lwIP 2.2.1 at the pin: `autoip_stop` left AutoIP running
+   (it later took over the DHCP address) and a router advertisement made
+   lwIP send IPv6 with no IPv6 address: both worked around in
+   `xhw_net.c`. Not handled yet: a DHCP lease arriving during a
+   link-local session changes the address under it (D14 rule 5); phase 3
+   holds DHCP back while a session runs.
 
 ## Picking this up
 
