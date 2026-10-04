@@ -116,8 +116,8 @@ CHAINS[5] = [
 ]
 # round 6, the final one: the build releases will be (LTO + PGO, the colour
 # tile on) at 720p twice and on Final Destination; the merged clear
-# (MX_COPY_FIX 7) and the state trims (MX_TRIM 15, docs/renderer.md "State
-# trims") alone and together; 480p with the tile on and off; lockstep shots
+# (MX_COPY_FIX 7) and the state trims (MX_TRIM 15, removed after it, 56d5ab1)
+# alone and together; 480p with the tile on and off; lockstep shots
 # that must match byte for byte (480p tile off against on, 720p defaults
 # against both switches); the settings menu; and the merged clear under the
 # copy stress (the GPU stall it sits next to, scenarios/stall), last.

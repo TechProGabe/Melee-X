@@ -254,6 +254,21 @@ swapped between runs. A run without the fix has to fail reliably before
 a fixed run counts. Delete `autopad.txt` from the console afterwards (a
 release build ignores it).
 
+### Console rounds (many A/B runs, one launch)
+
+`tools/xbox/console_round.py N stage|upload|watch|report|shots|clean`
+(`docs/fps-plan.md` rounds 2-6): each run of round N is an autopad build in
+a folder of its own (`F:\Applications\Melee-X-rN?`, the disc image taken
+from `Melee-X`) with a script from `CHAINS[N]` (scenario plus `env`
+switches). A run ends by launching the next folder (`env MX_NEXT_XBE`, 12 s
+after the match or at `NEXT`), keeping its log as `boot_<folder>.log` and
+its shots as `shot_<folder>_NN.bmp`; the last one returns to the dashboard.
+`watch` waits for the dashboard's FTP and pulls everything into
+`$MX_HW/logs-rN`, `report` tabulates fps, buckets and GPU waits per run,
+`shots` groups byte-identical shots (lockstep runs, `MX_LOCKSTEP=1` and
+`TSHOT`), `clean` takes the folders off. The first run of a chain runs
+~4% slow: make it a warm-up.
+
 ## Measuring on the console
 
 Every build logs a `[PERF]` line every 5 s (`xhw_perf.c`): fps and the
