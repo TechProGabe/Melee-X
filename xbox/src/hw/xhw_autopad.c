@@ -13,6 +13,7 @@
  *     SL SR SU SD                                         left stick, full tilt
  *     CL CR CU CD                                         right stick (C-stick)
  *     SHOT                                                [FBDUMP] of the next frame
+ *     NEXT                                                launch MX_NEXT_XBE now
  * Example: "600 A" presses A at frame 600; "900 SHOT" takes a screenshot.
  * "600 TSHOT" takes one at the match's tick 600 instead (counted as [SIMH]
  * counts, test builds): with env MX_LOCKSTEP=1 the same moment in every
@@ -45,6 +46,7 @@ typedef struct {
     uint32_t buttons;
     int16_t lx, ly, rx, ry;
     uint8_t lt, rt, shot, shot_done;   /* shot 2: TSHOT, frame is a match tick */
+    uint8_t next;
 } Event;
 
 #define MAX_EVENTS 512
@@ -76,6 +78,7 @@ static int parse_token(Event* e, const char* t) {
     else if (!strcmp(t, "CD")) e->ry = -32767;
     else if (!strcmp(t, "SHOT")) e->shot = 1;
     else if (!strcmp(t, "TSHOT")) e->shot = 2;
+    else if (!strcmp(t, "NEXT")) e->next = 1;
     else return 0;
     return 1;
 }
@@ -177,6 +180,14 @@ void xhw_autopad_apply(int port, xhw_pad* out) {
     out->connected = 1;
     for (i = 0; i < s_nev; i++) {
         Event* e = &s_ev[i];
+        if (e->next) {   /* a run without a match (the title's settings menu) chains on here */
+            const char* next = getenv("MX_NEXT_XBE");
+            if (f >= e->frame && next) {
+                xhw_logf("[AUTOPAD] NEXT at frame %u", f);
+                xhw_launch_xbe(next);
+            }
+            continue;
+        }
         if (e->shot) {
             if (!e->shot_done && (e->shot == 2 ? s_match_tick : f) >= e->frame) {
                 e->shot_done = 1;

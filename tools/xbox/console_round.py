@@ -39,6 +39,11 @@ FODLONG = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_D
 FODSHOT = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_DEBUG_VS=cpu4',
            'env MELEE_DEBUG_VS_TIME=30', 'env MELEE_SEED=1', 'env MX_LOCKSTEP=1',
            '200 TSHOT', '500 TSHOT', '800 TSHOT', '1200 TSHOT']
+# the title's settings menu, which the CPU draws into the framebuffer
+# (xhw_overlay.c): the title with its hint line, then the menu; NEXT leaves
+# with the menu open, so settings.ini isn't written
+MENU = ['env MELEE_BOOT_SCENE=title', 'env MELEE_NO_ATTRACT=1', 'env MX_LOCKSTEP=1',
+        '1200 SHOT', '1230 BACK', '1290 SHOT', '1350 NEXT']
 FD = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=32', 'env MELEE_DEBUG_VS_CHARS=2,8',
       'env MELEE_DEBUG_VS_TIME=60', 'env MELEE_SEED=1']
 # folder, build, scenario, switches: in the order they run. Rounds 2 and 3
@@ -89,6 +94,19 @@ CHAINS[4] = [('Melee-X-r4a', 'final', 'fod', {})] + [
 ] + [
     (f'Melee-X-r4{chr(105 + i)}', 'final', 'fodshot', {'MX_TILE': str(t)}) for i, t in enumerate((0, 3, 5, 8))
 ]
+# round 5: round 4's colour tile (MX_TILE 4: pbkit's base|2 plus the
+# enable bit) with the CPU's framebuffer access through the NV2A's aperture
+# (nv2a.c fb_cpu). The settings menu and lockstep shots with the tile off
+# and on: a shot with the tile on is written twice, through the aperture
+# and at pbkit's address (the tiled layout), so the first must match the
+# tile-off run's. Then the frame rate with the tile on once more.
+CHAINS[5] = [
+    ('Melee-X-r5a', 'final', 'menu', {'MX_TILE': '0'}),
+    ('Melee-X-r5b', 'final', 'menu', {'MX_TILE': '4'}),
+    ('Melee-X-r5c', 'final', 'fodshot', {'MX_TILE': '0'}),
+    ('Melee-X-r5d', 'final', 'fodshot', {'MX_TILE': '4'}),
+    ('Melee-X-r5e', 'final', 'fod', {'MX_TILE': '4'}),
+]
 CHAIN = []   # main(): CHAINS[N]
 
 
@@ -96,7 +114,7 @@ def script(i):
     folder, build, scen, sw = CHAIN[i]
     lines = [f'# docs/fps-plan.md round {ROUND}, run {i + 1} of {len(CHAIN)}: {build}, {scen}, '
              + (' '.join(f'{k}={v}' for k, v in sw.items()) or 'no switches')]
-    lines += {'fod': FOD, 'fodlong': FODLONG, 'fd': FD, 'fodshot': FODSHOT}[scen]
+    lines += {'fod': FOD, 'fodlong': FODLONG, 'fd': FD, 'fodshot': FODSHOT, 'menu': MENU}[scen]
     lines += [f'env {k}={v}' for k, v in sw.items()]
     if i + 1 < len(CHAIN):
         lines.append(f'env MX_NEXT_XBE=F:\\Applications\\{CHAIN[i + 1][0]}\\default.xbe')
@@ -182,7 +200,7 @@ def watch():
                 except ftplib.error_perm:
                     continue
                 text = buf.getvalue().decode('utf-8', 'replace')
-                if '[GAME] match ends' not in text:
+                if '[GAME] match ends' not in text and '[AUTOPAD] NEXT' not in text:   # NEXT: a run without a match
                     continue
                 run = run_name(text)
                 out = LOGS / f'{run}.log'
@@ -262,7 +280,7 @@ def report():
         ms = {k: sum(r[0] * r[2].get(k, 0) for r in rows) / frames for k in ('sim', 'render', 'dlist', 'draw', 'gpu')}
         draws = sum(r[0] * r[4] for r in rows) / frames
         ticks = sum(r[0] * r[3] for r in rows) / frames
-        swn = ','.join(k[3:].lower() for k in sw) or '-'
+        swn = ','.join(k[3:].lower() + ('' if v == '1' else f'={v}') for k, v in sw.items()) or '-'
         print(f'{folder:12s} {build:14s} {scen:7s} {swn:28s} {len(rows):3d} {frames / secs:6.2f} {ms["sim"]:5.2f} '
               f'{ms["render"]:5.2f} {ms["dlist"]:5.2f} {ms["draw"]:5.2f} {ms["gpu"]:5.2f} {draws:6.0f} {ticks:6.2f}'
               + (f' {gw[0]:5.0f} {gw[1]:5.2f} {gw[2]:5.2f}' if gw else ''))

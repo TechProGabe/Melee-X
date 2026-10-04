@@ -448,6 +448,22 @@ setup) and logs all eight regions at boot; a console A/B of fps and shots
 picks the default. It supersedes the build-time `OCX_Z16_TILE_FLAGS`
 A/B for the format bit (bit 1), which never ran.
 
+**The colour tile is on by default (`XGX_TILE` 4, 2026-10-03).** Console
+round 4 answered it: tile 0 with the enable bit (`base | 1` or
+`base | 3`) is +11% at 720p on Fountain (36.2 -> 40.2 fps, the GPU's wait
+5.4 -> 3.3 ms a frame), so pbkit's `base | 2` left the framebuffers
+untiled, as envytools has it; the Z compression settings changed nothing
+and stay as pbkit sets them. 4 is pbkit's word plus the enable bit. The
+picture is byte for byte the same (lockstep shots), but the CPU at pbkit's
+0x8xxxxxxx addresses sees the raw tiled layout: everything the CPU reads
+or writes in a framebuffer (the settings menu, BACK screenshots, the CPU
+EFB readback) goes through the NV2A's aperture at 0xF0000000 + physical
+instead (`nv2a.c` `fb_cpu`), which round 5 showed goes through the tile
+(shots there byte for byte the untiled ones, the menu drawn right). The
+kernel's own framebuffer (the crash, hang and error screens) is outside
+tile 0. Not yet run on the console at 480p, where tile 0's pitch (2560)
+also matches and the tile is on too.
+
 ## Edits to imported code
 
 Imported files are kept as they are upstream except for these edits, each

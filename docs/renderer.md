@@ -372,7 +372,18 @@ tile 1 over the depth buffer with compression (tag base 0), both pitches
 `-DXGX_TILE=<bits>` (test builds: `env MX_TILE=`) re-programs both in
 `tiles_setup`, at boot before the first frame's clear: 1 the Z16 format,
 2 tile 0 as `base | 1`, 4 tile 0 as `base | 3`, 8 no Z compression (the
-A/B's baseline). The default (0) leaves pbkit's setup. A tile is only
+A/B's baseline); 0 leaves pbkit's setup. The default is 4: console round 4
+(`fps-plan.md`) found the enable bit is bit 0, as envytools has it, and
+the tiled framebuffers +11% at 720p on Fountain; the Z settings changed
+nothing.
+
+With tile 0 on, the CPU must not touch a framebuffer at pbkit's
+0x8xxxxxxx address: it bypasses the tile and sees the raw layout (256-byte
+tiles of 64 bytes by 4 rows with bank swizzles; round 4's shots read
+there were the picture's 16-byte chunks rearranged). The NV2A's aperture
+(BAR1, 0xF0000000 + physical, mapped once by `tiles_setup`) goes through
+the tile, so `fb_cpu` hands that address to the settings menu
+(`xhw_overlay_draw`), screenshots and `read_rect_cpu`. A tile is only
 changed when its pitch is the surface's (not under `-DXHW_VIDEO_480_BPP=16`,
 whose 1280-byte rows sit in 1536-byte tiles). The boot line `[NV2A]
 tiles` reads all eight regions back, their compression words and the tag
