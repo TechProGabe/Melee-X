@@ -21,7 +21,7 @@ v4 is a big update. The three headliners: **it's a lot faster, particle effects 
 - Fixed a crash after many matches in a row.
 - Fixed memory slowly running out during long sessions.
 - No more silent boots that freeze every few seconds after a crash or power cycle.
-- Pokémon Stadium's big screen no longer flashes garbage, and its text shows again.
+- Pokémon Stadium's big screen no longer flashes garbage, and its text now shows.
 - Team Jigglypuff and Team Kirby cards draw properly at 720p.
 - A full or unwritable `E:` is now reported on screen, and a failed save can't wipe your old one.
 - 128 MB consoles always run in 64 MB; the Use 128 MB RAM option is gone.
