@@ -3505,6 +3505,87 @@ void xgx_read_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, uint8_t*
 /* ======================================================================
  * Init
  * ====================================================================== */
+/* Tile regions (docs/renderer.md "Tile regions"). pb_init puts the three
+ * framebuffers in PFB tile 0 and the depth buffer in tile 1 with Z
+ * compression, writing each tile's base word as base | 2 | (flags & 1):
+ * tile 0 gets base | 2, tile 1 base | 3. envytools, nouveau (nv20_fb.c) and
+ * xemu's register header call bit 0 the region's enable and bit 1 a bank
+ * offset, which would leave the framebuffers untiled; pbkit's (from the
+ * XDK) would have bit 1 always on. Tile 1's compression word gets the
+ * Z24S8 format bit (0x04000000) also for the Z16 buffer at 720p. Both are
+ * layout only: a tile region is the memory controller's address mapping,
+ * the same for every client, and Z compression stores a block only when
+ * its depths come back exactly, so the picture can't change. Bits of
+ * -DXGX_TILE (default 0, pbkit's setup untouched; test builds also take
+ * "env MX_TILE=n" from the autopad script):
+ *   1 the Z16 depth tile compresses as Z16 (no 0x04000000), as
+ *     -DOCX_Z16_TILE_FLAGS=0x80000001 would; nothing at 32 bits
+ *   2 tile 0 (colour) gets the enable bit as envytools has it: base | 1
+ *   4 tile 0 gets both low bits: base | 3 (wins over 2)
+ *   8 no Z compression (tile 1's compression word 0), for the A/B's baseline
+ * Only a tile whose pitch is the surface's is changed (it is at 640 and
+ * 1280 wide; not with -DXHW_VIDEO_480_BPP=16, 1280 bytes in a 1536 tile).
+ * The "[NV2A] tiles" line at boot reads all eight regions back either way. */
+#ifndef XGX_TILE
+#define XGX_TILE 0
+#endif
+static int s_tile = XGX_TILE;
+
+#define ZCOMP_VALID 0x80000000u
+#define ZCOMP_Z32 0x04000000u
+
+/* pbkit's pb_assign_tile order: PFB, PGRAPH's copy, PGRAPH's RDI copy */
+static void tile_write(uint32_t pfb, uint32_t pgraph, uint32_t rdi, uint32_t v) {
+    unsigned n = 0;
+    do {
+        while (VIDEOREG(NV_PGRAPH_STATUS) && ++n < 4000000u) {}
+        VIDEOREG(pfb) = v;
+        VIDEOREG(pgraph) = v;
+        VIDEOREG(NV_PGRAPH_RDI_INDEX) = (rdi & NV_PGRAPH_RDI_INDEX_ADDRESS) | ((0xEAu << 16) & NV_PGRAPH_RDI_INDEX_SELECT);
+        VIDEOREG(NV_PGRAPH_RDI_DATA) = v;
+    } while (VIDEOREG(pfb) != VIDEOREG(pgraph) && ++n < 4000000u);
+}
+
+static void tiles_setup(void) {
+    uint32_t i, zpitch = pb_back_buffer_width() * (pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? 2 : 4);
+    int fb_ok = VIDEOREG(NV_PFB_TILE + 8) == pb_back_buffer_pitch(), z_ok = VIDEOREG(NV_PFB_TILE + 16 + 8) == zpitch;
+    char line[900];
+    int n;
+#if defined(XHW_AUTOPAD) && XHW_AUTOPAD
+    {
+        const char* e = getenv("MX_TILE");
+        if (e) s_tile = (int)strtol(e, NULL, 0);
+    }
+#endif
+    if (s_tile) {
+        uint32_t t0 = VIDEOREG(NV_PFB_TILE), z1 = VIDEOREG(NV_PFB_ZCOMP + 4), old;
+        if (fb_ok && (s_tile & 6)) t0 = (t0 & ~3u) | (s_tile & 4 ? 3u : 1u);
+        if (z_ok && (s_tile & 1) && pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16 && (z1 & ZCOMP_VALID))
+            z1 &= ~ZCOMP_Z32;
+        if (z_ok && (s_tile & 8)) z1 = 0;
+        /* idle, and the pusher held off while the regions change; the
+         * framebuffers and depth buffer are cleared before anything reads
+         * them (frame_open), so what the old layout left there is moot */
+        wait_idle();
+        old = pb_wait_until_tiles_not_busy();
+        if (t0 != VIDEOREG(NV_PFB_TILE)) tile_write(NV_PFB_TILE, NV_PGRAPH_TILE_XBOX, 0x10, t0);
+        if (z1 != VIDEOREG(NV_PFB_ZCOMP + 4)) tile_write(NV_PFB_ZCOMP + 4, NV_PGRAPH_ZCOMP_XBOX + 4, 0x90 + 4, z1);
+        VIDEOREG(NV_PFIFO_CACHE1_DMA_PUSH) = old;
+    }
+    n = snprintf(line, sizeof line, "[NV2A] tiles (XGX_TILE %d%s%s), tags %u:", s_tile, fb_ok ? "" : ", fb pitch differs",
+                 z_ok ? "" : ", depth pitch differs", (unsigned)VIDEOREG(0x100320));
+    for (i = 0; i < 8 && n > 0 && n < (int)sizeof line; i++) {
+        uint32_t t = VIDEOREG(NV_PFB_TILE + i * 16), z = VIDEOREG(NV_PFB_ZCOMP + i * 4);
+        if (!t && !z) continue;
+        n += snprintf(line + n, sizeof line - (size_t)n, " %u: %08x-%08x pitch %x zcomp %08x%s", (unsigned)i, (unsigned)t,
+                      (unsigned)VIDEOREG(NV_PFB_TLIMIT + i * 16), (unsigned)VIDEOREG(NV_PFB_TSIZE + i * 16), (unsigned)z,
+                      t != VIDEOREG(NV_PGRAPH_TILE_XBOX + i * 16) || z != VIDEOREG(NV_PGRAPH_ZCOMP_XBOX + i * 4)
+                          ? " (PGRAPH differs)"
+                          : "");
+    }
+    xhw_logf("%s", line);
+}
+
 static void setup_state(void) {
     uint32_t* p = pb_begin();
     p = pb_push1(p, NV097_SET_CONTROL0, CONTROL0);
@@ -3596,6 +3677,7 @@ int xgx_init(void) {
     /* optional: without it display lists are decoded every call */
     while (!pool_init(&s_vb, vb_pool_bytes) && vb_pool_bytes > VB_POOL_MIN) vb_pool_bytes -= 1024u * 1024;
     if (!s_vb.base) xhw_logf("[NV2A] no memory for the %u KB vertex cache", vb_pool_bytes / 1024);
+    tiles_setup();
     pb_show_front_screen();
     s_fbw = (int)pb_back_buffer_width();
     s_fbh = (int)pb_back_buffer_height();

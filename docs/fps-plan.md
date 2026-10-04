@@ -233,7 +233,11 @@ limit (45.6 fps, the CPU's pace), so fill costs at least 9-10 ms of it;
 the reflection pass costs 4.4 ms, the shadow maps 2.2 ms, the EFB copies
 nothing measurable. Next: fill rate without changing the picture (the
 framebuffer and depth buffer are not in NV2A tile regions, so no Z
-compression; texture layouts; blending and clears).
+compression; texture layouts; blending and clears). Correction (branch
+`fps-tile`): pbkit does put them in tiles 0 and 1, depth compressed, but
+tile 0 may lack its enable bit and the Z16 buffer's compression says
+Z24S8; `-DXGX_TILE` / `env MX_TILE=` re-programs both for a console A/B
+(`renderer.md` "Tile regions").
 
 Hardware `[SIMH]`: runs of the same build part at tick 4440-4500 into
 three outcomes (round 2 too, before the new mixer): something that
