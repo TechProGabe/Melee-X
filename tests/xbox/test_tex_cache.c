@@ -323,6 +323,7 @@ static void change_texels(const Tex* t) {
 
 int main(void) {
     static Tex* scene[600];
+    static Tex idle_tex[2];
     int nscene = 0, i, k, frame, mats_per_frame;
     uint64_t binds = 0, fast = 0, chg_data = 0, chg_tlut = 0, drops = 0, evicts = 0, copies = 0;
     int max_count = 0, max_stable = 0;
@@ -339,6 +340,10 @@ int main(void) {
         Tex* t = &s_tex[s_ntex++];
         make_tex(t, 0);
         t->data = s_efb_off[i];
+    }
+    for (i = 0; i < 2; i++) {   /* on copies 6 and 7, which go idle past the idle release */
+        make_tex(&idle_tex[i], 0);
+        idle_tex[i].data = s_efb_off[6 + i];
     }
     load_tluts();
     for (frame = 0; frame < 4000; frame++) {
@@ -410,7 +415,19 @@ int main(void) {
                     binds++;
                 }
             if (below(50) == 0) bind_bad();
-            if (below(30) == 0) efb_copy((int)below(NEFB));
+            if (below(30) == 0) {
+                /* copies 6 and 7 only early in each 1000 frames, bound
+                 * again only after the idle release's 600 frames and
+                 * before the scene change at 750 (Pokémon Stadium's screen
+                 * back on the fight camera), at the copy's size or another */
+                int c = (int)below(NEFB);
+                if (c < 6 || phase < 50) efb_copy(c);
+            }
+            if (phase >= 650 && phase < 750 && below(40) == 0) {
+                Tex v = idle_tex[below(2)];
+                if (below(2)) v.w = (uint16_t)k_dims[3 + below(5)], v.h = (uint16_t)k_dims[3 + below(5)];
+                bind(&v, below(8));
+            }
             if (below(400) == 0) change_texels(scene[below((uint32_t)pick)]);
         }
         if (below(300) == 0) {

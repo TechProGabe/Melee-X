@@ -363,7 +363,8 @@ static int lru_victim(void) {
         const Entry* e = &s_cache[i];
         if (is_bound(e->tex)) continue;
         if (e->last_used != s_frame) {
-            int32_t rank = (int32_t)(s_frame - e->last_used) - (e->efb ? EFB_GRACE : 0);   /* higher: evict first */
+            int32_t rank = (int32_t)(s_frame - e->last_used) -
+                           (e->efb > 1 ? 3600 : e->efb ? EFB_GRACE : 0);   /* higher: evict first (as gx_tex.c) */
             if (pick < 0 || rank > best) {
                 pick = i;
                 best = rank;
@@ -394,7 +395,8 @@ int gx_tex_grow_for_frame(void) { return only_hot_left() && xgx_tex_pool_grow();
 void gx_tex_scene_leave(void) {
     int i;
     for (i = s_count - 1; i >= 0; i--)
-        if (xgx_tex_in_overflow(s_cache[i].tex)) drop_at(i);
+        if (xgx_tex_in_overflow(s_cache[i].tex) || (s_cache[i].efb && s_frame - s_cache[i].last_used > 600))
+            drop_at(i);   /* idle EFB copies: as gx_tex.c since they are kept past the idle release */
     xgx_tex_pool_shrink();
 }
 
@@ -691,6 +693,10 @@ void gx_tex_bind(uint32_t map, const GXTexObj* obj) {
 #endif
     bytes = GXGetTexBufferSize(o->w, o->h, o->fmt, o->mipmap, (u8)levels);
     e = find(o->data, o->w, o->h, o->fmt, (uint8_t)levels, tl ? tl->data : NULL);
+    if (e && e->efb && s_frame - e->last_used > 600 && (e->w != o->w || e->h != o->h)) {
+        drop(e);   /* an idle copy binds only as the size it was copied at, as in gx_tex.c */
+        e = NULL;
+    }
     if (e && !e->efb && tex_due(e)) {
         int quick = e->stable >= TEX_STABLE, texels;
         hash = quick ? quick_hash(o->data, bytes) : hash_bytes(o->data, bytes);
@@ -798,6 +804,7 @@ void gx_tex_note_efb_copy(const void* dest, uint32_t tex, uint32_t w, uint32_t h
             s_cache[hit].h = (uint16_t)h;
             s_cache[hit].fmt = (uint8_t)fmt;
             s_cache[hit].last_used = s_frame;
+            s_cache[hit].efb = 2;   /* copied to again: as gx_tex.c's lru_victim */
             return;
         }
         drop_at(hit);
@@ -857,7 +864,7 @@ void gx_tex_frame_end(void) {
     }
     s_frame++;
     for (i = 0; i < s_count; i++)
-        if (s_frame - s_cache[i].last_used > 600) {
+        if (!s_cache[i].efb && s_frame - s_cache[i].last_used > 600) {   /* EFB copies stay, as in gx_tex.c */
             drop_at(i);
             i--;
         }
