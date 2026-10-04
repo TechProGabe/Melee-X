@@ -23,7 +23,6 @@ typedef struct {
     int progressive;         /* 1: 480p when the dashboard allows it; 0: 480i */
     int widescreen;          /* 1: 16:9 at 480 when the dashboard says widescreen */
     int fps;                 /* 1: frame-rate counter on screen */
-    int ram128;              /* 1: use the RAM above 64 MB on a 128 MB console (untested) */
     int shots;               /* 1: BACK takes a screenshot (shotNN.bmp in the save folder) */
     int led;                 /* 1: front LED effects (KOs, the last seconds, GAME!) */
     float rumble;            /* 0..1 */
@@ -31,7 +30,7 @@ typedef struct {
 } xsdk_settings;
 
 extern xsdk_settings g_xsdk_settings;
-extern xsdk_settings g_xsdk_settings_boot;   /* as loaded at boot: what the video mode and memory use */
+extern xsdk_settings g_xsdk_settings_boot;   /* as loaded at boot: what the video mode uses */
 
 void xsdk_settings_load(void);
 int xsdk_settings_save(void);   /* 0: failed, settings.ini left as it was */

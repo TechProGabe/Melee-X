@@ -116,8 +116,8 @@ int xhw_lazy_is_committed(const void* p);
 void xhw_lazy_decommit(void* chunk);
 uint32_t xhw_mem_free_kb(void);
 /* 128 MB consoles: takes the RAM above 64 MB for good, so the game and the
- * kernel run in the low 64 MB as on a stock console (settings.ini
- * ram128 = 0, the default). Returns the KB held; 0 on a 64 MB console. */
+ * kernel run in the low 64 MB as on a stock console (every boot, xsdk_early).
+ * Returns the KB held; 0 on a 64 MB console. */
 uint32_t xhw_mem_hold_upper(void);
 /* 1: the console has RAM above 64 MB (MmQueryStatistics' physical pages). */
 int xhw_mem_has_upper(void);
