@@ -618,6 +618,7 @@ typedef struct {
     void* base;             /* the allocation: the palette of a P8 texture, then its levels */
     uint32_t pal;           /* P8: SET_TEXTURE_PALETTE value; 0: none */
     uint32_t gen;           /* bumped per texture made: a new one at a freed one's address differs */
+    uint8_t mask_rgb;       /* a 16-bit Z-texture mask: in rgb, alpha reads 1 (xgx_tex_from_efb) */
 } Tex;
 static Tex s_tex[MAX_TEX];
 static uint32_t s_tex_epoch;   /* bumped whenever an s_tex entry changes (emit_textures' memo) */
@@ -836,6 +837,7 @@ static uint32_t tex_create_rect(uint32_t w, uint32_t h, uint32_t fmt, const uint
     for (y = 0; y < h; y++) memcpy(base + y * pitch, src + y * row, row);   /* in order: write-combined */
     s_tex_epoch++;
     s_tex[id].used = 1;
+    s_tex[id].mask_rgb = 0;
     s_tex[id].rect = 1;
     s_tex[id].pitch = (uint16_t)pitch;
     s_tex[id].w = (uint16_t)w;
@@ -904,6 +906,7 @@ uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, c
     if (pal_bytes) memcpy(base, src, pal_bytes);   /* after the levels in `data` */
     s_tex_epoch++;
     s_tex[id].used = 1;
+    s_tex[id].mask_rgb = 0;
     s_tex[id].rect = 0;
     s_tex[id].pitch = 0;
     s_tex[id].w = (uint16_t)pw;
@@ -2838,6 +2841,12 @@ static void derive_units(const XgxState* st) {
         r->unit = last->unit;
         r->ras = 2;
         r->tex_swz = r->ras_swz = RC_SWZ_ID;
+        /* at 16 bits the mask is in rgb and alpha samples 1 (R5G6B5): with
+         * TEXA every tile drew whole, the card's right half black */
+        {
+            uint32_t mt = st->map[s_d_unit_map[last->unit]].tex;
+            if (mt && mt < MAX_TEX && s_tex[mt].mask_rgb) r->tex_swz = 0x24;   /* r g b r: alpha from red */
+        }
         rc->nstages++;
     }
     s_d_nunits = nunits;
@@ -2970,9 +2979,10 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     /* Its inputs, without indirect stages: the TEV stages, swap tables and
      * Z texture (XGX_DIRTY_TEV), the texgens a bump pair uses (TEXGEN) and
      * which maps hold a texture. A draw that only rebinds textures (MAPS
-     * alone, the common case) to the same maps derives the same units. */
+     * alone, the common case) to the same maps derives the same units;
+     * with a Z texture the mask's kind (mask_rgb) is read from the map. */
     if ((d & DIRTY_UNITS) &&
-        ((d & (XGX_DIRTY_TEV | XGX_DIRTY_TEXGEN)) || st->nind || bound_maps(st) != s_d_maps))
+        ((d & (XGX_DIRTY_TEV | XGX_DIRTY_TEXGEN)) || st->nind || st->ztex || bound_maps(st) != s_d_maps))
         derive_units(st);
     if ((d & DIRTY_VK) || lay != s_d_layout) {
         VpKey old = s_d_vk;
@@ -3510,6 +3520,9 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
         reusable = reuse && reuse < MAX_TEX && s_tex[reuse].used && s_tex[reuse].w == pw && s_tex[reuse].h == ph &&
                    s_tex[reuse].levels == 1 && !s_tex[reuse].rect && s_tex[reuse].nvfmt == nv_format(cfmt);
         tex = reusable ? reuse : xgx_tex_create(pw, ph, 1, cfmt, NULL);
+        /* R5G6B5 keeps no alpha: a 16-bit Z-texture mask (XGX_COPY_GREEN,
+         * xgx_ztex_mask) is read from its rgb by the Z-texture stage */
+        if (tex) s_tex[tex].mask_rgb = cfmt == XGX_TEX_RGB565 && mode == XGX_COPY_GREEN;
         if (tex && !xhw_ablate(XHW_AB_NOCOPY)) efb_copy_gpu(src, &s_tex[tex], mode);   /* probe window */
         return tex;
     }
