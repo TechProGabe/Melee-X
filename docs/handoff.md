@@ -6,18 +6,24 @@ notes don't travel between machines, so what they held is here. Read
 
 ## Where it stands
 
-Updated 2026-10-04 (Windows PC, v52).
+Updated 2026-10-04 (Windows PC, v54 = the v4 release candidate).
 
-- **Latest release: v3** (`.github/release-notes.md`), built on GitHub with
-  ThinLTO + PGO (`docs/toolchain.md` "Release").
-- **On both consoles: v52**, `dev` at ef52994 (pushed): a test
-  build (`-DXHW_PROF=1`, LTO + PGO), stage `C:\xemu\hw\stage-v52`, map
-  `melee_x.v52.map`. It adds the Stadium big-screen copy fix (roadmap
-  item 3), the AC97 boot fix (item 9) and the full/unwritable E: handling
-  to the frame-rate work. xemu gate passed (`C:\xemu\rc52`, roadmap "Where
-  it stands"). Red's first session was clean (`C:\xemu\hw\logs52-red-1`).
-  Next: gold's session, burn-in on both, the user's audio repro (power off
-  mid-match, dashboard, launch), PGO retrain (gx_tex.c changed).
+- **Releases:** v3 is out; **v4 is the v54 build** (`main` fast-forwarded to
+  it; published by the GitHub `build` workflow with release tag `v4`,
+  notes in `.github/release-notes.md`). Built with ThinLTO + PGO; the
+  profile was retrained on the v53 code (`docs/pgo.md`).
+- **On both consoles: v54**, a plain (release-style) build, stage
+  `C:\xemu\hw\stage-v54`, map `melee_x.v54.map`. Over v52 it adds the
+  grAnime longjmp fix (stage events on ~20 stages: Kraid, Bullet Bills,
+  Onett, the Corneria comm window), particles (GX raw FIFO writers), the
+  audio-heap/SFX-hash lock (tester crash), the SDL event drain (the
+  memory leak), Z24S8 depth at 720p, Stadium screen text, 720p team
+  cards, 128 MB mode removed. Console: particles, Stadium, Bullet Bills,
+  Team Jigglypuff card, credits and ending, Onett confirmed by the user;
+  16-minute burn-ins on both clean (no crash, audio healthy, no leak:
+  `C:\xemu\hw\logs54-*`). Open: Rainbow Cruise flicker (roadmap "Other
+  open"); trophy view lighting not yet re-checked; red at 720p ends long
+  mixed sessions with 2.5-6 MB free (Z24 costs 1.8 MB).
 - **Consoles**: red and gold (addresses off the repo; CLAUDE.md,
   `docs/testing.md`). Pull logs before every relaunch or deploy.
 - **Reddit tester** (v3; 128 MB + CPU upgrade; settings.ini not
