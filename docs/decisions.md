@@ -322,6 +322,20 @@ so screenshots of builds of different speed compare at the same tick.
 Profiler builds also write each match's whole profile once (`prof.bin`,
 `[PROFH]`), since the periodic `[PROF]` report holds only ~60% of samples.
 
+**Memory breakdown, and SDL's event queue drained.** Test builds log
+`[MEMB]` once a minute (`testing.md`): the kernel's buckets
+(`MmQueryStatistics`), nxdk's malloc heap (`dlmallinfo`), threads, SDL's
+queued events and the display-list cache's share. The v39-v52 leak (free
+RAM falling in 64 KB steps with MEM1+ARAM flat, only on consoles with a
+controller in use) matched SDL2's event queue: `SDL_Init(GAMECONTROLLER)`
+starts it, nxdk's joystick driver queues an `SDL_JOY*` event per change,
+and nothing here reads events, so each stayed in a malloc'd ~80-byte entry
+(up to 65535). `xhw_pad.c` turns joystick events off
+(`SDL_JoystickEventState(SDL_IGNORE)`; the controller layer reads joystick
+state directly) and flushes the queue every poll. `-DXHW_PAD_DRAIN=0`
+restores the old behaviour; `env MX_PAD_NOISE=<n>` (test builds) queues n
+axis events a poll the way SDL does, the only way to see it in xemu.
+
 **Tried on the console and removed** (`fps-plan.md`), none changing what is
 simulated or drawn: a deferred back end replaying draw records (B4, -6%);
 MEM1 on 4 MB pages via the page directory's self-map (B2, +1.7% then

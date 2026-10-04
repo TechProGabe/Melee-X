@@ -88,7 +88,11 @@ radial dead zone, then are scaled so full tilt reaches the GameCube's raw
 rim (±104); the game clamps to its 80-unit circle. The digital L/R click
 fires past `trigger_click`. L and R past 200 with BACK and BLACK, on any
 port, quits to the dashboard (L + R + START is Melee's own reset). Rumble
-is scaled by `[input] rumble`; 100 drives the motors at 75%.
+is scaled by `[input] rumble`; 100 drives the motors at 75%. The state is
+polled (`SDL_GameControllerGet*`); SDL's joystick events are switched off
+and its event queue is emptied every poll, since nothing reads it and a
+controller's every change used to stay queued (the v39-v52 memory leak,
+`decisions.md`).
 
 ## `settings.ini`
 
