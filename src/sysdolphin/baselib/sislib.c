@@ -656,6 +656,17 @@ void HSD_SisLib_803A6368(HSD_Text* text, s32 sis_idx)
             bool ext = (slot & 0xFF000000u) == 0x02000000u;
             uintptr_t addr = (uintptr_t) text->sis_buffer;
             bool in_mem1 = addr - OSBaseAddress < PC_MEM1_SIZE;
+#ifdef TARGET_XBOX
+            /* PORT: a 32-bit host stores a DP_SET static raw (pc_encode_dp)
+             * instead of as a 0x02xxxxxx id, so the slot holds the XBE
+             * address itself: Pokemon Stadium points its string 5 at
+             * grPs_8049F040, and its big-screen text was dropped as "outside
+             * MEM1". Statics in the XBE image are game data, not strays. */
+            {
+                extern unsigned int xhw_image_base, xhw_image_end;
+                ext = ext || (addr >= xhw_image_base && addr < xhw_image_end);
+            }
+#endif
             if (text->sis_buffer != NULL && !ext && !in_mem1) {
                 static const u8 empty_sis[1] = { 0 };
                 static s32 last_font = -1, last_idx = -1;

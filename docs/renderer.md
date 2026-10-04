@@ -535,7 +535,11 @@ stage (`APREV * TEXA`, `derive_units`) and an alpha test that drops 0
 `NEVER`) so xemu rebinds its depth buffer. At 16 bits the mask goes into
 green (`XGX_COPY_GREEN`), which overwrites the rect's colour, so it is done
 only when the depth copy clears the rect after itself (`gm_1832.c`);
-otherwise the draw is unmasked.
+otherwise the draw is unmasked. The 16-bit copy is R5G6B5, so the mask
+lands in its rgb and its alpha samples 1: such a texture is marked
+(`Tex.mask_rgb`) and the Z-texture stage reads its alpha from red (swap
+`0x24`). Until v53 it read alpha, every tile drew whole and the 720p team
+cards showed one fighter on a black right half.
 
 ## Build switches
 
