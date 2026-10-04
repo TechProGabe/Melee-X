@@ -295,6 +295,27 @@ aperture and at pbkit's address), then Fountain 120 s with 4.
   its doubled shots).
 - `XGX_TILE` 4 is the default (`decisions.md`).
 
+### Console round 6, the final one (staged)
+
+One XBE, built as releases will be (ThinLTO + PGO on a profile retrained
+with the GX front-end change, the colour tile on) plus autopad; 15 runs
+(`console_round.py 6`), about 35 minutes, ending at the dashboard:
+
+| runs | what | decides |
+|---|---|---|
+| r6a | warm-up, not compared | |
+| r6b, r6f | Fountain 4-CPU 720p, defaults | the release's frame rate (two runs: the noise) |
+| r6c, r6d, r6e | the same with `MX_COPY_FIX=7`, `MX_TRIM=15`, both | whether either becomes a default |
+| r6g | Final Destination 1v1 720p | a light stage |
+| r6h, r6i | Fountain at 480p, the tile on and off | 480p works and gains with the tile |
+| r6j, r6k | lockstep shots at 480p, the tile off and on | byte for byte the same |
+| r6l, r6m | lockstep shots at 720p, defaults and both switches | byte for byte the same |
+| r6n | the settings menu at 720p | drawn right (shot) |
+| r6o | 4 minutes of copy stress (`MX_COPY_STRESS=40`) with `MX_COPY_FIX=7` | the merged clear doesn't bring back the GPU stall |
+
+Read with `console_round.py 6 report` and `console_round.py 6 shots`
+(the `[TRIM]` lines say how many draws each trim met).
+
 ### Other facts
 
 - The profile is flat: the report's top 192 buckets (12 KB of code) hold
@@ -636,7 +657,7 @@ may go ahead.
 | B3 prefetch plans | rejected by round 2: +1.3% fps, within the noise, and the simulation it targets +2.4%; removed | | r2f |
 | C3 GPU waits | v50: the CPU never waits on an EFB copy (their waits are in the pushbuffer); the `gpu` bucket is `frame_open`'s one wait a frame for the last frame (`XGX_OVERLAP`) plus the flip, so on Fountain at 720p the GPU finishes about when the CPU does, and CPU savings may turn into that wait. Round 2 builds log it: `[NV2A] per 600 frames: GPU still busy at N frame starts, X us a frame waiting there (done Y us after the present), flip Z us`. Then: a one-frame-deep pipeline (fence per frame, ring and pushbuffer halves) if the GPU idles between kicks, or less GPU work if it doesn't | | round 2: with PGO the GPU is still busy at 94% of frame starts, 4 ms a frame waiting; busy about the whole frame, so no pipeline gain, less GPU work instead |
 | round 2 | done (2026-10-03), read under "Console round 2": PGO +7.8% on dev (35.0 fps Fountain 720p), B4 and B3 rejected, B2 to measure again, the GPU now the limit on Fountain | | |
-| release default | the user (2026-10-03): LTO + PGO become the release build's default once all of this work is in and confirmed on the console (the last step) | | |
+| release default | the user (2026-10-03): LTO + PGO become the release build's default once all of this work is in and confirmed on the console (the last step). Done on the branch (b557daa): the `build` workflow passes both knobs, `package_release.py` refuses a build without them; round 6 runs the same build with autopad | | round 6 |
 | round 3 | done (2026-10-03), read under "Console round 3": LTO + PGO 36.2 fps (+13% on dev), B2 rejected, the first chained run 4% slow, the GPU's frame ~30 ms with fill at least 9 of it; the mixer sounds right (the user) | | |
 | lockstep shots | done 29afd58: `env MX_LOCKSTEP=1`, the game clock a frame counter, so shots compare across builds of any speed (`docs/testing.md` "Comparing builds by screenshot"); gl: 1.0 ticks per render, B4 on and off the same moment and pixels | | |
 | E audio mixer | done (branch `fps-e`): ADPCM decoded in runs per frame with an s32 sum, a frame's source positions planned before the mix, the float math four outputs a step in SSE1, the output clamp in SSE1, the reverb in stretches between line wraps; `test_audio_mix.py` same bits (SSE1 and plain C, i686 too) | mixer only (static i686 counts): a resampled ADPCM voice ~146 -> ~62 a sample, 1:1 music ~108 -> ~52, silent ~112 -> ~38, reverb ~110 -> ~67 a sample and channel | round 2 (`[PERF]` audio, window 6) |
@@ -645,7 +666,10 @@ may go ahead.
 | round 4 / tile regions | done (2026-10-03), read under "Console round 4": the colour tile enabled 40.2 fps (+11% on round 3's 36.2), Z compression settings nothing; the picture the same, but the CPU sees the tiled layout | | r4b-r4l |
 | colour tile default | done (round 5): `XGX_TILE` 4 by default, the CPU's framebuffer access through the NV2A's aperture (`fb_cpu`): shots there byte for byte the untiled ones, the settings menu right | 0 (GPU only) | r5a-r5e; 480p not run yet |
 | gate: E, D, `PObjSetupMtx` | merged 8f3584d: lockstep gl shots byte for byte as fps-exec's (frames 200, 500), `[SIMH]` equal through Fountain's whole match; host tests on i686 with SSE math too | sim -9.2% / tick, render -7.7% / draw against fps-exec (Fountain; the comparison run had B3 on, ~3% of sim) | round 3: 36.2 fps with LTO + PGO; the user heard the mixer right |
-| GX front-end lookups (render) | branch `fps-cpu`: as shares of the v50 profile's render samples (render ~48% of all), the texture lookup `find` is 2.0%, `gx_tex_bind` 1.4%, `GXLoadTexObj` 0.5%, `GXGetTexBufferSize` 0.3%, their `memcmp`/`memcpy` calls 0.6%, `gx_dl_culled` 2.8%; texture cache entries split hot/cold (one 32-byte line per probe, was two), no second `bind_unchanged`, word compares instead of `memcmp` calls, the GX size only to hash or upload, upload out of line; the clip planes kept per projection (`gx_cull.h`, `gx_proj_gen`); `test_tex_cache.py` (same trace as `gx_tex_ref.c`), `test_dl_cull.py` (same culls and plane bits); no imported code | not measured (no xemu run); expect render -2 to -2.5% (~0.2 ms a frame) | round 6 |
+| GX front-end lookups (render) | branch `fps-cpu`: as shares of the v50 profile's render samples (render ~48% of all), the texture lookup `find` is 2.0%, `gx_tex_bind` 1.4%, `GXLoadTexObj` 0.5%, `GXGetTexBufferSize` 0.3%, their `memcmp`/`memcpy` calls 0.6%, `gx_dl_culled` 2.8%; texture cache entries split hot/cold (one 32-byte line per probe, was two), no second `bind_unchanged`, word compares instead of `memcmp` calls, the GX size only to hash or upload, upload out of line; the clip planes kept per projection (`gx_cull.h`, `gx_proj_gen`); `test_tex_cache.py` (same trace as `gx_tex_ref.c`), `test_dl_cull.py` (same culls and plane bits); no imported code | expect render -2 to -2.5% (~0.2 ms a frame); merged 4b42a47, lockstep Fountain shots (ticks 200, 500) and `[SIMH]` the same in xemu | round 6 |
+| state trims | branch `fps-trim`, merged 41be939: `-DXGX_TRIM` / `env MX_TRIM` (default 0): blend ONE/ZERO off, an alpha test that passes every alpha off, depth ALWAYS without a write off, draws that write nothing not sent; `[TRIM]` census in test builds; xemu: `MX_TRIM=15` shots and `[SIMH]` the same | | round 6 A/B (r6d, r6e, r6m) |
+| merged clear | `MX_COPY_FIX=7` (bit 2, colour and depth in one `CLEAR_SURFACE`, untried since v45): xemu shots and `[SIMH]` the same | | round 6 A/B (r6c, r6e, r6m) and the copy stress (r6o) |
+| round 6 (final) | staged: see "Console round 6" | | |
 
 All gates: xemu `-icount`, `[SIMH]` identical up to the match's end, gl
 (and Fountain where it matters) screenshots the same. One open oddity:
