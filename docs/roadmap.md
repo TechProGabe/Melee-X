@@ -79,13 +79,13 @@ Fix order (2026-10-04):
    idle release"). Check: back to the fight camera or close-up after >10 s
    of other views, the 124x80 corner view, `scenarios/clear`, the texture
    pool.
-4. **Peach's Castle: Bullet Bill stuck, endless quake** (v43): fix in
-   v53, awaiting console confirmation. `grAnime_801C83D0` never saw the
+4. **Peach's Castle: Bullet Bill stuck, endless quake** (v43): fixed in
+   v53, confirmed on the console (user, 2026-10-04). `grAnime_801C83D0` never saw the
    Bill's anim end (`grAnime_801C8318` lost its AObj across `longjmp`,
    the Kraid fix); in xemu six Bills in a row now spawn, end and free
    (`scenarios/castle`).
-5. **Particles not drawn**: fixed for v53 (needs a console check: the Fire
-   Flower's flame, hit sparks). The GX front end read `psdisp.c`'s raw
+5. **Particles not drawn**: fixed for v53, confirmed on the console (user,
+   2026-10-04: particle effects work). The GX front end read `psdisp.c`'s raw
    FIFO writes (positions as `GXTexCoord1f32`, the TEX0 index as
    `GXCmd1u8`) as whole texture coordinates and matrix indices, so no
    textured particle completed a vertex (xemu 4-Mario match: ~8000 short
@@ -141,7 +141,8 @@ Fix order (2026-10-04):
 11. **Stadium red lights and platform marks break up at 720p** (v51,
     `C:\xemu\hw\logs-stadium-tex`). Z16 depth precision: the lights sit
     0.25 units over the frame, a Z16 step there is ~0.5-0.7 units. Fixed
-    for v53, awaiting the console: 720p keeps R5G6B5 colour and takes
+    for v53, confirmed on the console (user, 2026-10-04: Stadium looks
+    right; fps still to read): 720p keeps R5G6B5 colour and takes
     Z24S8 depth (`XGX_Z24_16BPP`, `env MX_Z24=0` for v52's Z16; +1.8 MB;
     renderer.md "Depth", decisions.md). In xemu, at real 720p (EEPROM
     with 720p, testing.md "720p in xemu") and at 16-bit 480, Stadium's
