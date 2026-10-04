@@ -100,6 +100,7 @@ u32 PADRead(PADStatus* status) {
         if ((p.buttons & (XHW_BTN_BACK | XHW_BTN_BLACK)) == (XHW_BTN_BACK | XHW_BTN_BLACK) && p.lt > 200 &&
             p.rt > 200) {
             xhw_logf("[PAD] port %d: in-game reset, back to the dashboard", i + 1);
+            xhw_exit_reason("in-game reset (L+R+BACK+BLACK)");
             xhw_quit_to_dashboard();
         }
         if (block) {   /* connected, nothing pressed */

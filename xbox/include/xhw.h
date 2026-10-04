@@ -215,6 +215,9 @@ void xhw_autopad_tick(uint32_t tick);         /* simhash.c: the match's tick, fo
 /* ---- system ---- */
 void xhw_quit_to_dashboard(void) __attribute__((noreturn));
 void xhw_reboot_self(void) __attribute__((noreturn));
+/* Why the XBE is about to leave (before one of the two above): the next
+ * boot logs it as "[BOOT] previous exit". Copied; the last call wins. */
+void xhw_exit_reason(const char* why);
 
 #ifdef __cplusplus
 }

@@ -428,6 +428,7 @@ Everything is written to `E:\UDATA\4d580001\` (the title ID is `4d580001`):
 | `trace.log` | the `[DRAW]` lines of a `-DXGX_DEBUG_TRACE` build (COM1 still gets them), restarted at 64 MB |
 | `hang.log` | written by the watchdog: the log tail and a dump of every thread (also appended to `boot.log`) |
 | `crash.log` | written on a CPU exception: the last log lines, the fault, registers, XBE addresses found on the stack |
+| `lastexit.txt` | how this boot ended, one line: quit to the dashboard, in-game reset, settings restart, game reset, fatal error screen, relaunch, next XBE, crash, hang report on screen (with the retrace count). Read, logged as `[BOOT] previous exit: ...` and deleted at the next boot; none (`not recorded`) means the console was switched off or reset, or the XBE was killed |
 | `shot00.bmp` .. `shot99.bmp` | screenshots, test builds only (`XHW_TEST_BUILD`): BACK on any controller (unmapped by default in `settings.ini`) writes the next frame as a 24-bit BMP and logs `[SHOT] wrote ...`; numbering restarts at 00 each boot. An autopad `BACK` line does the same in xemu. On the title screen BACK also opens the settings menu (in every build). Y pressed while BACK is held drops every cached texture and display list at the frame end (`[DEBUG] ... caches flushed`): a surface that comes back right afterwards had its cached copy corrupted |
 | `settings.ini` | options (`docs/platform.md`) |
 | `card_a\*.gci` | memory card saves |
@@ -523,9 +524,47 @@ Lines worth reading first:
   with items or stage hazards.
 
 A healthy console session: one `[AUDIO] AC97 polled` line and no `halted`,
-`stuck` or `cold reset`; `[BEAT]` lines to the end with `presented`
+`stuck` or `cold reset` (`[AUDIO] found` and `[AUDIO] idle` before it are
+the boot's record of the audio hardware as found, see "Audio at boot"); `[BEAT]` lines to the end with `presented`
 following `retrace`; `[PERF]` `ticks per render` well under 5; no
 `crash.log` or `hang.log`.
+
+### Audio at boot
+
+Every boot logs the audio hardware as the previous XBE left it, before the
+driver touches it, then what the driver did to bring it to idle
+(`xhw_audio.c`, roadmap item 9):
+
+- `[AUDIO] found: pci aci .. apu .., global control .. status .., pcm bd ..
+  civ a->b lvi .. sr .. picb a->b cr .., spdif ...`: the AC97 controller's
+  PCI command/status words, its global control and status, and per bus
+  master (PCM out, S/PDIF out) the descriptor list address, CIV, LVI, SR,
+  PICB and CR; CIV and PICB are read twice 5 ms apart, so a running engine
+  shows them moving. `cr 01` with `sr` bit 0 clear is an engine left
+  running.
+- `[AUDIO] found: apu ists .. ien .. fectl .. sectl .. xgscnt a->b gprst ..
+  eprst .. gp fifo0 a->b ep fifo0 a->b`: the MCPX APU (register names from
+  xemu's `hw/xbox/mcpx/apu/apu_regs.h`): a moving `xgscnt` is the setup
+  engine running, `gprst`/`eprst` 3 are the DSPs out of reset, moving FIFO
+  positions are the DSPs writing output to memory (DirectSound).
+- `[AUDIO] found: codec 26 .. 2a .. 2c .. 02 .. 18 .. vendor ..`: AC97
+  codec registers (power-down/status, extended audio, DAC rate, volumes,
+  vendor ID), or `codec not ready`.
+- `[AUDIO] idle: pci aci .., halt pcm ok N us spdif ok N us, apu stopped,
+  bus-master reset N polls, codec 26 ..`: both bus masters halted (`TIMEOUT`
+  after 20 ms), the APU's interrupts, setup engine and DSPs stopped (AC97
+  path only; `left (xemu voice)` in xemu's default APU path), the polls the
+  bus-master reset took, and the codec's power-down register (`(powered
+  up)` when parts of it were off and were switched on).
+- `[BOOT] previous exit: ...`: how the previous boot ended (`lastexit.txt`).
+
+An engine that never finishes a buffer from the boot on (the boot's reset
+sequence, then three restarts, one cold reset, three more restarts) is
+given up: `[AUDIO] stuck since boot: ...` once, the engine stopped, the
+mixer drained in real time (the game runs on, silent, without the cold
+resets' freezes), and the player sees "Sound hardware is stuck. Turn the
+Xbox off and on to get sound back." for 10 s at the top of the picture.
+`-DXHW_AUDIO_TEST` exercises both ends in xemu.
 
 ## Crashes
 
@@ -554,6 +593,7 @@ report.
 |---|---|
 | `-DXHW_CRASH_GUARD=0` | no SEH guard. Crashes become bugchecks, and demand-committed memory stops working, so debug only |
 | `-DXHW_AUDIO_APU=0` | never use the xemu APU fallback |
+| `-DXHW_AUDIO_TEST=<bits>` | audio tests for xemu (with `-DXHW_AUDIO_APU=0`, `scenarios/relaunch`): 1 leaves the AC97 engine running into the next boot at a relaunch (every descriptor ~0.7 s long), as a crash or another XBE might; 2 reads CIV as 0 for good, an engine stuck from the boot on (the give-up: `[AUDIO] stuck since boot`, the on-screen notice, silent play). Never on a console build |
 | `-DXHW_AUTOPAD=1` | scripted input from `D:\autopad.txt`: `<frame> <buttons/SHOT> [for N]` per line (`xhw_autopad.c`). `env NAME=VALUE` lines feed `getenv`, which reaches melee-pc's test hooks (below) |
 | `-DXSDK_ARAM_VERIFY=1` | compares every ARAM copy left on the disc (`ar.c`) with the image; `[AR] verify:` lines |
 | `XBOX_LTO=1`, `XBOX_PGO=gen\|<file>` | build knobs (not `-D` switches; `docs/toolchain.md`): ThinLTO over the game and sdk code; PGO instrumented (`[PGOC]` counters at each scene's exit) or optimized with a `.profdata` |
