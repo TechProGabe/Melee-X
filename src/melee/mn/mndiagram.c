@@ -688,9 +688,13 @@ void mnDiagram_SortNamesByKOs(void)
     int max_idx;
     u8* dst_iter;
     int i;
-    mnDiagram_Assets* assets =
-        (mnDiagram_Assets*) &mnDiagram_FighterDisplayOrder;
-    u8* dst = assets->sorted_names;
+    /* PORT: the GameCube links mnDiagram_NameDisplayOrder right after
+     * mnDiagram_FighterDisplayOrder, and this went through the
+     * mnDiagram_Assets overlay of the two. Our linker puts them apart, so
+     * the overlay's sorted_names wrote 120 bytes over the globals after
+     * FighterDisplayOrder (MenMainConB1_Top.joint: the VS Records crash)
+     * and the real NameDisplayOrder was never sorted. Use the array. */
+    u8* dst = mnDiagram_NameDisplayOrder;
     u32* tp;
     u8* candidate;
     int n;
@@ -718,8 +722,8 @@ void mnDiagram_SortNamesByKOs(void)
             }
         }
         if (max_idx != i) {
-            u8* p = &assets->sorted_fighters[max_idx];
-            u8 temp = *(p += sizeof(mnDiagram_FighterDisplayOrder));
+            u8* p = &mnDiagram_NameDisplayOrder[max_idx];
+            u8 temp = *p;
             while (max_idx > i) {
                 *p = *(p - 1);
                 p--;

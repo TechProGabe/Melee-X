@@ -194,6 +194,12 @@ plus `autopad.txt` uploaded next to it (the game's `D:\autopad.txt`) whose
 `env` lines pick the fix and stress (`MX_COPY_FIX`, `MX_COPY_STRESS`,
 `scenarios/stall`), so one deploy covers an A/B. A run without the fix must
 fail reliably before a fixed run counts. Delete `autopad.txt` afterwards.
+In a console round (below) a run that hangs keeps `hang.log` as
+`hang_<folder>.log` and its log as `boot_<folder>.log`, then after 20 s
+without frames reboots in full to the dashboard (`xhw_autopad_after_hang`,
+test builds with `MX_NEXT_XBE`): FTP is up for `watch`, and the next
+build is launched by hand. Launching it straight away (a quick reboot)
+came up black after a GPU stall: PGRAPH stays wedged across it.
 
 ### Console rounds (many A/B runs, one launch)
 
@@ -408,7 +414,11 @@ script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
 | `-DXSDK_ARAM_VERIFY=1` | compare every ARAM copy left on the disc (`ar.c`) with the image; `[AR] verify:` |
 | `-DXSDK_MEM1_VA`, `-DXSDK_MEM1_SIZE`, `-DXSDK_ARAM_VA` | MEM1 and ARAM placement (0x10000000, 24 MB; 0x12000000): layout constants, not test knobs |
 | `-DXGX_EFB_GPU_COPY=0` | EFB copies read back on the CPU (into A8R8G8B8 textures) instead of drawn by the GPU |
-| `-DXGX_COPY_FIX=<bits>` | EFB copy surface switches: 1 resend the pitch after the format, 4 resend target DMA objects, pitch and offsets after a wait for idle, 2 one `CLEAR_SURFACE` for colour and depth (untried); default 5, 0 is v45's. Test builds read `env MX_COPY_FIX=` |
+| `-DXGX_COPY_FIX=<bits>` | EFB copy surface switches: 1 resend the pitch after the format, 4 resend target DMA objects, pitch and offsets after a wait for idle, 2 one `CLEAR_SURFACE` for colour and depth (untried), 8 (with 4) the surface format in that second send too, 16 the screen's format and pitch right after the copy's quad, before the retarget's DMA switches (8 and 16 act only where the copy switches the zeta format), 32 720p copies into A8R8G8B8 + Z24S8 targets (no zeta format switch), 64 the copy's pitch keeps the screen's zeta pitch (tried only under the zeta guard); default 37 since v4.1 (5 before: v54's 720p stall; 29 in v56/v57), 0 is v45's. Test builds read `env MX_COPY_FIX=` |
+| `-DXGX_ONE_DMA=<0/1>` | colour and depth through DMA object 3 with physical offsets, no other object bound again (1, default since v4.1) or pbkit's objects 9/10 with `pb_target_back_buffer` and the copy's retarget (0, v57's). Picture unchanged. Test builds read `env MX_ONE_DMA=` |
+| `-DXGX_CTX_KEEP=<0/1>` | a PGRAPH context switch to the loaded channel keeps the live state (1, default since v4.1) or reloads the init context, as pbkit did (0). Test builds read `env MX_CTX_KEEP=`; they log `[NV2A] PGRAPH context switches` |
+| `env MX_COPY_STRESS_MODE=<bits>` | with `MX_COPY_STRESS`: 2 rotate four scratch targets, 4 the CPU waits for an idle GPU between each copy and its clear (6 stalls v57's settings at 720p in ~2 min without the zeta guard; 8 was round 14's probe, now `XGX_ZETA_GUARD`) |
+| `-DXGX_ZETA_GUARD=<0/1>` | 720p (zeta pitch not the colour's): wait for an idle GPU around each depth clear, read PGRAPH's zeta pitch (0x40085c) and send it again if wrong (1, default since v4.1; the 720p copy stall) or not (0). Logs `[NV2A] zeta pitch guard` every 600 frames. Test builds read `env MX_ZETA_GUARD=` (1 forces it on at 480 too) |
 | `-DXGX_COPY_STRESS=<n>` | repeat each self-clearing EFB copy n more times into a scratch texture (picture unchanged): makes copy GPU faults frequent. Test builds read `env MX_COPY_STRESS=`; `scenarios/stall` |
 | `-DXGX_TILE=<bits>` | re-program pbkit's tile regions (`renderer.md` "Tile regions"): 1 Z16 depth compresses as Z16, 2 tile 0 enable bit `base \| 1`, 4 `base \| 3` (wins over 2), 8 no Z compression; default 4, 0 pbkit's. With tile 0 on the CPU reaches the framebuffers through the aperture (`[NV2A] tiled framebuffers ... aperture`). Picture must not change. Test builds read `env MX_TILE=`. Console only (xemu ignores tiles) |
 | `-DOCX_Z16_TILE_FLAGS=<flags>` | pbkit's Z16 depth tile flags (`patch_pbkit.py`); default `0x84000001`; A/B `0x80000001` (no 32-bit flag), `0x00000001` (uncompressed). Console only |
@@ -434,9 +444,11 @@ script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
 | `env MX_SIMH_VERBOSE=1` | `[SIMH]` every tick |
 | `env MX_NEXT_XBE=<path>` | 12 s after the match (or at `NEXT`) launch that XBE (`F:\Applications\<folder>\default.xbe` or a `\Device\` path), or `dashboard`; chains a console round |
 | `env MX_VIDEO=480\|480i\|720` | video mode over settings.ini's (`[VIDEO] MX_VIDEO=`); 720 still needs the dashboard to allow it |
+| `env MELEE_CLASSIC_CHAR=<CharacterKind>` | `MELEE_BOOT_SCENE=classic` plays that character instead of Mario (6 Link); `scenarios/cont` |
 | `env MELEE_DEBUG_CASTLE_BILL=<frames>` | Peach's Castle: a Bullet Bill that many frames after the last, `[CASTLE]` lines per step of its state machine (`spawn`, `part2`, `animend`, `free`; `STUCK` if one never ends); `scenarios/castle` |
+| `env MX_TEST_HANG=<frame>` | the game thread stops at that frame for good: checks the watchdog's report and a round's reboot after a hang (`[AUTOPAD] hang: rebooting to the dashboard`) |
 | `env MX_FILL_E=1` | fill E: at boot (`E:\mx_fillN.bin`) to test the full-disk paths (failed saves and shots with notices, `[BOOT] can't write`, log on `D:\`). Use a copy of xemu's HDD; without the line the files are deleted |
-| `env MX_COPY_FIX`, `MX_COPY_STRESS`, `MX_TILE`, `MX_ABLATE`, `MX_Z24`, `MX_Z16_RATIO` | run-time overrides of the switches above |
+| `env MX_COPY_FIX`, `MX_COPY_STRESS`, `MX_ONE_DMA`, `MX_CTX_KEEP`, `MX_ZETA_GUARD`, `MX_TILE`, `MX_ABLATE`, `MX_Z24`, `MX_Z16_RATIO` | run-time overrides of the switches above |
 | `N SHOT` | (script) screenshot at frame N: `[FBDUMP]` in xemu, `shotNN.bmp` on the console |
 | `N TSHOT` | (script) screenshot at the match's tick N (as `[SIMH]` counts): the same moment on every run with `MX_LOCKSTEP=1` |
 | `N NEXT` | (script) launch `MX_NEXT_XBE` at frame N (runs without a match); logs `[AUTOPAD] NEXT` |

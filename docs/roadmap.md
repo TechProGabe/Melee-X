@@ -164,6 +164,41 @@ Fix order (2026-10-04):
 
 Other open:
 
+- **Upgraded-CPU BIOS patching rdtsc in .text (potential, look at later).**
+  OpenCrossing-Xbox (GitHub #3, 2026-10-05) found a custom BIOS on CPU-
+  upgraded consoles (1 GHz Coppermine, 1.4 GHz Tualatin; kernel 1.0.5838.1,
+  Cerbios/PrometheOS-like) rewriting a `0f 31` (rdtsc) as `cd 2e` (int 2Eh)
+  in the XBE's .text by signature, here inside an unrelated instruction
+  (`75 0f 31 f6 83 f8 01`): an access violation reading an address made of
+  the code bytes after eip. The patcher is Cerbios 3.x `AdvCPUSupport`
+  (on by default; closed source, signature not public; PrometheOS only
+  edits cerbios.ini). OpenCrossing's other 51 `0f 31` pairs, its real
+  rdtsc included, shared at most 3 bytes with the patched one and were
+  left alone. v54/v55's .text has 54-55 pairs, none matching; the nearest
+  is Sheik's held needles (`it_802B18B0+0x36`, `itseakneedleheld.c`:
+  `74 | 0f 31 f6 83 f8 50`, 5 bytes in common): if patched, an access
+  violation at eip 00283ca7 (v55) reading ebx+0x217550f8 on a needle
+  charge. Melee-X's timing doesn't depend on the TSC rate (ACPI timer;
+  `xhw_perf.c` calibrates; nxdk's QueryPerformanceCounter reads the
+  multiplier). No log from an upgraded console yet; the user's
+  recollection is that overclocked consoles ran Melee-X fine. Fix options:
+  OpenCrossing's `xbox_code_repair.c` (b12c9bb4: .text compared with
+  `D:\default.xbe` at boot, ~433 ms, differing bytes written back with
+  CR0.WP cleared; settings.ini `code_repair = 0` to only log), or a cheap
+  one: scan RAM .text for `cd 2e`, put `0f 31` back where the file has it.
+  Ask an upgraded-CPU user for their Cerbios version and to charge Sheik's
+  needles; `AdvCPUSupport = False` in cerbios.ini avoids it.
+
+- **Freeze on Classic's Continue screen** (tester, v4, 2026-10-05: Link,
+  lost to Team DK, froze on "Continue"; video mode, RAM and logs not
+  known yet). Not reproduced in xemu: `scenarios/cont` (Classic stage 8,
+  Team DK, `MELEE_CLASSIC_TEAM=dk`, self-destructs to the Continue
+  screen, then YES) runs as Mario and as Link (`MELEE_CLASSIC_CHAR=6`),
+  at 480 and 720p, and goes on into the fight. If the tester plays at
+  720p it may be the copy stall above (the Team DK fight is copy-heavy);
+  needs their `boot.log`/`hang.log`/`crash.log` from
+  `E:\UDATA\4d580001\` (or next to `default.xbe`).
+
 - Rainbow Cruise flicker (v48, 720p, looks like shadows): **still
   flickers on the console with v53's Z24S8** (user, 2026-10-04:
   "flicker/flashing"), so not (only) depth precision; known issue for the
@@ -191,12 +226,36 @@ Other open:
   FD 30-60 pixels; no decal or shadow broke whole. All gone with v53's
   Z24S8 (shots equal to the 32-bit build's). Close once the console
   shows no other 720p-only fault.
-- GPU stall after an EFB copy, if it comes back: PGRAPH 0x400800-0x40080C
-  and the last copy's target are logged at the first fault;
-  `scenarios/stall`, `MX_COPY_STRESS`.
+- GPU stall after an EFB copy: **came back at 720p on v54** (red,
+  2026-10-05, one 44-minute VS match, frame 102904: `LIMIT_ZETA` on the
+  Z/stencil clear after a shadow-map copy, ~400k copies in; gold at 480i
+  ran the same hour; `C:\xemu\hw\logs54-red-2`). Memory flat, not a
+  leak. Round 8 (copy stress 40 at 720p) reproduced it twice, ~5-6 min
+  in; keeping the screen's zeta format in the copy was rejected by the
+  GPU (`decisions.md`). `XGX_COPY_FIX` 29 (v56/v57) passed round 9's
+  stress but v57 stalled after 97 min of play. v58 (32-bit copy targets
+  at 720p, one DMA object, the live PGRAPH context kept) stalled too under
+  stress (round 12, 1 of 3 runs). The dumps show PGRAPH's zeta pitch
+  slipping to the colour's (0xa00) before the Z clear; v59's
+  `XGX_ZETA_GUARD` (idle waits around the depth clears, the pitch checked
+  and resent) ran round 14 with 23M checks, none wrong, no stall, v57's
+  settings included (`decisions.md`). Close after v59's 3 h+ 720p
+  burn-in on red. Structural alternative if it ever comes back: 720p
+  colour pitch padded to 0x1400 (equal pitches, +5.4 MB). PGRAPH
+  0x400700-0x4008FC and the last copies are logged at the first fault;
+  test builds log context switches. (Round 11's test builds also dumped
+  PGRAPH every 3600 frames; reading it while the GPU drew raised
+  LIMIT_COLOR at r11b's frame 7200, so that dump is gone.)
 
 ### Fixed
 
+- VS Records crash (v54, red, 2026-10-05: Data > Melee Records > VS.
+  Records, access violation in `HSD_JObjLoadJoint` reading 0x38393a3b):
+  `mnDiagram_SortNamesByKOs` wrote the 120 name indices through an overlay
+  that assumed the GameCube's link order, over `MenMainConB1_Top` and the
+  other model descriptors after `mnDiagram_FighterDisplayOrder`
+  (`decisions.md`). Fixed in v4.1; `scenarios/rec` walks there (xemu: the
+  grid, the popup); confirmed on gold with v55 (user, 2026-10-05).
 - Audio-thread crash after many VS matches (tester, v52, 128 MB, 480i:
   `HSD_SynthSFXPlayWithGroup` reading address 3, a sound-effect hash link
   into a freed SSM header): OSAlloc locked, synth.c's unload paths under

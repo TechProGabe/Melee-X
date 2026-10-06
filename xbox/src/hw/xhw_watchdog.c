@@ -189,6 +189,7 @@ static void dump_all(const char* why, int screen) {
 
     write_hang_log();
     xhw_exit_write("hang report on screen (hang.log)");   /* until the game goes on or leaves */
+    xhw_autopad_after_hang();   /* test builds in a console round: on to the next build */
 }
 
 static volatile int s_disabled, s_busy;

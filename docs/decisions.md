@@ -223,6 +223,59 @@ Sending the DMA objects, pitch and offsets again after a wait for idle
 write is lost is not known. `XGX_COPY_STRESS` and `scenarios/stall` stay
 for the next copy stall (`testing.md`).
 
+**720p's copy stall (v4.1): the zeta pitch guard.** v54's 720p burn-in (one 44-minute match) stopped on the GPU stall
+after a copy (`LIMIT_ZETA` on the Z/stencil clear that follows it, PGRAPH
+busy for good; the ISR's ack and FIFO re-enable don't free it), while the
+480i console ran 2 h 25 min. Only 720p switches the zeta format on every
+copy: the swizzled copy target must take Z16 with R5G6B5 (R5G6B5 + Z24S8
+swizzled is a DATA_ERROR on `SET_SURFACE_FORMAT` on the console, round 8;
+xemu takes it), and the screen is Z24S8 since v53. Round 8 reproduced the
+stall under copy stress 40 at 720p twice (~5-6 min in). `XGX_COPY_FIX`
+29 (16: the screen's format right after the copy, before the retarget's DMA
+switches; 8: again after the wait for idle) passed round 9's stress (5.25M
+copies) but v57 with it stalled after 97 min of play: the stress didn't
+reproduce the trigger. v4.1 then takes three changes, all picture-neutral
+except the first's precision:
+`XGX_COPY_FIX` 32 (default 37): 720p copies go into A8R8G8B8 targets with
+Z24S8, the surfaces 480 uses, so the zeta format never switches (shadow
+maps keep 8 bits a channel instead of 5/6: 720p shots differ by up to 16
+levels in those pixels). `XGX_ONE_DMA`: colour and depth render through
+DMA object 3 (all of RAM) with physical offsets, so the bound object never
+changes; this also drops `pb_target_back_buffer`'s 8 software interrupts
+a frame. `XGX_CTX_KEEP` (patch_pbkit.py): pbkit answered a PGRAPH
+context-switch interrupt by loading the context saved at init without
+saving the live one (nouveau saves, then loads); a switch to the loaded
+channel now keeps the live state. It is a safeguard only: round 10 and
+gold's v58 burn-in logged one switch, at frame 1 (the first load), and
+none after. The 0xa00 zeta pitch in the stall dumps (0x400858/0x40085c)
+was not a reverted context either: healthy dumps hold the last copy's
+pitch (0x400) there. In xemu the frame-1 load dropped `XGX_ONE_DMA`'s
+binding, so object 3 is sent again with every surface setup. Round 10's
+copy stress with four rotating targets and a CPU wait for idle between
+copy and clear (`MX_COPY_STRESS_MODE` 6) stalls v57's settings in about a
+minute at 720p; v58's ran 12 min clean, and v58's 720p shots are the same
+with `XGX_ONE_DMA`/`XGX_CTX_KEEP` on or off. But round 12 stalled v58 too
+(1 of 3 runs), and its dump (the CPU's wait puts GET right at the fault)
+showed the mechanism: the pushbuffer sent `SET_SURFACE_PITCH 0x14000a00`
+twice, then only pb_fill's colour clear and the Z clear's rect and value,
+yet PGRAPH's zeta pitch (0x40085c) held 0xa00, the colour's; every 720p
+stall dump has it (v54, v57, r8a). 720p (R5G6B5 0xa00 + Z24S8 0x1400) is
+the only layout where the two pitches differ; at 480 and with Z16 the same
+slip changes nothing. The Z clear then addresses depth tile 1 (pitch
+0x1400, compressed) with pitch 0xa00: LIMIT_ZETA. `XGX_ZETA_GUARD`
+(default 1, only where the pitches differ): wait for an idle GPU before
+the depth clears, after the colour clear and after the Z clear, read
+0x40085c, send the pitch again if wrong. Round 14 (mode 6, 5 x 12 min,
+v57's settings among them): 23M checks, none wrong, no stall: the waits
+keep the slip from happening (a race), and the read and resend are a
+backstop. ~8% under that stress (~160 guarded clears a frame), a few waits
+a frame in play. `XGX_COPY_FIX` 2 (one clear) and 64 (the copy keeps the
+zeta pitch) ran under the guard only, so they stay off. A second opinion
+ranked equal pitches (720p colour padded to 0x1400, +5.4 MB) as the
+structural fix; the guard is the one the console has shown to work.
+Memory was ruled out: free memory was flat at 4 MB for the
+last 20 minutes before the stall.
+
 **EFB copies outlive the idle release (after v51).** Textures unused for
 600 frames are released, EFB copies no longer: Pokémon Stadium's screen
 binds its copy's destination before the frame's copy, and after ~10 s of
@@ -439,6 +492,12 @@ Game fixes:
 - `src/melee/gr/granime.c` (`grAnime_801C8318`): the AObj that
   `fn_801C82E8` longjmps back with is a `volatile` local (clang returned
   NULL, so stage "animation ended" checks never fired: Kraid froze).
+- `src/melee/mn/mndiagram.c` (`mnDiagram_SortNamesByKOs`): sorts
+  `mnDiagram_NameDisplayOrder` itself, not the `mnDiagram_Assets` overlay
+  that assumed it follows `mnDiagram_FighterDisplayOrder` (GameCube link
+  order). Linked apart, the 120 name indices overwrote the menu's model
+  descriptors after it: VS Records crashed in `HSD_JObjLoadJoint` on
+  `MenMainConB1_Top.joint` = 0x38393a3b (indices 56-59; v54, console).
 
 Speed (same results, bit for bit where a test is named):
 - HSD animation and matrices (`test_anim_mtx.py`, `anim_mtx_ref.c`; a NaN
@@ -519,7 +578,8 @@ Logging, test hooks and Xbox features:
   runs) sets the Bullet Bill timer and logs its states as `[CASTLE]` lines;
   inert without the variable.
 - `src/melee/gm/gmclassic.c`: melee-pc's Classic test hooks moved into
-  `pc_classic_stage_override`, also called by `MELEE_BOOT_SCENE=classic`.
+  `pc_classic_stage_override`, also called by `MELEE_BOOT_SCENE=classic`;
+  `MELEE_CLASSIC_CHAR` picks that shortcut's character (Mario without it).
 - `src/melee/gm/gmvsmode.c` (`onEnterDebugVs`): `MELEE_DEBUG_VS_TIME`,
   `_CHARS`, `_ITEMS`, `_INVISIBLE`; `ftkirby.c` (`ftKb_Init_OnDeath`):
   `MELEE_DEBUG_KIRBY_HAT`. `TARGET_PC`, inert without the variables.

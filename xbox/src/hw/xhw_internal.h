@@ -44,8 +44,10 @@ struct xhw_pad;
 void xhw_autopad_load(void);
 void xhw_autopad_apply(int port, struct xhw_pad* out);
 void xhw_autopad_match_end(void);   /* env MX_NEXT_XBE: the next build of a console round, 12 s on */
+void xhw_autopad_after_hang(void);  /* the watchdog's hang report is out: a round goes on to its next build */
 /* xhw_main.c: launch another XBE by its F:\ or E:\ path (a console round's next build) */
 void xhw_launch_xbe(const char* dos_path) __attribute__((noreturn));
+void xhw_reboot_cold(void) __attribute__((noreturn));   /* xhw_main.c: full reboot, the GPU reset with it */
 int xhw_image_folder(char* out, int size);   /* xhw_main.c: the launched XBE's folder name */
 
 /* xhw_splash.c: "TechProGabe Presents..." title card */
