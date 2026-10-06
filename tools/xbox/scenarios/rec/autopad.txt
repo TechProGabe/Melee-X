@@ -1,0 +1,32 @@
+# Data > Records > VS. Records from the title (mndiagram.c): v54 crashed on
+# entering it (mnDiagram_SortNamesByKOs wrote past its table). Shots of the
+# main menu walk, the records grid, and the names page (Z/X switches pages).
+env MELEE_BOOT_SCENE=title
+env MELEE_NO_ATTRACT=1
+400 SHOT            # title
+430 START for 12    # main menu
+640 SHOT
+670 DOWN for 12     # VS
+730 DOWN for 12     # Trophies
+790 DOWN for 12     # Options
+850 DOWN for 12     # Data
+910 SHOT
+940 A for 12        # Data menu
+1100 SHOT
+1130 DOWN for 12    # Archives
+1190 DOWN for 12    # Melee Records
+1310 SHOT
+1340 A for 12       # Records menu
+1500 SHOT
+1530 A for 12       # VS. Records
+1800 SHOT
+1830 A for 12
+2000 SHOT
+2030 RIGHT for 12
+2100 SHOT
+2130 Y for 12
+2300 SHOT
+2330 B for 12
+2500 SHOT
+2530 B for 12
+2700 SHOT

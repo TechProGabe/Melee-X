@@ -23,6 +23,12 @@ Here:
     pbkit's 0x84000001);
   - ocx_pb_layout() reports the pushbuffer, framebuffers and depth buffer
     addresses for the layout line at boot;
+  - a PGRAPH context-switch interrupt is reported to ocx_pb_ctx_switch()
+    (nv2a.c counts them), and with ocx_pb_ctx_keep set a "switch" to the
+    channel already loaded keeps PGRAPH's live state: pbkit reloaded the
+    context saved at init without saving the current one first (nouveau
+    saves, then loads), so the surface state (DMA objects, offsets, the
+    zeta pitch) went back to pb_init's for the rest of the frame;
   - ocx_pb_retarget_back_buffer() points rendering back at the current back
     buffer after an EFB copy drew elsewhere through another DMA object. DMA
     object 9 still describes the back buffer, so only the surface state is
@@ -52,6 +58,8 @@ sub(r'(#include "nv20_shader\.h"[^\n]*\n)',
     '#include "nv20_shader.h" //(search "nouveau" on wiki)\n'
     "\n/* Melee-X (from OpenCrossing-Xbox): tools/xbox/patch_pbkit.py */\n"
     "void ocx_pb_gpu_fault(unsigned kind, unsigned a, unsigned b, unsigned c, unsigned d);\n"
+    "void ocx_pb_ctx_switch(unsigned chid, unsigned current);\n"
+    "extern volatile int ocx_pb_ctx_keep;\n"
     "extern volatile int ocx_pb_irq_off;\n"
     "#define OCX_SPIN_MAX 4000000u\n"
     "static int ocx_spin(unsigned *n, unsigned kind)\n"
@@ -99,6 +107,31 @@ sub(r'\}while\(more\);\n\n    VIDEOREG\(NV_PMC_INTR_EN_0\)=NV_PMC_INTR_EN_0_INTA
     "}while(more && ++ocx_rounds < 64);\n"
     "\n    if (more) ocx_pb_gpu_fault(3, VIDEOREG(NV_PMC_INTR_0), VIDEOREG(NV_PGRAPH_INTR), VIDEOREG(NV_PFIFO_INTR_0), 0);\n"
     "    if (!ocx_pb_irq_off) VIDEOREG(NV_PMC_INTR_EN_0)=NV_PMC_INTR_EN_0_INTA_HARDWARE;")
+
+# context switch: report it; a switch to the loaded channel keeps the live state
+sub(re.escape("        pb_load_gr_ctx(trapped_ctx_id);"),
+    "        ocx_pb_ctx_switch(trapped_ctx_id, pb_GrCtxID);\n"
+    "        pb_load_gr_ctx(trapped_ctx_id);")
+sub(re.escape("    old_fifo_access=VIDEOREG(NV_PGRAPH_FIFO);\n    VIDEOREG(NV_PGRAPH_FIFO)=NV_PGRAPH_FIFO_ACCESS_DISABLE;"),
+    "    int ocx_same=(ctx_id==pb_GrCtxID)&&(ctx_id!=NONE)&&ocx_pb_ctx_keep;\n"
+    "\n"
+    "    old_fifo_access=VIDEOREG(NV_PGRAPH_FIFO);\n"
+    "    VIDEOREG(NV_PGRAPH_FIFO)=NV_PGRAPH_FIFO_ACCESS_DISABLE;")
+sub(re.escape("        if (pb_3DGrCtxInst[ctx_id])\n"),
+    "        if (pb_3DGrCtxInst[ctx_id] && !ocx_same)\n")
+sub(re.escape("        VIDEOREG(NV_PGRAPH_CTX_USER)=(ctx_id<<24)&NV_PGRAPH_CTX_USER_CHID;\n"
+              "        VIDEOREG(NV_PGRAPH_CHANNEL_CTX_POINTER)=pb_GrCtxInst[ctx_id]&NV_PGRAPH_CHANNEL_CTX_POINTER_INST;\n"
+              "        VIDEOREG(NV_PGRAPH_CHANNEL_CTX_STATUS)=NV_PGRAPH_CHANNEL_CTX_STATUS_LOADED;\n"
+              "\n"
+              "        pb_wait_until_gr_not_busy();\n"),
+    "        VIDEOREG(NV_PGRAPH_CTX_USER)=(ctx_id<<24)&NV_PGRAPH_CTX_USER_CHID;\n"
+    "        if (!ocx_same) /* Melee-X: the loaded channel's state is live: no reload */\n"
+    "        {\n"
+    "        VIDEOREG(NV_PGRAPH_CHANNEL_CTX_POINTER)=pb_GrCtxInst[ctx_id]&NV_PGRAPH_CHANNEL_CTX_POINTER_INST;\n"
+    "        VIDEOREG(NV_PGRAPH_CHANNEL_CTX_STATUS)=NV_PGRAPH_CHANNEL_CTX_STATUS_LOADED;\n"
+    "\n"
+    "        pb_wait_until_gr_not_busy();\n"
+    "        }\n")
 
 # settable depth format (Z16 for the 16-bit 720p mode)
 sub(r'static unsigned int pb_DepthFmt = NV097_SET_SURFACE_FORMAT_ZETA_Z24S8;',

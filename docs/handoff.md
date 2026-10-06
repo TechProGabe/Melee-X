@@ -6,7 +6,41 @@ notes don't travel between machines, so what they held is here. Read
 
 ## Where it stands
 
-Updated 2026-10-04 (Windows PC, v54 = the v4 release candidate).
+Updated 2026-10-05 (night): **v4.1 candidate = v59** (v58 + `XGX_ZETA_GUARD`),
+deployed to red's `Melee-X` for a 3 h+ 720p burn-in; gold (off tonight)
+gets it by FTP (`/E/Applications/Melee-X/`; at 480 the guard is off, so it
+runs as v58, whose 480i burn-in was clean). Uncommitted on `dev`, not
+pushed; the release (commit, `main`, workflow tag `v4.1`) waits for the
+user's go-ahead. PGO retrained (v57 on; nv2a.c changed since, platform
+code). Round 14 (`logs-r14`): the guard's probe, 5 x 12 min under stress
+mode 6, 23M checks, none wrong, no stall, v57's settings included; round
+12 (`logs-r12`) had stalled v58 (r12c). Over v54:
+- VS Records crash fixed (`mndiagram.c`); confirmed on gold.
+- 720p copy stall: v56/v57's `XGX_COPY_FIX` 29 stalled after 97 min of
+  play (`logs57-red-1`). v58: `XGX_COPY_FIX` 37 (32-bit copy targets at
+  720p), `XGX_ONE_DMA`, `XGX_CTX_KEEP` (a safeguard: no context switch
+  after frame 1 on the console), `decisions.md`. Round 10: stress mode 6
+  stalls v57's settings at 720p in ~1 min, v58 ran 12 min clean; round 11
+  (`console_round.py` 11) repeats it 4x and ends with v57's settings.
+  Gold's v58 480i burn-in: 1 h 57 min clean (`logs58-gold`). Round 8 reproduced v54's stall twice under stress 40;
+  v55's attempt (the screen's zeta format in the copy) is a GPU DATA_ERROR
+  on every copy. Logs: `C:\xemu\hw\logs-r8`, `logs-r9`, `logs-r10`,
+  v54's stall `logs54-red-2`.
+- Test builds: a hang in a console round reboots to the dashboard
+  (`xhw_autopad_after_hang`; a quick-reboot relaunch after a GPU stall
+  came up black), `MX_TEST_HANG`, `MELEE_CLASSIC_CHAR`, scenarios `rec`,
+  `cont`.
+
+Stages `C:\xemu\hw\stage-v59`, map `melee_x.v59.map`. Gold: AV pack 1
+(480i only), game in `/E/Applications/Melee-X/`, deployed by plain FTP.
+Gold's v54 (2 h 25 min) and v55 (2 h 57 min) 480i burn-ins were clean.
+Open from today: the tester's Continue-screen freeze (v4, not reproduced;
+needs their logs), Cerbios `AdvCPUSupport` rdtsc patching (roadmap), r8d's
+black boot in AC97 init after a chained relaunch. Release notes draft:
+"Fixed a crash when opening Data > Melee Records > VS. Records. Fixed a
+freeze after long sessions at 720p."
+
+Before that, 2026-10-04 (Windows PC, v54 = the v4 release candidate):
 
 - **Releases:** v3 is out; **v4 is the v54 build** (`main` fast-forwarded to
   it; published by the GitHub `build` workflow with release tag `v4`,
@@ -108,6 +142,8 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `tie` | results screen with all four CPUs tied for 1st after an 8 s Final Destination match: the cards' portraits (Debug VS only; `fn_80179854` deviation) |
 | `castle` | Peach's Castle 4-CPU, untimed, a Bullet Bill every 30 frames (`MELEE_DEBUG_CASTLE_BILL`): read the `[CASTLE]` lines |
 | `clear` | Classic stage 1 won at once (`MELEE_INSTANT_WIN`): the Stage Clear screen's sepia freeze frame |
+| `rec` | title > Data > Melee Records > VS. Records (v54's crash), the grid, a cell's popup |
+| `cont` | Classic stage 8 against Team DK, three self-destructs to the Continue screen, YES (`MELEE_CLASSIC_CHAR=6` for Link) |
 | `cntalk` | Adventure Corneria's Star Fox cutscene from boot (`MELEE_BOOT_SCENE=cutscene`, `MELEE_BOOT_CUTSCENE=5`): the comm window's lines, shots on Slippy and Falco talking |
 | `toy` | Classic's last stage won at once, Game Clear, START: the trophy fall (`gmregtyfall.c`, scene 15 of mode 21; a second START goes on to the credits) |
 | `fd2` | Final Destination, 2 CPUs (Fox, Mario), 60 s: the frame-rate plan's light case |

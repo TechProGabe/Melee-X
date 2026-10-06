@@ -177,6 +177,8 @@ static void fill_e(void) {
         xhw_logf("[AUTOPAD] MX_FILL_E: E: filled, %u KB free", (unsigned)(free_b.QuadPart >> 10));
 }
 
+static unsigned s_test_hang;   /* env MX_TEST_HANG */
+
 void xhw_autopad_load(void) {
     static char buf[16 * 1024];
     HANDLE h = CreateFileA("D:\\autopad.txt", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
@@ -194,6 +196,11 @@ void xhw_autopad_load(void) {
     }
     xhw_logf("[AUTOPAD] %d events", s_nev);
     fill_e();
+    {   /* "env MX_TEST_HANG=<frame>": the game thread stops at that frame (checks
+         * the watchdog's report and xhw_autopad_after_hang) */
+        const char* e = getenv("MX_TEST_HANG");
+        if (e) s_test_hang = (unsigned)atoi(e);
+    }
 }
 
 static volatile uint32_t s_match_tick;   /* xhw_autopad_tick: ticks since the match's first */
@@ -205,10 +212,57 @@ void xhw_autopad_match_end(void) {
     if (!s_match_end) s_match_end = GetTickCount() | 1;
 }
 
+/* A console round's run that hangs (the GPU stall a copy stress hunts for)
+ * would stop the chain on its report screen: keep hang.log as
+ * hang_<folder>.log and boot.log as boot_<folder>.log, then reboot for
+ * good to the dashboard (FTP up; launch the next build by hand). Launching
+ * the next build by quick reboot came up black after a GPU stall (round
+ * 8): PGRAPH stays wedged across it. Called from the watchdog thread; the
+ * game thread is stuck. */
+void xhw_autopad_after_hang(void) {
+    static char buf[16 * 1024];
+    const char* next = getenv("MX_NEXT_XBE");
+    char folder[64], path[128];
+    HANDLE h;
+    DWORD n = 0;
+    if (!next) return;
+    h = CreateFileA(XHW_UDATA_DIR "hang.log", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        ReadFile(h, buf, sizeof buf, &n, NULL);
+        CloseHandle(h);
+    }
+    if (n && xhw_image_folder(folder, sizeof folder)) {
+        snprintf(path, sizeof path, XHW_UDATA_DIR "hang_%s.log", folder);
+        h = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h != INVALID_HANDLE_VALUE) {
+            DWORD w;
+            WriteFile(h, buf, n, &w, NULL);
+            CloseHandle(h);
+        }
+    }
+    {   /* a long load ends by itself: frames move again within 20 s */
+        unsigned f = xhw_frame_count(), i;
+        for (i = 0; i < 20; i++) {
+            Sleep(1000);
+            if (xhw_frame_count() != f) return;
+        }
+    }
+    xhw_log_try("[AUTOPAD] hang: rebooting to the dashboard (the next build by hand)");
+    if (xhw_image_folder(folder, sizeof folder)) {
+        snprintf(path, sizeof path, "boot_%s.log", folder);
+        xhw_log_keep(path);
+    }
+    xhw_reboot_cold();
+}
+
 void xhw_autopad_apply(int port, xhw_pad* out) {
     unsigned f = xhw_frame_count();
     int i;
     if (port != 0) return;
+    if (s_test_hang && f >= s_test_hang) {   /* the game thread stops for good */
+        xhw_logf("[AUTOPAD] MX_TEST_HANG at frame %u", f);
+        for (;;) Sleep(1000);
+    }
     /* before the events: a round 2 script has only env lines */
     if (s_match_end && (LONG)(GetTickCount() - s_match_end) > 12000) {   /* signed: s_match_end | 1 may be 1 ms ahead */
         const char* next = getenv("MX_NEXT_XBE");
@@ -256,5 +310,6 @@ void xhw_autopad_apply(int port, xhw_pad* out) {
     (void)out;
 }
 void xhw_autopad_match_end(void) {}
+void xhw_autopad_after_hang(void) {}
 void xhw_autopad_tick(uint32_t tick) { (void)tick; }
 #endif

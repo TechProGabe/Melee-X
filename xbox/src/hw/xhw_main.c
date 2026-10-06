@@ -240,6 +240,14 @@ static void __attribute__((noreturn)) launch(char* path) {
     for (;;) Sleep(1000);
 }
 
+/* A full reboot (to the dashboard): resets the GPU too. A quick-reboot launch
+ * after a GPU stall came up black (round 8: PGRAPH stays wedged across it). */
+void xhw_reboot_cold(void) {
+    xhw_exit_write(s_exit_why[0] ? s_exit_why : "cold reboot");
+    HalReturnToFirmware(HalRebootRoutine);
+    for (;;) Sleep(1000);
+}
+
 void xhw_reboot_self(void) {
     char path[300];
     const ANSI_STRING* img = &XeImageFileName[0];

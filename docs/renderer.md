@@ -528,7 +528,7 @@ These are the shadow-map notes too: HSD's shadow maps are EFB copies.
   again (`ocx_pb_retarget_back_buffer`, from `patch_pbkit.py`: surface state
   only, unlike `pb_target_back_buffer`'s four GPU-to-CPU interrupts) and
   every state group is re-sent.
-- **Surface switches sent twice** (`XGX_COPY_FIX`, default 5): on the
+- **Surface switches sent twice** (`XGX_COPY_FIX`, default 29): on the
   console a colour-side surface write right after a context-DMA switch
   occasionally doesn't take (stall: `LIMIT_ZETA` on the next clear or
   `LIMIT_COLOR` on the quad's `END`). Bit 1 re-sends the retarget's pitch
@@ -543,6 +543,36 @@ These are the shadow-map notes too: HSD's shadow maps are EFB copies.
   and missing Kirbys on the Classic team card, in xemu). `-DXGX_COPY_STRESS=N`
   repeats each clearing copy N times to provoke faults (`env MX_COPY_FIX=`/
   `MX_COPY_STRESS=`, `scenarios/stall`; results in `roadmap.md`).
+- **720p switches the zeta format per copy.** A swizzled surface takes a
+  zeta format of its colour's width (R5G6B5 + Z24S8 swizzled is a
+  DATA_ERROR on the console), so the copy names Z16 at 16 bits and the
+  retarget switches back to the screen's Z24S8 (720p since v53), a switch
+  480 (Z24S8 both) and v52's 720p (Z16 both) never made. v54 stopped after
+  44 min at 720p with `LIMIT_ZETA` on the Z clear after a copy (about
+  400k copies; v57 with `XGX_COPY_FIX` 29, 97 min). Since v4.1 720p copies
+  go into A8R8G8B8 targets with Z24S8 (`XGX_COPY_FIX` 32, default 37), as
+  480's do, so the zeta format never switches; 16 and 8 (the screen's
+  format sent back early, and again after idle) only act without 32.
+- **One DMA object** (`XGX_ONE_DMA`, v4.1): colour and depth render
+  through DMA object 3 (all of RAM) with physical offsets
+  (`push_screen_target`: object 3, format, pitch, clip, then the offsets)
+  at each frame's start and after each copy, so no other object is bound
+  again (`pb_target_back_buffer` and the retarget aren't used). Object 3
+  is sent with every surface setup: the binding didn't last from one frame
+  to the next in xemu (PGRAPH's context load at frame 1).
+- **Zeta pitch guard** (`XGX_ZETA_GUARD`, v4.1, only where the zeta pitch
+  isn't the colour's: 720p): PGRAPH's zeta pitch could slip to the
+  colour's (0xa00 for 0x1400) before a depth clear, and the Z clear in the
+  compressed depth tile then stalled the GPU (LIMIT_ZETA, every 720p
+  stall). `clear_fb` waits for an idle GPU before the depth clears, after
+  the colour clear and after the Z clear, reads 0x40085c and sends the
+  pitch again if it's wrong (`[NV2A] zeta pitch guard` counts every 600
+  frames). Round 14: 23M checks, none wrong, no stall.
+- **PGRAPH context switches** (`XGX_CTX_KEEP`, `patch_pbkit.py`, v4.1): a
+  switch to the channel already loaded keeps the live state instead of
+  loading the context saved at init (which reverts the surface state to
+  pb_init's). A safeguard: the console takes one switch, at frame 1, and
+  none during play. Test builds log each switch.
   `[NV2A] GPU stalled` dumps PGRAPH state and the last eight copies.
 - `-DXGX_EFB_GPU_COPY=0` reads back on the CPU instead (ARGB8 at every bpp;
   ~8 ms per 256x256 map, the framebuffer being write-combined).

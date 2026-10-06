@@ -749,6 +749,10 @@ void gm_Mode_Classic_OnLoad(void)
     if (pc_boot_scene() == GM_CLASSIC) {
         struct gmm_x0_528_t* pick = gmMainLib_8015CDC8();
         pick->c_kind = CKind_Mario;
+        /* PORT: MELEE_CLASSIC_CHAR=<CharacterKind> (6 Link) instead of Mario */
+        if (getenv("MELEE_CLASSIC_CHAR") != NULL) {
+            pick->c_kind = atoi(getenv("MELEE_CLASSIC_CHAR"));
+        }
         pick->color = 0;
         pick->stocks = 3;
         pick->cpu_level = 0;

@@ -51,6 +51,11 @@ MENU = ['env MELEE_BOOT_SCENE=title', 'env MELEE_NO_ATTRACT=1', 'env MX_LOCKSTEP
 # MX_COPY_STRESS times (the GPU stall after a copy, nv2a.c XGX_COPY_FIX)
 STALL = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_DEBUG_VS=cpu4',
          'env MELEE_DEBUG_VS_TIME=240', 'env MELEE_SEED=1']
+# round 8: 8 minutes of it (each run's hang goes on to the next build)
+STALL8 = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_DEBUG_VS=cpu4',
+          'env MELEE_DEBUG_VS_TIME=480', 'env MELEE_SEED=1']
+STALL12 = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_DEBUG_VS=cpu4',
+           'env MELEE_DEBUG_VS_TIME=720', 'env MELEE_SEED=1']
 FD = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=32', 'env MELEE_DEBUG_VS_CHARS=2,8',
       'env MELEE_DEBUG_VS_TIME=60', 'env MELEE_SEED=1']
 # Pokémon Stadium, 4 CPUs: the frame rate, and lockstep shots of the
@@ -166,6 +171,100 @@ CHAINS[7] = [
     ('Melee-X-r7k', 'final', 'psshot', {'MX_Z24': '1'}),
     ('Melee-X-r7l', 'final', 'fodshot', {'MX_Z24': '1'}),
 ]
+# round 8 (v4.1): the 720p GPU stall after an EFB copy (v54 burn-in, 44 min:
+# LIMIT_ZETA on the Z clear after a copy). The copies switched the zeta
+# format to Z16 and back at 720p (Z24S8 since v53); MX_COPY_ZFMT 1 keeps
+# the screen's (v4.1's default), 0 is v54's. Copy stress 40 for 8 minutes:
+# v54's path (expected to stall: the run's hang chains on), v4.1's twice,
+# v4.1's with the format re-sent (MX_COPY_FIX 13), 480p as a check; then
+# lockstep shots that must match byte for byte (the picture doesn't change),
+# and Stadium (its screen is a copy) at v4.1's defaults.
+CHAINS[8] = [
+    ('Melee-X-r8a', 'final', 'stall8', {'MX_VIDEO': '720', 'MX_COPY_ZFMT': '0', 'MX_COPY_STRESS': '40'}),
+    ('Melee-X-r8b', 'final', 'stall8', {'MX_VIDEO': '720', 'MX_COPY_ZFMT': '1', 'MX_COPY_STRESS': '40'}),
+    ('Melee-X-r8c', 'final', 'stall8', {'MX_VIDEO': '720', 'MX_COPY_ZFMT': '1', 'MX_COPY_STRESS': '40', 'MX_COPY_FIX': '13'}),
+    ('Melee-X-r8d', 'final', 'stall8', {'MX_VIDEO': '720', 'MX_COPY_ZFMT': '1', 'MX_COPY_STRESS': '40'}),
+    ('Melee-X-r8e', 'final', 'stall8', {'MX_VIDEO': '480', 'MX_COPY_STRESS': '40'}),
+    ('Melee-X-r8f', 'final', 'fodshot', {'MX_VIDEO': '720', 'MX_COPY_ZFMT': '0'}),
+    ('Melee-X-r8g', 'final', 'fodshot', {'MX_VIDEO': '720', 'MX_COPY_ZFMT': '1'}),
+    ('Melee-X-r8h', 'final', 'ps', {'MX_VIDEO': '720'}),
+]
+# Round 8's result (2026-10-05): v54's path stalled twice (frames 3314 and
+# 4241, ~11 fps under stress 40, so ~5-6 min in; the same LIMIT_ZETA as the
+# burn-in). MX_COPY_ZFMT 1 is no fix: SET_SURFACE_FORMAT with R5G6B5 + Z24S8
+# swizzled is a DATA_ERROR on the console, every copy, the format dropped
+# (removed). r8d came up black in the AC97 init after a chained relaunch.
+# round 9: the format switched back to the screen's right after the copy,
+# before the retarget's DMA switches (MX_COPY_FIX 16), and sent again after
+# the wait for idle (8): 29 = 5 + 8 + 16. Lockstep shots against 5 first
+# (must match byte for byte), then 3 x 12 minutes of stress 40 at 720p; a
+# stall reboots to the dashboard (launch the next run by hand).
+CHAINS[9] = [
+    ('Melee-X-r9a', 'final', 'fodshot', {'MX_VIDEO': '720', 'MX_COPY_FIX': '5'}),
+    ('Melee-X-r9b', 'final', 'fodshot', {'MX_VIDEO': '720', 'MX_COPY_FIX': '29'}),
+    ('Melee-X-r9c', 'final', 'stall12', {'MX_VIDEO': '720', 'MX_COPY_FIX': '29', 'MX_COPY_STRESS': '40'}),
+    ('Melee-X-r9d', 'final', 'stall12', {'MX_VIDEO': '720', 'MX_COPY_FIX': '29', 'MX_COPY_STRESS': '40'}),
+    ('Melee-X-r9e', 'final', 'stall12', {'MX_VIDEO': '720', 'MX_COPY_FIX': '29', 'MX_COPY_STRESS': '40'}),
+]
+# round 10 (v4.1 after v57 stalled at 97 min of play): XGX_COPY_FIX 37 (720p
+# copies into A8R8G8B8 + Z24S8: no zeta format switch), XGX_ONE_DMA (DMA
+# object 3 only, physical offsets) and XGX_CTX_KEEP (a PGRAPH context switch
+# to the loaded channel keeps the live state; [NV2A] PGRAPH context switches
+# counts them), all on by default. Lockstep shots with ONE_DMA/CTX_KEEP off
+# must match; stress 40 at 720p with the new stress modes (2 four targets,
+# 4 the CPU waits for idle between copy and clear) and the defaults; 480;
+# last v57's settings (29, no ONE_DMA/CTX_KEEP) under mode 6: the
+# reproducer attempt (a stall there reboots to the dashboard).
+CHAINS[10] = [
+    ('Melee-X-r10a', 'final', 'fodshot', {'MX_VIDEO': '720'}),
+    ('Melee-X-r10b', 'final', 'fodshot', {'MX_VIDEO': '720', 'MX_ONE_DMA': '0', 'MX_CTX_KEEP': '0'}),
+    ('Melee-X-r10c', 'final', 'stall12', {'MX_VIDEO': '720', 'MX_COPY_STRESS': '40', 'MX_COPY_STRESS_MODE': '6'}),
+    ('Melee-X-r10d', 'final', 'stall12', {'MX_VIDEO': '720', 'MX_COPY_STRESS': '40'}),
+    ('Melee-X-r10e', 'final', 'stall12', {'MX_VIDEO': '480', 'MX_COPY_STRESS': '40', 'MX_COPY_STRESS_MODE': '6'}),
+    ('Melee-X-r10f', 'final', 'stall12', {'MX_VIDEO': '720', 'MX_COPY_STRESS': '40', 'MX_COPY_STRESS_MODE': '6',
+                                          'MX_COPY_FIX': '29', 'MX_ONE_DMA': '0', 'MX_CTX_KEEP': '0'}),
+]
+# round 10's result: v57's settings stalled under stress mode 6 at frame 1139
+# (~1 min: the reproducer the other stresses weren't); the defaults ran 12
+# min of it clean, 480 too; lockstep shots equal; no PGRAPH context switch
+# after frame 1's first load on the console (XGX_CTX_KEEP never acts).
+# round 11: the defaults under the reproducer 4 x 12 min (at v57's rate
+# ~40 stalls expected), then v57's settings once more (must stall).
+R11 = {'MX_VIDEO': '720', 'MX_COPY_STRESS': '40', 'MX_COPY_STRESS_MODE': '6'}
+CHAINS[11] = [(f'Melee-X-r11{c}', 'final', 'stall12', dict(R11)) for c in 'abcd'] + [
+    ('Melee-X-r11e', 'final', 'stall12', dict(R11, MX_COPY_FIX='29', MX_ONE_DMA='0', MX_CTX_KEEP='0')),
+]
+# r11a ran clean; r11b faulted (LIMIT_COLOR, not the stall's LIMIT_ZETA) at
+# frame 7200, right after the test build's periodic PGRAPH read with the GPU
+# busy; that read is gone. round 12: round 11 again without it.
+CHAINS[12] = [(f'Melee-X-r12{c}', 'final', 'stall12', dict(R11)) for c in 'abcd'] + [
+    ('Melee-X-r12e', 'final', 'stall12', dict(R11, MX_COPY_FIX='29', MX_ONE_DMA='0', MX_CTX_KEEP='0')),
+]
+# r12a, r12b clean; r12c (the defaults) stalled at frame 1073, LIMIT_ZETA on
+# the Z clear with the zeta pitch register at 0xa00 (the colour's) although
+# the pushbuffer had sent 0x14000a00 twice; between them only pb_fill's
+# colour-only clear (0xF0). round 13: colour and Z in one clear
+# (XGX_COPY_FIX bit 2): v57's settings + 2 first (they stalled in ~2 min),
+# then v58 + 2 x 4, then v57's settings (must stall).
+V57 = dict(MX_ONE_DMA='0', MX_CTX_KEEP='0')
+CHAINS[13] = [('Melee-X-r13a', 'final', 'stall12', dict(R11, MX_COPY_FIX='31', **V57))] + [
+    (f'Melee-X-r13{c}', 'final', 'stall12', dict(R11, MX_COPY_FIX='39')) for c in 'bcde'] + [
+    ('Melee-X-r13f', 'final', 'stall12', dict(R11, MX_COPY_FIX='29', **V57)),
+]
+# round 13 not run. round 14 (after a second opinion): the zeta pitch probe
+# (MX_COPY_STRESS_MODE 8: PGRAPH 0x40085c read with the GPU idle before the
+# clears, after the colour clear and after the Z clear; a wrong value is
+# counted, logged and sent again, so the runs don't stop at the first one).
+# a v57's settings, b the defaults, c + 64 (the copy keeps the zeta pitch),
+# d + 2 (one clear), e + 2 + 64.
+R14 = dict(R11, MX_COPY_STRESS_MODE='14')
+CHAINS[14] = [
+    ('Melee-X-r14a', 'final', 'stall12', dict(R14, MX_COPY_FIX='29', **V57)),
+    ('Melee-X-r14b', 'final', 'stall12', dict(R14)),
+    ('Melee-X-r14c', 'final', 'stall12', dict(R14, MX_COPY_FIX='101')),
+    ('Melee-X-r14d', 'final', 'stall12', dict(R14, MX_COPY_FIX='39')),
+    ('Melee-X-r14e', 'final', 'stall12', dict(R14, MX_COPY_FIX='103')),
+]
 CHAIN = []   # main(): CHAINS[N]
 
 
@@ -174,7 +273,7 @@ def script(i):
     lines = [f'# docs/fps-plan.md round {ROUND}, run {i + 1} of {len(CHAIN)}: {build}, {scen}, '
              + (' '.join(f'{k}={v}' for k, v in sw.items()) or 'no switches')]
     lines += {'fod': FOD, 'fodlong': FODLONG, 'fd': FD, 'fodshot': FODSHOT, 'menu': MENU,
-              'stall': STALL, 'ps': PS, 'psshot': PSSHOT}[scen]
+              'stall': STALL, 'stall8': STALL8, 'stall12': STALL12, 'ps': PS, 'psshot': PSSHOT}[scen]
     lines += [f'env {k}={v}' for k, v in sw.items()]
     if i + 1 < len(CHAIN):
         lines.append(f'env MX_NEXT_XBE=F:\\Applications\\{CHAIN[i + 1][0]}\\default.xbe')
@@ -253,6 +352,13 @@ def watch():
                     with open(shots / name, 'wb') as o:
                         f.retrbinary(f'RETR {UDATA}/{name}', o.write)
                     print(f'{time.strftime("%H:%M:%S")} saved shots/{name}', flush=True)
+            for name in [n for n in names if n.startswith('hang_') and n.endswith('.log')]:
+                buf = io.BytesIO()   # a run that hung (xhw_autopad_after_hang): saved as is
+                f.retrbinary(f'RETR {UDATA}/{name}', buf.write)
+                out = LOGS / name
+                if not out.exists() or out.stat().st_size != len(buf.getvalue()):
+                    out.write_bytes(buf.getvalue())
+                    print(f'{time.strftime("%H:%M:%S")} saved {name}', flush=True)
             for name in [n for n in names if n.startswith('boot') and n.endswith('.log')]:
                 buf = io.BytesIO()
                 try:
@@ -260,7 +366,8 @@ def watch():
                 except ftplib.error_perm:
                     continue
                 text = buf.getvalue().decode('utf-8', 'replace')
-                if '[GAME] match ends' not in text and '[AUTOPAD] NEXT' not in text:   # NEXT: a run without a match
+                if ('[GAME] match ends' not in text and '[AUTOPAD] NEXT' not in text   # NEXT: a run without a match
+                        and '[AUTOPAD] hang' not in text):   # a run that hung and chained on
                     continue
                 run = run_name(text)
                 out = LOGS / f'{run}.log'
@@ -270,7 +377,7 @@ def watch():
             f.quit()
         except (OSError, EOFError, ftplib.Error) as e:
             print(f'{time.strftime("%H:%M:%S")} ftp: {e}', flush=True)
-        done = {p.stem for p in LOGS.glob('*.log')}
+        done = {p.stem for p in LOGS.glob('*.log') if not p.name.startswith('hang_')}
         if want <= done:
             print('all runs saved', flush=True)
             return

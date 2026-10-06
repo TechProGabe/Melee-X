@@ -40,6 +40,7 @@
 
 void xhw_video_fallback_480(void);
 extern unsigned int pb_DepthFmt;   /* settable: tools/xbox/patch_pbkit.py */
+extern unsigned int pb_ColorFmt;   /* pbkit.c (pb_set_color_format) */
 void ocx_pb_retarget_back_buffer(void);   /* tools/xbox/patch_pbkit.py */
 void ocx_pb_layout(unsigned* out);        /* tools/xbox/patch_pbkit.py */
 
@@ -375,7 +376,20 @@ static uint32_t* s_pb_base;
  * 1 the retarget sends the pitch again after the format
  * (ocx_pb_retarget_repitch), 2 colour and depth cleared by one
  * CLEAR_SURFACE (untried), 4 the copy's target and the retarget's DMA
- * objects, pitch and offsets sent a second time after a wait for idle.
+ * objects, pitch and offsets sent a second time after a wait for idle,
+ * 8 with bit 4: the surface format in that second send too, 16 the
+ * screen's format and pitch right after the copy's quad, before the
+ * retarget's DMA switches. 8 and 16 only where the copy switches the zeta
+ * format (720p: Z16 for the copy, Z24S8 on screen). v54 stalled at 720p
+ * after 44 min of play (LIMIT_ZETA on the Z clear after a copy), and under
+ * stress 40 after ~650k and ~835k copies (round 8); 29 ran 3 x 12 min,
+ * 5.25M copies, clean, its lockstep shots equal to 5's (round 9), but v57
+ * (29) stalled the same way after 97 min of play (~1.1M copies). 32: at
+ * 720p the copies go into A8R8G8B8 targets with Z24S8, as at 480, so the
+ * zeta format never switches (8 and 16 then do nothing); 480 has run ~7 h
+ * on the console without this stall. Default 37 since v4.1. 64: the
+ * copy's SET_SURFACE_PITCH keeps the screen's zeta pitch (untried alone:
+ * round 14 ran it under XGX_ZETA_GUARD, which is what keeps the stall away).
  * Console with XGX_COPY_STRESS: 0 faulted 19 s in (720p, N = 20); 1 ran
  * 19 min clean at 720p but faulted at 480i after 4 min (LIMIT_COLOR); 5
  * ran 22 min clean at 480i with N = 40. -DXGX_COPY_STRESS=N repeats each copy that clears after itself
@@ -385,17 +399,57 @@ static uint32_t* s_pb_base;
  * lines "env MX_COPY_FIX=n" and "env MX_COPY_STRESS=n" (copy_switches,
  * tools/xbox/scenarios/stall). */
 #ifndef XGX_COPY_FIX
-#define XGX_COPY_FIX 5
+#define XGX_COPY_FIX 37
 #endif
 #ifndef XGX_COPY_STRESS
 #define XGX_COPY_STRESS 0
 #endif
 int ocx_pb_retarget_repitch = XGX_COPY_FIX & 1;
+/* -DXGX_ONE_DMA (default 1, v4.1): colour and depth render through pbkit's
+ * DMA object over all of RAM (3), bound once, with physical offsets; no
+ * other object is bound again (not per frame: pb_target_back_buffer's
+ * object 9 rewrite and its 8 software interrupts; not per EFB copy: the
+ * switches to 3 and back to 9/10; object 3 itself is re-sent with every
+ * surface setup, push_screen_target). The copy stall (LIMIT_ZETA on the Z
+ * clear after a copy, 720p) came after those switches; with no DMA object
+ * to change, the surface state is offsets, format, pitch and clip only.
+ * 0: pbkit's objects 9/10 and the retarget, as up to v57. Test builds:
+ * "env MX_ONE_DMA=0|1". */
+#ifndef XGX_ONE_DMA
+#define XGX_ONE_DMA 1
+#endif
+static int s_one_dma = -1, s_one_dma_bound;   /* -1: not read yet (one_dma) */
+/* -DXGX_CTX_KEEP (default 1, v4.1): a PGRAPH context-switch interrupt for
+ * the channel already loaded keeps the live state (patch_pbkit.py). pbkit
+ * reloaded the context saved at init without saving the current one, so the
+ * surface state went back to pb_init's (objects 9/10, offsets 0). A
+ * safeguard: the console takes one switch, at frame 1 (the first load), and
+ * none during play. xemu's frame-1 load dropped XGX_ONE_DMA's binding the
+ * same way. Test builds: "env MX_CTX_KEEP=0|1". */
+#ifndef XGX_CTX_KEEP
+#define XGX_CTX_KEEP 1
+#endif
+volatile int ocx_pb_ctx_keep = XGX_CTX_KEEP;
+static volatile uint32_t s_ctx_switches, s_ctx_last[2];
+static uint32_t s_ctx_logged;
+
+/* from pbkit's PGRAPH interrupt (patch_pbkit.py), at DPC level: count only */
+void ocx_pb_ctx_switch(unsigned chid, unsigned current) {
+    s_ctx_switches++;
+    s_ctx_last[0] = chid;
+    s_ctx_last[1] = current;
+}
+static uint32_t s_depth_phys;                 /* pbkit's depth buffer, physical */
 static int s_copy_fix = XGX_COPY_FIX, s_copy_stress = XGX_COPY_STRESS;
 /* the copy the stress repeats (xgx_clear) */
 static int32_t s_stress_src[4];
 static int s_stress_mode, s_stress_armed, s_stress_busy;
-static uint32_t s_stress_tex;
+static uint32_t s_stress_tex[4];
+/* "env MX_COPY_STRESS_MODE=<bits>" (test builds): 2 rotate four scratch
+ * targets (as the shadow maps do), 4 the CPU waits for an idle GPU between
+ * each copy and its clear (methods into an idle PGRAPH one at a time, as in
+ * play) */
+static int s_stress_kind;
 #define PCRTC_START_REG (*(volatile uint32_t*)0xFD600800)
 
 static inline void put1(uint32_t m, uint32_t v) { P[0] = (1u << 18) | m; P[1] = v; P += 2; }
@@ -1014,6 +1068,55 @@ static struct {
 } s_pending_clear[PENDING_CLEARS];
 static int s_npending_clear;
 
+/* -DXGX_ZETA_GUARD (default 1, v4.1; only where the zeta pitch isn't the
+ * colour's: 720p, R5G6B5 0xa00 with Z24S8 0x1400). Every 720p copy stall
+ * (v54 and v57 in play, rounds 8, 10, 12) was LIMIT_ZETA on a Z clear with
+ * PGRAPH's zeta pitch register (0x40085c) holding the colour's 0xa00,
+ * although SET_SURFACE_PITCH had just sent 0x1400 (twice, round 12); at 480
+ * and with Z16 the two pitches are equal and the same slip is harmless. The
+ * guard waits for an idle GPU before the depth clears, after the colour
+ * clear and after the Z clear, reads the register and sends the pitch again
+ * if it's wrong. Round 14 (copy stress mode 6, 5 x 12 min, v57's settings
+ * among them, which stalled in ~2 min without it): 23M checks, none wrong,
+ * no stall: the waits themselves keep the slip from happening (a race).
+ * Costs ~8% under that stress (~160 guarded clears a frame), a few waits a
+ * frame in play. Test builds: "env MX_ZETA_GUARD=0|1" (1 forces it on). */
+#ifndef XGX_ZETA_GUARD
+#define XGX_ZETA_GUARD 1
+#endif
+static int s_zguard = -1;   /* -1: not decided yet (zeta_guard) */
+static uint32_t s_zguard_checks, s_zguard_bad[3];
+static void zeta_guard(int where) {
+    static const char* const k_where[3] = { "before the clears", "after the colour clear", "after the Z clear" };
+    uint32_t v, want;
+    if (s_zguard < 0) {
+        s_zguard = XGX_ZETA_GUARD && zeta_pitch() != pb_back_buffer_pitch();
+#if defined(XHW_AUTOPAD) && XHW_AUTOPAD
+        {
+            const char* e = getenv("MX_ZETA_GUARD");
+            if (e) s_zguard = atoi(e);
+        }
+#endif
+        xhw_logf("[NV2A] zeta pitch guard %s (colour pitch %x, zeta %x)", s_zguard ? "on" : "off",
+                 (unsigned)pb_back_buffer_pitch(), (unsigned)zeta_pitch());
+    }
+    if (!s_zguard) return;
+    want = zeta_pitch();
+    wait_idle();
+    v = *(volatile const uint32_t*)0xFD40085Cu;
+    s_zguard_checks++;
+    if (v == want) return;
+    if (s_zguard_bad[0] + s_zguard_bad[1] + s_zguard_bad[2] < 16)
+        xhw_logf("[NV2A] zeta pitch %x, not %x, %s, frame %u, check %u: sent again", (unsigned)v, (unsigned)want,
+                 k_where[where], s_frame, (unsigned)s_zguard_checks);
+    s_zguard_bad[where]++;
+    {
+        uint32_t* p = pb_begin();
+        p = pb_push1(p, NV097_SET_SURFACE_PITCH, pb_back_buffer_pitch() | want << 16);
+        pb_end(p);
+    }
+}
+
 static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int depth, uint32_t z24) {
     if (x < 0) { w += x; x = 0; }
     if (y < 0) { h += y; y = 0; }
@@ -1023,7 +1126,9 @@ static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int d
     pb_close();
     /* A8R8G8B8: pb_fill converts to the surface's format itself (converted
      * here as well, 16-bit clears came out near black) */
+    if (depth) zeta_guard(0);
     if (color && !(depth && (s_copy_fix & 2))) pb_fill(x, y, w, h, argb);
+    if (depth && color && !(s_copy_fix & 2)) zeta_guard(1);
     if (depth) {
         uint32_t* p = pb_begin();
         uint32_t zv = pb_DepthFmt != NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? z24 << 8
@@ -1040,6 +1145,7 @@ static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int d
         }
         p = pb_push1(p, NV097_CLEAR_SURFACE, what);
         pb_end(p);
+        zeta_guard(2);
     }
     /* The next draws wait for the clear. HSD's shadow maps are drawn one
      * after another in one 256x256 corner: copy, clear, then the next
@@ -1057,6 +1163,7 @@ static void clear_fb(int x, int y, int w, int h, uint32_t argb, int color, int d
 
 #if XGX_EFB_GPU_COPY
 static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode);
+static int copy_argb8(void);
 #endif
 
 void xgx_clear(const int32_t r[4], const uint8_t rgba[4], uint32_t z24, int color, int alpha, int depth) {
@@ -1084,12 +1191,14 @@ void xgx_clear(const int32_t r[4], const uint8_t rgba[4], uint32_t z24, int colo
 #if XGX_EFB_GPU_COPY
     /* XGX_COPY_STRESS: the copy's clear-after-copy, again and again */
     if (s_copy_stress && s_stress_armed && color && depth && !memcmp(r, s_stress_src, sizeof s_stress_src)) {
-        int i;
-        if (!s_stress_tex)
-            s_stress_tex = xgx_tex_create(256, 256, 1, s_bpp == 32 ? XGX_TEX_ARGB8 : XGX_TEX_RGB565, NULL);
+        int i, n = s_stress_kind & 2 ? 4 : 1;
+        for (i = 0; i < n; i++)
+            if (!s_stress_tex[i])
+                s_stress_tex[i] = xgx_tex_create(256, 256, 1, copy_argb8() ? XGX_TEX_ARGB8 : XGX_TEX_RGB565, NULL);
         s_stress_busy = 1;
-        for (i = 0; s_stress_tex && i < s_copy_stress; i++) {
-            efb_copy_gpu(s_stress_src, &s_tex[s_stress_tex], s_stress_mode);
+        for (i = 0; s_stress_tex[i % n] && i < s_copy_stress; i++) {
+            efb_copy_gpu(s_stress_src, &s_tex[s_stress_tex[i % n]], s_stress_mode);
+            if (s_stress_kind & 4) wait_idle();
             clear_fb(x0, y0, x1 - x0, y1 - y0, argb, color, depth, z24);
         }
         s_stress_busy = 0;
@@ -1136,6 +1245,48 @@ void xgx_gpu_period_log(void) {
     s_pp_wait_ns = s_pp_lag_ns = s_pp_span_ns = 0;
 }
 
+static int one_dma(void) {
+    if (s_one_dma < 0) {
+        unsigned l[8];
+        s_one_dma = XGX_ONE_DMA;
+#if defined(XHW_AUTOPAD) && XHW_AUTOPAD
+        {
+            const char* e = getenv("MX_ONE_DMA");
+            if (e) s_one_dma = atoi(e);
+        }
+#endif
+        ocx_pb_layout(l);
+        s_depth_phys = l[6] & 0x03FFFFFFu;
+#if defined(XHW_AUTOPAD) && XHW_AUTOPAD
+        {
+            const char* e = getenv("MX_CTX_KEEP");
+            if (e) ocx_pb_ctx_keep = atoi(e), xhw_logf("[NV2A] context keep %d", ocx_pb_ctx_keep);
+        }
+#endif
+        if (s_one_dma != XGX_ONE_DMA) xhw_logf("[NV2A] one DMA object %d", s_one_dma);
+    }
+    return s_one_dma;
+}
+
+/* XGX_ONE_DMA: the screen as the render target (the back buffer and the
+ * depth buffer by physical address through DMA object 3): format, pitch,
+ * clip, then the offsets, so no in-between surface is ever the screen's
+ * shape at the copy's address or the copy's at the screen's */
+static uint32_t* push_screen_target(uint32_t* p) {
+    /* object 3 again each time: the binding doesn't last (xemu lost it by the
+     * next frame, asserting on the screen's offset against object 9's
+     * limit: a context reload?). Always the same object, never a switch. */
+    p = pb_push1(p, NV097_SET_CONTEXT_DMA_COLOR, 3);
+    p = pb_push1(p, NV097_SET_CONTEXT_DMA_ZETA, 3);
+    p = pb_push1(p, NV097_SET_SURFACE_FORMAT, NV097_SET_SURFACE_FORMAT_TYPE_PITCH << 8 | pb_DepthFmt << 4 | pb_ColorFmt);
+    p = pb_push1(p, NV097_SET_SURFACE_PITCH, pb_back_buffer_pitch() | zeta_pitch() << 16);
+    p = pb_push1(p, NV097_SET_SURFACE_CLIP_HORIZONTAL, (uint32_t)s_fbw << 16);
+    p = pb_push1(p, NV097_SET_SURFACE_CLIP_VERTICAL, (uint32_t)s_fbh << 16);
+    p = pb_push1(p, NV097_SET_SURFACE_COLOR_OFFSET, (uint32_t)pb_back_buffer() & 0x03FFFFFFu);
+    p = pb_push1(p, NV097_SET_SURFACE_ZETA_OFFSET, s_depth_phys);
+    return p;
+}
+
 static void frame_open(void) {
     int i;
     if (s_frame_open) return;
@@ -1156,9 +1307,21 @@ static void frame_open(void) {
     }
     pb_reset();
     s_pb_base = pb_begin();
-    pb_target_back_buffer();
-    {
+    if (one_dma()) {
         uint32_t* p = pb_begin();
+        if (!s_one_dma_bound) {   /* objects 9/10 (pb_init's) are never used again */
+            p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
+            s_one_dma_bound = 1;
+            xhw_logf("[NV2A] one DMA object: colour %08x, depth %08x", (unsigned)((uint32_t)pb_back_buffer() & 0x03FFFFFFu),
+                     (unsigned)s_depth_phys);
+        }
+        p = push_screen_target(p);
+        p = pb_push1(p, NV097_SET_CONTROL0, CONTROL0);
+        pb_end(p);
+    } else {
+        uint32_t* p;
+        pb_target_back_buffer();
+        p = pb_begin();
         p = pb_push1(p, NV097_SET_CONTROL0, CONTROL0);
         pb_end(p);
     }
@@ -1462,6 +1625,20 @@ void xgx_present(int black) {
     vp_frame_end();
     z16_frame_end();
     s_frame++;
+    /* no periodic PGRAPH dump: reading 0x400700-0x4008FC while the GPU is
+     * still drawing (round 11, copy stress) raised LIMIT_COLOR in that frame;
+     * PGRAPH is read only after a fault (log_first_fault) */
+    if (s_ctx_switches != s_ctx_logged && (s_ctx_logged < 16 || s_frame % 600 == 0)) {   /* the first 16 as they come */
+        xhw_logf("[NV2A] PGRAPH context switches: %u (last: channel %u, loaded %d) at frame %u, %s",
+                 (unsigned)s_ctx_switches, (unsigned)s_ctx_last[0], (int)s_ctx_last[1], s_frame,
+                 ocx_pb_ctx_keep ? "live state kept" : "reloaded");
+        s_ctx_logged = s_ctx_switches;
+    }
+    if (s_zguard > 0 && s_frame % XGX_STATS_EVERY == 0)
+        xhw_logf("[NV2A] zeta pitch guard: %u checks, wrong %u before the clears, %u after the colour clear, %u after "
+                 "the Z clear",
+                 (unsigned)s_zguard_checks, (unsigned)s_zguard_bad[0], (unsigned)s_zguard_bad[1],
+                 (unsigned)s_zguard_bad[2]);
     if (s_frame % XGX_STATS_EVERY == 0) {
         /* draws/approximated: the last frame; the rest summed over the interval */
         xhw_logf("[NV2A] frame %u: %u draws (%u approximated), tex pool %u KB free (largest %u KB) | per %u: %u idle "
@@ -3152,11 +3329,11 @@ static void read_rect(const int32_t src[4], uint32_t dw, uint32_t dh, uint32_t* 
  * the back buffer's is whatever the draws left (the 1P clear's freeze
  * frame, drawn with the copy's alpha, came out transparent: black).
  * Afterwards the back buffer is the target again
- * and xgx_draw re-sends every state group. The target has the back buffer's
- * format: A8R8G8B8 with Z24S8 surfaces, or R5G6B5 with Z16 at 16 bits
- * (720p): the zeta side as wide as the colour, since it points at the
- * target's own memory with depth off (below), whatever the screen's depth
- * (Z24S8 at 720p too since v53, XGX_Z24_16BPP). An R5G6B5 copy samples
+ * and xgx_draw re-sends every state group. The target is A8R8G8B8 with a
+ * Z24S8 surface, at 720p too since v4.1 (XGX_COPY_FIX 32: the screen's
+ * Z24S8 then never switches), or R5G6B5 with Z16 at 16 bits without it:
+ * the zeta side as wide as the colour, since it points at the target's own
+ * memory with depth off (below). An R5G6B5 copy samples
  * alpha 1: the I/R copies HSD makes (shadow maps) are read for colour only, alpha comes from APREV
  * (tobj.c, TObjSetupTevModulateShadow). At 720p this was the CPU readback,
  * ~60 ms a match frame on the console (v38). */
@@ -3220,23 +3397,42 @@ static void copy_switches(void) {
         if (e) s_copy_fix = atoi(e);
         e = getenv("MX_COPY_STRESS");
         if (e) s_copy_stress = atoi(e);
+        e = getenv("MX_COPY_STRESS_MODE");
+        if (e) s_stress_kind = atoi(e);
     }
 #endif
     ocx_pb_retarget_repitch = s_copy_fix & 1;
-    if (s_copy_fix != XGX_COPY_FIX || s_copy_stress) xhw_logf("[NV2A] copy clear fix %d, stress %d", s_copy_fix, s_copy_stress);
+    if (s_copy_fix != XGX_COPY_FIX || s_copy_stress)
+        xhw_logf("[NV2A] copy clear fix %d, stress %d mode %d", s_copy_fix, s_copy_stress, s_stress_kind);
+}
+
+/* EFB copies go into A8R8G8B8 textures: at 32 bits, and at 16 with Z24S8
+ * depth under XGX_COPY_FIX 32 (a swizzled R5G6B5 target needs Z16) */
+static int copy_argb8(void) {
+    copy_switches();
+    return s_bpp == 32 || ((s_copy_fix & 32) && pb_DepthFmt != NV097_SET_SURFACE_FORMAT_ZETA_Z16);
 }
 
 static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     static const VpKey k_copy = { .copy = 1 };
-    uint32_t pw = t->w, ph = t->h, fb = (uint32_t)pb_back_buffer() & 0x03FFFFFF, i, bytes = (uint32_t)s_bpp / 8;
+    uint32_t pw = t->w, ph = t->h, fb = (uint32_t)pb_back_buffer() & 0x03FFFFFF, i;
+    int c32 = t->nvfmt == nv_format(XGX_TEX_ARGB8);   /* the target's format (copy_argb8) */
+    uint32_t bytes = c32 ? 4 : 2;
     float u0 = s_cx + src[0] * (float)s_cw / XGX_EFB_W, u1 = u0 + src[2] * (float)s_cw / XGX_EFB_W;
     float v0 = s_cy + src[1] * (float)s_ch / XGX_EFB_H, v1 = v0 + src[3] * (float)s_ch / XGX_EFB_H;
     /* nearest, unless the copy is smaller than its source (copy_dim) */
     uint32_t filt = (float)pw < u1 - u0 - 0.5f || (float)ph < v1 - v0 - 0.5f ? 2 : 1;
-    uint32_t sfmt = (s_bpp == 16 ? NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5 | NV097_SET_SURFACE_FORMAT_ZETA_Z16 << 4
+    /* A swizzled surface takes a zeta format of the colour's width: R5G6B5
+     * with Z24S8 is a DATA_ERROR on SET_SURFACE_FORMAT on the console (round
+     * 8; xemu takes it), the format is dropped and the copy draws with the
+     * last one. So an R5G6B5 target behind Z24S8 (720p without
+     * XGX_COPY_FIX 32) switches the zeta format to Z16 and back: 8 and 16. */
+    uint32_t sfmt = (!c32 ? NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5 | NV097_SET_SURFACE_FORMAT_ZETA_Z16 << 4
                                  : NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8 | NV097_SET_SURFACE_FORMAT_ZETA_Z24S8 << 4) |
                     NV097_SET_SURFACE_FORMAT_TYPE_SWIZZLE << 8 | (uint32_t)log2i((int)pw) << 16 |
                     (uint32_t)log2i((int)ph) << 24;
+    /* the copy's zeta format isn't the screen's (720p): XGX_COPY_FIX 8 and 16 */
+    int zswitch = !c32 != (pb_DepthFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16);
     float* v;
     int pf = xhw_perf_enter(XHW_PERF_EFB);
     copy_switches();
@@ -3271,8 +3467,9 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     pb_open();
     put1(NV097_WAIT_FOR_IDLE, 0);   /* the source's pixels are in memory */
 
-    /* target: the texture, through pbkit's DMA object over all of RAM (3) */
-    put1(NV097_SET_CONTEXT_DMA_COLOR, 3);
+    /* target: the texture, through pbkit's DMA object over all of RAM (3;
+     * with XGX_ONE_DMA the screen's too, so this is no switch) */
+    put1(NV097_SET_CONTEXT_DMA_COLOR, 3);   /* XGX_ONE_DMA: already 3, sent again as the screen's is */
     /* depth too: the surface format below names a depth format, and pbkit's
      * zeta object (10) only spans the screen's compressed depth buffer, at
      * offset 0 with the back buffer's pitch. The copy's swizzled surface
@@ -3283,7 +3480,9 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     put1(NV097_SET_CONTEXT_DMA_ZETA, 3);
     put1(NV097_SET_SURFACE_ZETA_OFFSET, (uint32_t)t->mem & 0x03FFFFFF);
     put1(NV097_SET_SURFACE_FORMAT, sfmt);
-    put1(NV097_SET_SURFACE_PITCH, pw * bytes | (pw * bytes) << 16);
+    /* XGX_COPY_FIX 64: the zeta half stays the screen's (the swizzled target
+     * takes no pitch), so the copy never writes the zeta pitch register */
+    put1(NV097_SET_SURFACE_PITCH, pw * bytes | (s_copy_fix & 64 ? zeta_pitch() : pw * bytes) << 16);
     put1(NV097_SET_SURFACE_COLOR_OFFSET, (uint32_t)t->mem & 0x03FFFFFF);
     if (s_copy_fix & 4) {   /* XGX_COPY_FIX 4: the whole target again once the GPU has taken it */
         put1(NV097_WAIT_FOR_IDLE, 0);
@@ -3291,7 +3490,7 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
         put1(NV097_SET_CONTEXT_DMA_ZETA, 3);
         put1(NV097_SET_SURFACE_ZETA_OFFSET, (uint32_t)t->mem & 0x03FFFFFF);
         put1(NV097_SET_SURFACE_FORMAT, sfmt);
-        put1(NV097_SET_SURFACE_PITCH, pw * bytes | (pw * bytes) << 16);
+        put1(NV097_SET_SURFACE_PITCH, pw * bytes | (s_copy_fix & 64 ? zeta_pitch() : pw * bytes) << 16);
         put1(NV097_SET_SURFACE_COLOR_OFFSET, (uint32_t)t->mem & 0x03FFFFFF);
     }
     put1(NV097_SET_SURFACE_CLIP_HORIZONTAL, pw << 16);
@@ -3356,6 +3555,34 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
     put1(NV097_WAIT_FOR_IDLE, 0);   /* the copy is in memory before anything samples it */
 
     /* back to the back buffer and the game's state */
+    if (s_one_dma) {   /* XGX_ONE_DMA: the screen's surface again, no DMA object switch */
+        put1(NV097_SET_STENCIL_TEST_ENABLE, 1);   /* as pbkit leaves it */
+        pb_close();
+        {
+            uint32_t* p = pb_begin();
+            p = push_screen_target(p);
+            p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
+            if (s_copy_fix & 4) {   /* once more after the wait */
+                p = push_screen_target(p);
+                p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
+            }
+            pb_end(p);
+        }
+        memset(s_fixed, 0xFF, sizeof s_fixed);
+        tex_shadow_reset();
+        s_rc_valid = 0;
+        s_vp_cur = -1;
+        s_draw_force = XGX_DIRTY_ALL;
+        xhw_perf_leave(pf);
+        return;
+    }
+    if ((s_copy_fix & 16) && zswitch) {   /* XGX_COPY_FIX 16: the screen's format (and its
+                                           * zeta format) now, before any DMA object switch:
+                                           * the retarget's format write then changes nothing */
+        put1(NV097_SET_SURFACE_FORMAT, NV097_SET_SURFACE_FORMAT_TYPE_PITCH << 8 | pb_DepthFmt << 4 | pb_ColorFmt);
+        put1(NV097_SET_SURFACE_PITCH, pb_back_buffer_pitch() | zeta_pitch() << 16);
+        put1(NV097_WAIT_FOR_IDLE, 0);
+    }
     put1(NV097_SET_STENCIL_TEST_ENABLE, 1);   /* as pbkit leaves it */
     put1(NV097_SET_SURFACE_ZETA_OFFSET, 0);   /* pbkit's depth buffer again (retarget sends the rest) */
     put1(NV097_SET_CONTEXT_DMA_ZETA, 10);
@@ -3368,6 +3595,15 @@ static void efb_copy_gpu(const int32_t src[4], const Tex* t, int mode) {
                                  * (pb_init's pitches, as the retarget sent them) */
             p = pb_push1(p, NV097_SET_CONTEXT_DMA_COLOR, 9);
             p = pb_push1(p, NV097_SET_CONTEXT_DMA_ZETA, 10);
+            /* XGX_COPY_FIX 8: the format too. The retarget sends it once,
+             * right after its DMA object switch, and at 720p that write
+             * switches the zeta format back from the copy's Z16 to Z24S8
+             * (v53 on); v54's 720p stall (LIMIT_ZETA on the Z clear after a
+             * copy) is gone with 8 and 16 (round 9). Then the pitch after
+             * it, as there. */
+            if ((s_copy_fix & 8) && zswitch)
+                p = pb_push1(p, NV097_SET_SURFACE_FORMAT,
+                             NV097_SET_SURFACE_FORMAT_TYPE_PITCH << 8 | pb_DepthFmt << 4 | pb_ColorFmt);
             /* depth's own pitch: Z24S8 with 16-bit colour (720p) is twice the
              * colour's. With the colour's, depth was addressed at half its
              * pitch after every copy: the copy's depth clear and the draws
@@ -3542,7 +3778,7 @@ uint32_t xgx_tex_from_efb(const int32_t src[4], uint32_t dst_w, uint32_t dst_h, 
 #endif
 #if XGX_EFB_GPU_COPY
     {   /* the target has the back buffer's format (efb_copy_gpu) */
-        uint32_t cfmt = s_bpp == 32 ? XGX_TEX_ARGB8 : XGX_TEX_RGB565, tex;
+        uint32_t cfmt = copy_argb8() ? XGX_TEX_ARGB8 : XGX_TEX_RGB565, tex;
         reusable = reuse && reuse < MAX_TEX && s_tex[reuse].used && s_tex[reuse].w == pw && s_tex[reuse].h == ph &&
                    s_tex[reuse].levels == 1 && !s_tex[reuse].rect && s_tex[reuse].nvfmt == nv_format(cfmt);
         tex = reusable ? reuse : xgx_tex_create(pw, ph, 1, cfmt, NULL);
