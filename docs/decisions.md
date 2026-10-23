@@ -651,6 +651,11 @@ Logging, test hooks and Xbox features:
   logged with free memory (`xsdk_scene_log`).
 - `src/melee/gm/gmvs.c`: `[GAME]` lines at a match's end and at the
   hand-over to the results.
+- `src/melee/ft/fighter.c` (human input), `src/melee/cm/camera.c`
+  (`Camera_8002B0E0`): with settings.ini `cstick_1p = 1` (the menu's
+  "C-stick in 1P modes", v4.2, GitHub #13) a player's C-stick is read in 1P
+  modes and training too, which zero it on the GameCube, and no longer
+  zooms the 1P camera (`xsdk_cstick_1p`; `TARGET_XBOX`, off by default).
 - `src/melee/ft/fighter.c` (knockback): the first 32 hits a boot not from a
   fighter, or with knockback over 200, are logged (`[WARN] hit:`, `[WARN]
   hit by item kind`).

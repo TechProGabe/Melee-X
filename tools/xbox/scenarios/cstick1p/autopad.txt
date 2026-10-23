@@ -1,0 +1,16 @@
+# Classic stage 1 as Mario with settings.ini's cstick_1p = 1 and port 1's
+# trigger_z = left (GitHub #12, #13): C-stick right smashes (the GameCube
+# zooms the camera), the left trigger grabs (no shield). Build with
+# -DXHW_AUTOPAD=1 -DXSDK_SETTINGS_RESET (this folder's settings.ini);
+# lockstep, so a run with both off differs only by them.
+env MELEE_BOOT_SCENE=classic
+env MELEE_CLASSIC_STAGE_OVERRIDE=1
+env MELEE_SEED=1
+env MX_LOCKSTEP=1
+400 SHOT
+430 CR for 8
+444 SHOT
+452 SHOT
+520 L for 40
+530 SHOT
+540 SHOT
