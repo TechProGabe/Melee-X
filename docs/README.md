@@ -12,4 +12,4 @@
 | [pgo.md](pgo.md) | the PGO profile `xbox/melee.profdata`: what it holds, why it may be committed, what must match, how to regenerate it |
 | [fps-plan.md](fps-plan.md) | finished: the frame-rate work (2026-10-03/04), its outcome, console rounds 1-6, every item tried and its result |
 | [lan-plan.md](lan-plan.md) | LAN play plan: two Xboxes, phases 0A-5; 0A/0B paused |
-| [handoff.md](handoff.md) | current state (v52 on the two test consoles, paused branches), this PC's setup, scenarios, working notes for the next session |
+| [handoff.md](handoff.md) | current state (the v4.2 issue sweep on `dev`, its burn test, what the console round checks), this PC's setup, scenarios, working notes for the next session |

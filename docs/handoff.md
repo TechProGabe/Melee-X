@@ -6,7 +6,7 @@ notes don't travel between machines, so what they held is here. Read
 
 ## Where it stands
 
-Updated 2026-10-23: **v4.2 work on `dev`** (local commits, not pushed; no
+Updated 2026-10-23: **v4.2 work on `dev`** (pushed to origin/dev; no
 release until the user says so; the user approves any GitHub comment).
 The open GitHub issues, one commit each:
 
@@ -22,6 +22,33 @@ The open GitHub issues, one commit each:
 | #12, #13 trigger grab, C-stick in 1P | settings menu rows "Trigger as Z", "C-stick in 1P modes" (off by default) | xemu `scenarios/cstick1p` (lockstep A/B), `settings` |
 | OC consoles (user request) | boot check of .text against default.xbe (`xhw_code_repair.c`, from Wings64-X/OpenCrossing) | xemu: matches, 69 ms; an upgraded console's `[BOOT] code check` line |
 | #8 black screen from an SSD | nothing to go on: waiting for the reporter's logs | |
+
+Code review (`cd3224f`): the texture cache keys NPOT images that wrap
+apart, code repair checks the file is the running build and repairs any
+number of rewritten rdtsc, the team card depth follows every depth copy.
+
+Burn test in xemu (2026-10-23, two slots, `C:\xemu\burn`): `scenarios/burn`
+(Stadium, 4 CPUs, items, metal Link) for ~33 min of game time at 480:
+free RAM flat ~15 MB, MEM1+ARAM 17.6 MB, no fault, stall or texture drop.
+At real 720p (a slot EEPROM from `eeprom_video.py`, encoder 004b0104 as
+the #18 reporter's): a match and results, the Team C. Falcon card, the
+trophy fall, the credits, metal fighters on Rainbow Cruise all right;
+`[VIDEO] scanout: general control 00101030, CR28 82, pitch 2560` (nothing
+to set back on xemu's stock kernel). Against v4.1 (a worktree build, same
+720p runs): texture use within ~1%, results screen 37 vs 126 KB of pool
+free (17 vs 12 allocations needing an eviction, no drops), main RAM the
+same; the trophy fall 0 approximated draws vs 5. Two open notes from it,
+in `roadmap.md` "v4.2": the 720p overflow-pool out-of-memory path
+(v4.1 the same) and one `[NV2A] GPU stalled` at frame 2 of 3 of ~12
+straight-to-match boots in xemu.
+
+The console round: test build v61 (`-DXHW_TEST_BUILD=1`, BACK shots on)
+staged at `C:\xemu\hw\stage-v61`, map `melee_x.v61.map`, not deployed
+(both consoles were off). Check: 720p over the user's HDMI adapter
+(`[VIDEO] scanout`), the Team C. Falcon card at 480i on gold (#15), the
+Special Movie to the end (`[MOVIE]`), Rainbow Cruise's chrome, Trigger as
+Z and C-stick in 1P in a match, `[BOOT] code check`, no `GPU stalled` after
+a boot. Pull logs before deploying.
 
 Audio check for the next console build: `xhw_audio.c`'s resample step
 changed (32028.8 Hz); nothing else in the AC97 driver, interrupts or
