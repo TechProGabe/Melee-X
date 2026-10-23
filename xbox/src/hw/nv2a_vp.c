@@ -1187,31 +1187,34 @@ void vp_generate(const VpKey* key, VpProgram* out) {
     static Gen gen;
     Gen* g = &gen;
     VpKey k = *key;
-    int i;
+    int i, tried = 0;
     memset(out, 0, sizeof *out);
     if (legacy_len(&k) > VP_MAX_INSNS) {
         /* GitHub #16: the trophy fall's room and the Trophy Collection light
          * a trophy with several spot lights; dropping all but two left the
          * trophies dark until the room lit up. Most such keys fit once
          * optimized: the whole key first. */
+        VpKey simple = k;
         gen_program(g, &k);
-        if (!g->approximated && (vp_optimize(g, out, 1) || vp_optimize(g, out, 0))) {
+        tried = !g->approximated;
+        if (tried && (vp_optimize(g, out, 1) || vp_optimize(g, out, 0))) {
             out->words[(out->n - 1) * 4 + 3] |= 1u;   /* FINAL */
             return;
         }
         memset(out, 0, sizeof *out);
         /* too long (many spot lights): drop the lights and retry unlit */
-        VpKey simple = k;
         for (i = 0; i < 4; i++) simple.chan[i].light_mask &= 0x3;
         for (i = 0; i < 4; i++) simple.chan[i].attn = simple.chan[i].attn == VPL_SPOT ? VPL_DIFFUSE : simple.chan[i].attn;
         if (memcmp(&simple, &k, sizeof simple) != 0) {
             k = simple;
             out->approximated = 1;
+            tried = 0;
         }
     }
-    gen_program(g, &k);
+    gen_program(g, &k);   /* again for the same key: the optimizer may have changed the ops */
     if (g->approximated) out->approximated = 1;
-    if (!vp_optimize(g, out, 1) && !vp_optimize(g, out, 0)) {
+    /* tried: this key's optimize already failed above */
+    if (tried || (!vp_optimize(g, out, 1) && !vp_optimize(g, out, 0))) {
         /* as generated, cut at 136 if need be */
         for (i = 0; i < g->n && i < VP_MAX_INSNS; i++) {
             Insn in = op_insn(&g->op[i]);

@@ -422,8 +422,9 @@ int main(int argc, char** argv) {
     printf("%d keys (%d longer than 136 before: %ld whole now, checked against their unoptimized program; %d cut by "
            "the old generator and skipped): %d failed\n",
            nkeys, overflowed, nfull, degenerate, fails);
+    /* the long keys checked whole (nfull) have no reference program: not in these */
     printf("instructions per program: %.1f before, %.1f now (%.1f as generated), %.1f%% of instructions paired\n",
-           (double)sum_ref / (nkeys - degenerate), (double)sum_new / (nkeys - degenerate),
+           (double)sum_ref / (nkeys - degenerate - nfull), (double)sum_new / (nkeys - degenerate - nfull),
            nfit ? (double)sum_unopt / nfit : 0.0, 100.0 * (double)npaired / (double)(sum_new ? sum_new : 1));
     printf("programs of <=40 / 41-80 / >80 instructions: before %d/%d/%d, now %d/%d/%d\n", hist_ref[0], hist_ref[1],
            hist_ref[2], hist_new[0], hist_new[1], hist_new[2]);

@@ -516,6 +516,12 @@ static inline THPDecComp* lbMthp_GetDecoder(THPDecComp* streamPlayer)
     return streamPlayer;
 }
 
+#ifdef TARGET_XBOX
+/* PORT: [MOVIE] (fn_8001F2A4 below), counted from each movie's start
+ * (lbMthp_8001F410) */
+static u32 lbMthp_xb_ticks, lbMthp_xb_waited;
+#endif
+
 void fn_8001F2A4(OSAlarm* alarm, OSContext* context)
 {
     THPDecComp* streamPlayer;
@@ -538,13 +544,10 @@ void fn_8001F2A4(OSAlarm* alarm, OSContext* context)
      * decoded yet, and the sound doesn't (GitHub #11): count those ticks,
      * one line a minute, so a drifting console log shows whether reads
      * held the picture back. */
-    {
-        static u32 ticks, waited;
-        if (streamPlayer->unk_78 != frame) waited++;
-        if (++ticks % 3600 == 0) {
-            OSReport("[MOVIE] %u s: frame %u, %u ticks (1/60 s) waiting for a frame\n", (unsigned) (ticks / 60),
-                     (unsigned) frame, (unsigned) waited);
-        }
+    if (streamPlayer->unk_78 != frame) lbMthp_xb_waited++;
+    if (++lbMthp_xb_ticks % 3600 == 0) {
+        OSReport("[MOVIE] %u s: frame %u, %u ticks (1/60 s) waiting for a frame\n",
+                 (unsigned) (lbMthp_xb_ticks / 60), (unsigned) frame, (unsigned) lbMthp_xb_waited);
     }
 #endif
 
@@ -593,6 +596,9 @@ void lbMthp_8001F410(const char* filename, u32* rate_table, void* buf,
     fn_8001ECF4(&MoviePlayer, buf);
     MoviePlayer.unk_144 = 0;
     MoviePlayer.unk_148 = 1;
+#ifdef TARGET_XBOX
+    lbMthp_xb_ticks = lbMthp_xb_waited = 0;   /* PORT: [MOVIE], above */
+#endif
     OSCreateAlarm(&MoviePlayer.alarm);
     OSSetPeriodicAlarm(&streamPlayer->alarm, OSSecondsToTicks(1.0f / 60),
                        OSSecondsToTicks(1.0f / 60), fn_8001F2A4);

@@ -399,8 +399,13 @@ the CPU (the ACPI timer, the retrace, the AC97), but its .text has ~55
 and byte pairs inside other instructions (Sheik's needles, roadmap).
 `xhw_code_repair.c` (OpenCrossing's, as Wings64-X carries it) compares
 .text with `D:\default.xbe` right after the boot's first log lines and
-writes back any bytes that differ (CR0.WP cleared around each store);
-over 64 differing bytes it only logs (the wrong file). `[BOOT] code
+writes back any bytes that differ (CR0.WP cleared around each store).
+Only when the file is the running build (its header's time stamps and
+size: an A/B build next to another default.xbe is left alone) and the
+differences look like the patcher's: any number of rewritten rdtsc (all
+~55 would be 110 bytes) and at most 16 other bytes; otherwise it only logs.
+`-DXHW_CODE_REPAIR_TEST` (one pair rewritten first): "1 rdtsc rewritten,
+put back", 77 ms in xemu. `[BOOT] code
 check: .text matches` on a stock console; xemu: the same, 69 ms.
 `-DXHW_CODE_REPAIR=0` / `=2` (log only).
 

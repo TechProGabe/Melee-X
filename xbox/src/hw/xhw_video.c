@@ -106,7 +106,7 @@ static void check_scanout(int width, int bpp) {
     unsigned crx = VIDEOREG8(XHW_PRMCIO_CRX), lock, cr13, cr19, cr25, cr28, pitch;
     uint32_t gc = VIDEOREG(XHW_PRAMDAC_GENERAL_CONTROL), gc_want;
     lock = crtc_rd(XHW_CIO_SR_LOCK);
-    crtc_wr(XHW_CIO_SR_LOCK, XHW_CIO_SR_UNLOCK_RW);
+    crtc_wr(XHW_CIO_SR_LOCK, XHW_CIO_SR_UNLOCK_RW);   /* left unlocked, as the kernel's AvSetDisplayMode leaves it */
     cr13 = crtc_rd(0x13);
     cr19 = crtc_rd(0x19);
     cr25 = crtc_rd(0x25);
