@@ -155,11 +155,16 @@ enum {
 /* Canonical vertex, built by the front end from GX attributes. Only the
  * attributes present in the draw are written; offsets are bytes into the
  * vertex, -1 when absent. pos is 3 floats, nrm 3 floats (a GX normal), col
- * 4 bytes RGBA, mtx 1 float (the PNMTXIDX row, 0..27), tc 2 floats. */
+ * 4 bytes RGBA, mtx 1 float (the PNMTXIDX row, 0..27), tc 2 floats.
+ * tc_mtx: bit n when the vertex has TEXnMTXIDX. HSD's skinned env maps load
+ * texture matrix k for position matrix k (pobj.c, HSD_Index2TexMtx), so the
+ * index itself isn't kept: the back end takes texgen n's matrix from the
+ * vertex's PNMTXIDX (GitHub #17). */
 typedef struct {
     uint32_t stride;
     int32_t off_pos, off_nrm, off_col[2], off_mtx;
     int32_t off_tc[8];
+    uint32_t tc_mtx;
 } XgxLayout;
 
 /* primitives (GXPrimitive values) */

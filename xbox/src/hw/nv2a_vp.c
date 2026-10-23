@@ -429,24 +429,45 @@ static void texgen(Gen* g, const VpKey* k, int u) {
             MOV(T(RS, MW), K1());
             break;
     }
-    DP4(T(RT, MX), src, C(base));
-    DP4(T(RT, MY), src, C(base + 1));
-    if (!t->normalize) {
-        if (t->proj) DP4(T(RT, MW), src, C(base + 2));
-        else MOV(T(RT, MW), K1());
-        MOV(T(RT, MZ), K0());
-    } else {
-        /* normalize (s, t, q) then the post-transform matrix */
-        if (t->proj) DP4(T(RT, MZ), src, C(base + 2));
+    if (t->pv_mtx) {
+        /* the vertex's own texture matrix (TEXnMTXIDX: HSD's skinned env
+         * maps, one per envelope), normalize if asked, then the post matrix */
+        DP4(T(RT, MX), src, CA(VPC_TEXMTX));
+        DP4(T(RT, MY), src, CA(VPC_TEXMTX + 1));
+        if (t->proj) DP4(T(RT, MZ), src, CA(VPC_TEXMTX + 2));
         else MOV(T(RT, MZ), K1());
-        DP3(T(RD, MX), R(RT), R(RT));
-        RSQ(T(RD, MX), sw(R(RD), XXXX));
-        MUL(T(RS, MXYZ), R(RT), sw(R(RD), XXXX));
+        if (t->normalize) {
+            DP3(T(RD, MX), R(RT), R(RT));
+            RSQ(T(RD, MX), sw(R(RD), XXXX));
+            MUL(T(RS, MXYZ), R(RT), sw(R(RD), XXXX));
+        } else {
+            MOV(T(RS, MXYZ), R(RT));
+        }
         MOV(T(RS, MW), K1());
         DP4(T(RT, MX), R(RS), C(VPC_POSTMTX + u * 3));
         DP4(T(RT, MY), R(RS), C(VPC_POSTMTX + u * 3 + 1));
         DP4(T(RT, MW), R(RS), C(VPC_POSTMTX + u * 3 + 2));
         MOV(T(RT, MZ), K0());
+    } else {
+        DP4(T(RT, MX), src, C(base));
+        DP4(T(RT, MY), src, C(base + 1));
+        if (!t->normalize) {
+            if (t->proj) DP4(T(RT, MW), src, C(base + 2));
+            else MOV(T(RT, MW), K1());
+            MOV(T(RT, MZ), K0());
+        } else {
+            /* normalize (s, t, q) then the post-transform matrix */
+            if (t->proj) DP4(T(RT, MZ), src, C(base + 2));
+            else MOV(T(RT, MZ), K1());
+            DP3(T(RD, MX), R(RT), R(RT));
+            RSQ(T(RD, MX), sw(R(RD), XXXX));
+            MUL(T(RS, MXYZ), R(RT), sw(R(RD), XXXX));
+            MOV(T(RS, MW), K1());
+            DP4(T(RT, MX), R(RS), C(VPC_POSTMTX + u * 3));
+            DP4(T(RT, MY), R(RS), C(VPC_POSTMTX + u * 3 + 1));
+            DP4(T(RT, MW), R(RS), C(VPC_POSTMTX + u * 3 + 2));
+            MOV(T(RT, MZ), K0());
+        }
     }
     if (t->proj == VP_PROJ_DIVIDE) {
         /* a BUMPENVMAP unit (indirect texturing) reads s and t without
@@ -1111,6 +1132,7 @@ static int legacy_len(const VpKey* k) {
     }
     for (i = 0; i < k->ntex && i < 4; i++)
         n += (k->tex[i].src >= 4 && k->tex[i].src <= 11 ? 2 : 1) + 6 + (k->tex[i].normalize ? 9 : 0) +
+             (k->tex[i].pv_mtx ? (k->tex[i].normalize ? 1 : 5) : 0) +
              (k->tex[i].proj == VP_PROJ_DIVIDE ? 3 : 0);
     return n;
 }

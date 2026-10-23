@@ -1,0 +1,11 @@
+# Final Destination, metal Zelda and Mario, lockstep (GitHub #17: the
+# metal shading in bands); shots at fixed ticks for before/after.
+env MELEE_BOOT_SCENE=vs
+env MELEE_DEBUG_VS_STAGE=32
+env MELEE_DEBUG_VS_CHARS=18,8
+env MELEE_DEBUG_VS_METAL=3
+env MELEE_DEBUG_VS_TIME=60
+env MELEE_SEED=1
+env MX_LOCKSTEP=1
+40 TSHOT
+100 TSHOT
