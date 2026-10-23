@@ -15,7 +15,8 @@
 - [x] dashboard icon, BACK screenshots (`shotNN.bmp`, on by default in
       test builds)
 - [x] settings menu (BACK on the title, `docs/platform.md`); button
-      mapping is still `settings.ini` only
+      mapping is still `settings.ini` only, but a trigger can be Z and the
+      C-stick can attack in 1P modes (v4.2)
 - [x] front LED effects (`docs/platform.md`); off by default since v48
       (modchip report, below)
 - [x] releases: v1-v3 out (`.github/release-notes.md`), built on GitHub
@@ -46,6 +47,38 @@ full/unwritable E: handling.
   and Fountain, no crash or hang, settings and card saves and 8 BACK shots
   written; the user says Fountain is fine.
 - Gold: in test. Burn-in tests next on both.
+
+## v4.2: the GitHub issues (2026-10-23, `dev`)
+
+Fixed on `dev`, checked in xemu (`docs/handoff.md` has the table, the
+commits and the burn test); the console round is still to come:
+
+- #9, #10 Data > Special and Bonus Records rows (NPOT textures that wrap),
+  #14 Classic team tiles over the black bars (Z-texture depth), #16 trophy
+  fall dark (long vertex programs kept whole), #17 metal fighters in bands
+  (per-vertex texture matrices): fixed, xemu before/after shots.
+- #11 Special Movie audio drift: 32 kHz now the GameCube's 32028.5 Hz;
+  console: play the movie to the end, read `[MOVIE]`.
+- #12, #13: "Trigger as Z" and "C-stick in 1P modes" in the settings menu.
+- #18 720p scrambled over an internal HDMI mod: scanout format checked and
+  restored after the mode set; console: the user's HDMI adapter, the
+  `[VIDEO] scanout` line.
+- Upgraded/overclocked CPUs: `.text` checked against default.xbe at boot.
+- Open: #15 Team C. Falcon card noise (console only, not seen in xemu),
+  #8 black screen from an SSD (no logs from the reporter).
+- Open, older: a rare **out of memory at 720p** (a player's report, older
+  build, no log). The likeliest path: in a scene with more textures than
+  the pool holds (the trophy fall and credits at 720p in xemu, the Trophy
+  Collection) `xgx_tex_pool_grow` takes up to 8 MB of free RAM and keeps
+  6 MB for the game's demand-committed MEM1/ARAM; a scene that then needs
+  more ends in `xhw_commit`'s "Out of memory". In xemu at 720p the trophy
+  fall leaves 7.6 MB free (v4.1 the same). Options: a bigger reserve at
+  720p, a smaller overflow pool, or giving it back under pressure. Needs
+  the player's boot.log.
+- xemu only so far: a boot straight into a match (`MELEE_BOOT_SCENE=vs`)
+  logged one `[NV2A] GPU stalled` at frame 2 in 3 of ~12 runs and went
+  on (probably xemu compiling the longer vertex programs); on the console,
+  look for that line after such a boot.
 
 ## Known issues
 
@@ -98,9 +131,9 @@ Fix order (2026-10-04):
    tester v52 "Slippy's frame does not move") is fixed for v53 by the
    grAnime fix (the comm window's open-anim check never fired, so no text,
    voice or mouth anim); in xemu (`scenarios/cntalk`) all three lines
-   play; confirm the voices on the console. Trophy transition lighting dark
-   and a background flash (`scenarios/toy`; suspects in `nv2a_vp.c`:
-   normals normalized where GX doesn't, spot cosine not clamped at 0).
+   play; confirm the voices on the console. Trophy transition lighting dark:
+   fixed in v4.2 (GitHub #16: the trophy's spot lights were dropped by the
+   vertex-program length cap); the background flash is not re-checked.
 6. **100-Man freeze** (tester, RC1 = v42, 128 MB, 480): `LIMIT_ZETA` on
    the clear after an EFB copy (logs `~/xemu/hw/logs-tester-100man/`); the
    copy fix since v46 targets it. Confirm with the tester on the next RC.
@@ -286,6 +319,7 @@ Other open:
 
 ## Next
 
+0. v4.2's console round (above, `docs/handoff.md`): stage `C:\xemu\hw\stage-v61`.
 1. Console confirmation of items 3 and 9 on red and gold.
 2. Burn-in on both consoles (items 1, 2, GPU stalls).
 3. The Reddit player's boot.log (item 12).

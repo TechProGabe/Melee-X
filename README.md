@@ -75,7 +75,8 @@ Press **Back** on the title screen ("Press Start") and the settings menu opens. 
 | BACK screenshots | Back saves `E:\UDATA\4d580001\shotNN.bmp`, off by default. Handy for bug reports |
 | Front LED effects | the front light flashes on KOs, in the last seconds and on GAME!, off by default. Leave it off if something else drives your LED, such as a Kronos modchip |
 | Rumble | off, or 25% to 100% |
-| Controller | pick a port, then its stick and C-stick dead zones and how far the triggers go in before they count as a full press |
+| C-stick in 1P modes | **Camera** (as on the GameCube: in Classic, Adventure, training and the other 1P modes the C-stick moves the camera) or **Attacks** (it does smash attacks there too, like the well-known Action Replay code) |
+| Controller | pick a port, then its stick and C-stick dead zones, how far the triggers go in before they count as a full press, and **Trigger as Z**: Off, Left or Right. That trigger grabs (Z) instead of shielding, for when grabbing with White/Black is awkward |
 | Save and restart / Save and close | |
 
 Everything the menu changes lives in `E:\UDATA\4d580001\settings.ini`, which you can also edit over FTP. That's the only settings file Melee-X reads (a `settings.ini` next to `default.xbe` is ignored). It's written on the first boot; delete it to go back to the defaults. Button remapping is only in this file for now: under `[port1]` to `[port4]`, lines like `a = A` map an Xbox button (`a b x y white black start back lstick rstick up down left right`) to a GameCube one (`A B X Y Z L R START UP DOWN LEFT RIGHT NONE`).
@@ -89,13 +90,15 @@ Everything the menu changes lives in `E:\UDATA\4d580001\settings.ini`, which you
 | B | X |
 | Y | Y |
 | White or Black | Z |
-| Left / right trigger | L / R (analog) |
+| Left / right trigger | L / R (analog); either can be Z instead (Trigger as Z in the settings menu) |
 | Left stick | control stick |
 | Right stick | C-stick |
 | D-pad | D-pad |
 | Start | Start |
 
 The layout matches where the buttons sit on a GameCube pad.
+
+Upgraded or overclocked CPU? Some BIOSes for upgraded CPUs rewrite a CPU timing instruction inside games, which can crash them. Melee-X checks its code against `default.xbe` at every boot and puts any such bytes back (`[BOOT] code check` in `boot.log`).
 
 ## If something breaks
 
