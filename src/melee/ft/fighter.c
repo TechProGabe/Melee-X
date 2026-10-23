@@ -95,6 +95,15 @@
 #ifdef TARGET_PC
 #include "pc/slp.h"
 #endif
+#ifdef TARGET_XBOX
+/* PORT: settings.ini cstick_1p, the settings menu's "C-stick in 1P modes"
+ * (xbox/src/sdk/settings.c; GitHub #13): the C-stick attacks in 1P modes
+ * and training too, as the Action Replay code does, instead of the camera */
+int xsdk_cstick_1p(void);
+#define pc_cstick_1p() xsdk_cstick_1p()
+#else
+#define pc_cstick_1p() 0
+#endif
 
 extern MotionState* ftData_CharacterStateTables[Ft_Kind_Max];
 
@@ -1839,8 +1848,9 @@ void Fighter_procInput(Fighter_GObj* gobj)
                 SET_STICKS(fp->input.lstick[0].x, fp->input.lstick[0].y,
                            HSD_PadGameStatus[fp->pad_port].nml_stickX,
                            HSD_PadGameStatus[fp->pad_port].nml_stickY);
+                /* PORT: or pc_cstick_1p() (above) */
                 if (DbLevel < DbLKind_DebugRom &&
-                    gm_IsCurrently1PMode_inline() == 0)
+                    (gm_IsCurrently1PMode_inline() == 0 || pc_cstick_1p()))
                 {
                     SET_STICKS(fp->input.cstick[0].x, fp->input.cstick[0].y,
                                HSD_PadGameStatus[fp->pad_port].nml_subStickX,

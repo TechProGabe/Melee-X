@@ -86,7 +86,9 @@ plugging and unplugging doesn't shuffle players. Default layout is
 GameCube-like by position (`docs/architecture.md` "Input"). Sticks get a
 radial dead zone, then are scaled so full tilt reaches the GameCube's raw
 rim (±104); the game clamps to its 80-unit circle. The digital L/R click
-fires past `trigger_click`. L and R past 200 with BACK and BLACK, on any
+fires past `trigger_click`. With `trigger_z = left` or `right` (per port,
+v4.2, GitHub #12) that trigger is Z instead: its click past `trigger_click`
+is Z, its analog value and L/R click are 0. L and R past 200 with BACK and BLACK, on any
 port, quits to the dashboard (L + R + START is Melee's own reset). Rumble
 is scaled by `[input] rumble`; 100 drives the motors at 75%. The state is
 polled (`SDL_GameControllerGet*`); SDL's joystick events are switched off
@@ -111,9 +113,11 @@ screenshots = 0     ; BACK saves shotNN.bmp; default 1 in test builds
 led_effects = 0     ; front LED effects ("Front LED")
 [input]
 rumble = 100        ; percent
+cstick_1p = 0       ; 1: the C-stick attacks in 1P modes and training too, not the camera (v4.2)
 [port1]             ; .. [port4]
 stick_deadzone = 20 ; percent, radial (0-60); cstick_deadzone = 25
 trigger_click = 230 ; 1-255
+trigger_z = off     ; left / right: that trigger is Z (grab) instead of L/R (v4.2)
 a = A               ; Xbox button = GameCube button (A B X Y Z L R START UP DOWN LEFT RIGHT NONE);
 b = X               ; x = B, y = Y, white/black = Z, back/lstick/rstick = NONE, start, d-pad as is
 ```
@@ -148,9 +152,11 @@ reset still works.
 | Frame-rate counter, BACK screenshots | On, Off | at once |
 | Front LED effects | On, Off | at once (On: a 1.5 s sweep; Off: LED handed back) |
 | Rumble | Off, 25-100% | at once, with a pulse |
-| Controller | Port 1-4 for the three rows below | |
+| C-stick in 1P modes | Camera (the GameCube's), Attacks (`fighter.c`, `camera.c` PORT; GitHub #13) | at once |
+| Controller | Port 1-4 for the four rows below | |
 | Stick / C-stick dead zone | 0-60%, steps of 5, live readout | on close |
 | Trigger click | 5-255, steps of 5, live readout | on close |
+| Trigger as Z | Off, Left, Right (that trigger grabs, no longer shields; GitHub #12) | at once |
 | Save and restart | writes the file, relaunches this XBE by its kernel path (`XeImageFileName`, `xhw_reboot_self`) | |
 | Save and close | writes the file (B or BACK too) | |
 
@@ -164,9 +170,10 @@ and repeated held directions within a few retraces.
 Restart-only values get a `*` while they differ from the running ones;
 closing saves only when something changed. Button mapping is file-only.
 The platform draws the panel over the finished frame (`docs/renderer.md`):
-Melee's menus are models with prebaked text. It is 17 rows since v53 (the
-128 MB row is gone); 18 rows were 91% of the height at 720p, so one more row
-still fits TV-safe and a second has to replace one.
+Melee's menus are models with prebaked text. It is 18 rows since v4.2
+(the C-stick and trigger rows; the blank line under the title went), 91%
+of the height at 720p, the most that fits TV-safe: another row has to
+replace one.
 
 ## Front LED (`xhw_led.c`)
 
