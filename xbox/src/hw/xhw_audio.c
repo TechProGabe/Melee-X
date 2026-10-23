@@ -52,8 +52,21 @@ void xhw_audio_write(const int16_t* stereo, uint32_t frames) {
     ASET(s_wp, wp + n);
 }
 
+/* The GameCube's "32 kHz" is 54 MHz / 1124 / 1.5 = 32028.47 Hz (Dolphin's
+ * AudioInterface), and Melee's streams were made to play at that rate: the
+ * Special Movie's soundtrack (a BGM stream) against its picture, timed by
+ * the OS clock (GitHub #11). Taken as 32000 here (a step of 43690, 31999.5
+ * Hz), audio ran 0.09% slow and was ~0.75 s behind the picture at the end
+ * of the 14-minute movie. 43730: 32028.8 Hz. The mixer fills by what this
+ * consumes (sdl3_audio.c), so the game mixes at the GameCube's rate too. */
+#ifndef XHW_AUDIO_GC_RATE
+#define XHW_AUDIO_GC_RATE 1
+#endif
+#define GC_32K_STEP 43730u
+
 static void fill_48k(int16_t* out) {
-    const uint32_t step = (uint32_t)(((uint64_t)s_in_rate << 16) / 48000);
+    const uint32_t step = XHW_AUDIO_GC_RATE && s_in_rate == 32000 ? GC_32K_STEP
+                                                                  : (uint32_t)(((uint64_t)s_in_rate << 16) / 48000);
     uint32_t wp = AGET(s_wp), rp = AGET(s_rp);
     int i;
     for (i = 0; i < OUT_FRAMES; i++) {
