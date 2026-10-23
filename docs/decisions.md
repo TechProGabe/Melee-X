@@ -164,8 +164,13 @@ than the textbook formula). The cost: less fog mid-span on long polygons
 
 **`GXSetZTexture` as a mask.** The depth test at a depth copy writes a 0/1
 mask into alpha (green at 16-bit, only for a copy that clears its rect),
-and the Z-texture draw alpha-tests by it. Exact for Melee's use (the
-Classic team card), not a general depth replace.
+and the Z-texture draw alpha-tests by it. Not a general depth replace: the
+team card's tiles (Z24X8) are drawn at one depth, 0x40000 in front of
+their capture's background (v4.2, GitHub #14). With the quads' own depth
+they drew over the card's black bars, which write depth first (z24
+f4699a) and on the GameCube hide the tiles' copied fighter depths; just in
+front of the background they fell behind the banner's area. Between the
+tiles it is draw order, as before.
 
 **TEV swap tables as dot products.** A swizzled source (GXInit's `RRRA`
 and the like) costs one combiner stage dotting it with a unit vector;
@@ -596,7 +601,8 @@ Logging, test hooks and Xbox features:
   inert without the variable.
 - `src/melee/gm/gmclassic.c`: melee-pc's Classic test hooks moved into
   `pc_classic_stage_override`, also called by `MELEE_BOOT_SCENE=classic`;
-  `MELEE_CLASSIC_CHAR` picks that shortcut's character (Mario without it).
+  `MELEE_CLASSIC_CHAR` picks that shortcut's character (Mario without it);
+  `MELEE_CLASSIC_TEAM=falcon` (v4.2) the Team C. Falcon stage 8.
 - `src/melee/gm/gmvsmode.c` (`onEnterDebugVs`): `MELEE_DEBUG_VS_TIME`,
   `_CHARS`, `_ITEMS`, `_INVISIBLE`; `ftkirby.c` (`ftKb_Init_OnDeath`):
   `MELEE_DEBUG_KIRBY_HAT`. `TARGET_PC`, inert without the variables.

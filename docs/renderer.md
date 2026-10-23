@@ -592,7 +592,12 @@ compressed depth buffer. At a depth-format copy (`_GX_TF_ZTF`)
 front of the copy's clear depth (GREATER), else 0. The copy takes that
 alpha (`XGX_COPY_ALPHA`); a draw with `ztex` set gets one more combiner
 stage (`APREV * TEXA`, `derive_units`) and an alpha test that drops 0
-(`emit_fixed`). The pass starts with a no-op quad (depth writes on, test
+(`emit_fixed`). A Z24X8 Z-texture draw (`ztex` 2: the team card's
+tiles) is also drawn at one depth, 0x40000 in front of the mask's clear
+depth (`build_proj` sets the projection's z row to it times w), so the
+card's black bars and NOW LOADING, which write nearer depths first, hide
+it as the copied fighter depths do on the GameCube (GitHub #14; they drew
+over the bars before). The pass starts with a no-op quad (depth writes on, test
 `NEVER`) so xemu rebinds its depth buffer. At 16 bits the mask goes into
 green (`XGX_COPY_GREEN`), which overwrites the rect's colour, so it is done
 only when the depth copy clears the rect after itself (`gm_1832.c`);
