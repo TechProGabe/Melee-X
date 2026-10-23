@@ -533,6 +533,20 @@ void fn_8001F2A4(OSAlarm* alarm, OSContext* context)
         fn_8001F06C(lbMthp_GetDecoder(streamPlayer));
     }
 #endif
+#ifdef TARGET_XBOX
+    /* PORT: the movie's clock (unk_80) stops while the frame it is on isn't
+     * decoded yet, and the sound doesn't (GitHub #11): count those ticks,
+     * one line a minute, so a drifting console log shows whether reads
+     * held the picture back. */
+    {
+        static u32 ticks, waited;
+        if (streamPlayer->unk_78 != frame) waited++;
+        if (++ticks % 3600 == 0) {
+            OSReport("[MOVIE] %u s: frame %u, %u ticks (1/60 s) waiting for a frame\n", (unsigned) (ticks / 60),
+                     (unsigned) frame, (unsigned) waited);
+        }
+    }
+#endif
 
     if (streamPlayer->unk_78 == frame) {
         streamPlayer->unk_80 += 1;

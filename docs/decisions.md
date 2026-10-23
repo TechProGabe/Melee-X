@@ -651,6 +651,9 @@ Logging, test hooks and Xbox features:
   logged with free memory (`xsdk_scene_log`).
 - `src/melee/gm/gmvs.c`: `[GAME]` lines at a match's end and at the
   hand-over to the results.
+- `src/melee/lb/lbmthp.c` (`fn_8001F2A4`): `[MOVIE]` once a minute of a
+  movie, the ticks its clock waited for an undecoded frame (v4.2, GitHub
+  #11; the sound doesn't wait). `TARGET_XBOX`.
 - `src/melee/ft/fighter.c` (human input), `src/melee/cm/camera.c`
   (`Camera_8002B0E0`): with settings.ini `cstick_1p = 1` (the menu's
   "C-stick in 1P modes", v4.2, GitHub #13) a player's C-stick is read in 1P
