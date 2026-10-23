@@ -112,7 +112,7 @@ Fix order (2026-10-04):
    16-bit cards now match. Still different from the GameCube: overlapping
    tiles layer by draw order, not by each fighter's copied depth (the mask
    has no depth). Repro: `MELEE_BOOT_SCENE=classic`,
-   `MELEE_CLASSIC_STAGE_OVERRIDE=8`, `MELEE_CLASSIC_TEAM=kirby|jiggly`,
+   `MELEE_CLASSIC_STAGE_OVERRIDE=8`, `MELEE_CLASSIC_TEAM=kirby|jiggly|falcon`,
    shots at frames 20-92 (`-DXHW_VIDEO_480_BPP=16` for the 720p path).
    Confirmed on the console (user, 2026-10-04: the Team Jigglypuff card
    is right on v53).

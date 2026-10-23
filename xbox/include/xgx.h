@@ -124,7 +124,8 @@ typedef struct {
     /* GXSetZTexture REPLACE/ADD: the last TEV stage's texture is a depth
      * copy. Emulated as a mask (nv2a.c, xgx_ztex_mask): the copy holds 1
      * where the copied depth was in front of the clear depth, and the draw
-     * keeps only those pixels. */
+     * keeps only those pixels. 2: a Z24X8 one (the team card), also drawn
+     * at the depth of the copy's background (nv2a.c build_proj). */
     uint32_t ztex;
 
     /* textures */

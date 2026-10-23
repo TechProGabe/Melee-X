@@ -94,6 +94,18 @@ static float z_store(float g) {
     return g * s_zmax;
 }
 
+/* A Z-texture draw's depth (GitHub #14): GX replaces each fragment's depth
+ * with the copied one, which the NV2A can't. The team card's tiles are
+ * drawn at one depth, 0x40000 in front of their capture's background
+ * (z24 fbffff for its ffffff; xgx_ztex_mask): about where a fighter stands
+ * (the card's Mario is at fc2...-fc4...), in front of the banner (fd...-fe...),
+ * behind what the card drew in front with depth writes (its black bars at
+ * f4699a, NOW LOADING at f45453), as on the GameCube. The tiles write no
+ * depth, so they still layer by draw order. Just in front of the background
+ * (ffffdff) was behind the banner area's depth. -1: no mask yet, the
+ * quads' own depth. */
+static float s_ztex_g = -1.0f;
+
 static uint32_t s_draw_force = XGX_DIRTY_ALL;   /* groups xgx_draw must rebuild regardless of dirty bits */
 static float s_display_aspect = 4.0f / 3.0f;
 static float s_content_aspect = 73.0f / 60.0f;
@@ -1173,6 +1185,9 @@ void xgx_clear(const int32_t r[4], const uint8_t rgba[4], uint32_t z24, int colo
     int x0, y0, x1, y1;
     uint32_t argb = (uint32_t)rgba[3] << 24 | (uint32_t)rgba[0] << 16 | (uint32_t)rgba[1] << 8 | rgba[2];
     (void)alpha;
+#ifdef XGX_DEBUG_TRACE
+    if (s_fbdump_once) xhw_logf("[DRAW] clear %d,%d %dx%d z %06x depth %d", (int)r[0], (int)r[1], (int)r[2], (int)r[3], (unsigned)z24, depth);
+#endif
     x0 = map_x((float)r[0]);
     y0 = map_y((float)r[1]);
     x1 = map_x((float)(r[0] + r[2]));
@@ -1932,6 +1947,8 @@ static void build_proj(const XgxState* st) {
             s_zg0 > 0.0f ? (s_zrow_gx[c] - s_zmax * s_zg0 * p[3][c]) / (1.0f - s_zg0) : s_zrow_gx[c];
         s_vc[VPC_PROJ + 3][c] = p[3][c];
     }
+    if (st->ztex == 2 && s_ztex_g >= 0.0f)   /* z/w = the constant: z = it times w */
+        for (c = 0; c < 4; c++) s_vc[VPC_PROJ + 2][c] = z_store(s_ztex_g) * p[3][c];
     if (st->fog_type & 7) build_fog(st);
 }
 
@@ -2675,9 +2692,9 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
              s_draws, prim, count, st->ntev, st->nind, st->ntexgen, approx, st->blend_type, st->blend_src,
              st->blend_dst, st->alpha_comp0, st->alpha_ref0, st->alpha_op, st->alpha_comp1, st->alpha_ref1,
              st->z_enable, st->z_func, st->z_update);
-    if (l->off_pos >= 0 && !st->proj_ortho) {
-        /* screen box (EFB pixels) of the draw's vertices, to find a draw in a shot */
-        float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+    if (l->off_pos >= 0) {
+        /* screen box (EFB pixels) and depth range (z24) of the draw's vertices, to find a draw in a shot */
+        float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f, z0 = 1e9f, z1 = -1e9f;
         uint32_t v;
         for (v = 0; v < count; v++) {
             const uint8_t* vx = s_draw_base + v * l->stride;
@@ -2696,8 +2713,13 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
             if (c[0] > x1) x1 = c[0];
             if (c[1] < y0) y0 = c[1];
             if (c[1] > y1) y1 = c[1];
+            c[2] = ((st->viewport[5] - st->viewport[4]) * c[2] / c[3] + st->viewport[5]) * 16777215.0f;
+            if (c[2] < z0) z0 = c[2];
+            if (c[2] > z1) z1 = c[2];
         }
-        if (x0 <= x1) xhw_logf("[DRAW]  screen %d,%d - %d,%d", (int)x0, (int)y0, (int)x1, (int)y1);
+        if (x0 <= x1)
+            xhw_logf("[DRAW]  screen %d,%d - %d,%d z %06x-%06x", (int)x0, (int)y0, (int)x1, (int)y1,
+                     (unsigned)(int)z0, (unsigned)(int)z1);
         xhw_logf("[DRAW]  scissor %d,%d %dx%d viewport %d,%d %dx%d", (int)st->scissor[0], (int)st->scissor[1],
                  (int)st->scissor[2], (int)st->scissor[3], (int)st->viewport[0], (int)st->viewport[1],
                  (int)st->viewport[2], (int)st->viewport[3]);
@@ -3675,6 +3697,7 @@ int xgx_ztex_mask(const int32_t src[4], uint32_t z24, int clears) {
     /* a little in front of z24: the cleared background holds exactly z24,
      * and the quad's interpolated depth there must not round past it */
     z24 &= 0xFFFFFFu;
+    s_ztex_g = (float)(z24 > 0x40000u ? z24 - 0x40000u : 0u) / 16777215.0f;
     z = s_zg0 > 0.0f ? z_store((float)(z24 > 0x100u ? z24 - 0x100u : 0u) / 16777215.0f)
                      : (float)(z24 > 0x100u ? z24 - 0x100u : 0u) * (s_zmax / 16777215.0f);
     {

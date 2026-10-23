@@ -1,0 +1,9 @@
+# Classic stage 8's team card (gm_1832.c tiles drawn with GXSetZTexture;
+# GitHub #14: tiles over the black bars, #15: Team C. Falcon's textures).
+# MELEE_CLASSIC_TEAM=falcon|kirby|jiggly|dk.
+env MELEE_BOOT_SCENE=classic
+env MELEE_CLASSIC_STAGE_OVERRIDE=8
+env MELEE_CLASSIC_TEAM=falcon
+30 SHOT
+60 SHOT
+92 SHOT

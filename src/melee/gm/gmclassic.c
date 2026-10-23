@@ -675,7 +675,7 @@ static gm_803DDEC8Struct* gmClassic_801B2D54(gm_803DDEC8Struct* arg0)
     return ptr;
 }
 #ifdef TARGET_PC
-/* MELEE_CLASSIC_STAGE_OVERRIDE=<1..11> (MELEE_CLASSIC_TEAM=dk|kirby|jiggly
+/* MELEE_CLASSIC_STAGE_OVERRIDE=<1..11> (MELEE_CLASSIC_TEAM=dk|kirby|jiggly|falcon
  * for stage 8): start Classic at that stage. PORT: shared by the character
  * select's exit and the MELEE_BOOT_SCENE=classic shortcut, which skips it. */
 static void pc_classic_stage_override(struct gmm_x0_528_t* pick, gm_803DDEC8Struct* r4)
@@ -690,6 +690,8 @@ static void pc_classic_stage_override(struct gmm_x0_528_t* pick, gm_803DDEC8Stru
             const char* team_ovr = getenv("MELEE_CLASSIC_TEAM");
             if (team_ovr != NULL && (strstr(team_ovr, "jiggly") != NULL || strstr(team_ovr, "purin") != NULL)) {
                 r4[team_idx].xC = &gmClassic_803DDEC8.x2B0[5]; /* Team Jigglypuff */
+            } else if (team_ovr != NULL && strstr(team_ovr, "falcon") != NULL) {
+                r4[team_idx].xC = &gmClassic_803DDEC8.x2B0[6]; /* Team C. Falcon */
             } else if (team_ovr != NULL && strstr(team_ovr, "kirby") != NULL) {
                 r4[team_idx].xC = &gmClassic_803DDEC8.x2B0[2]; /* Team Kirby */
             } else if (team_ovr != NULL) {
