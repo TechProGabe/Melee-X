@@ -168,6 +168,7 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `team` | Classic stage 8's team card, `MELEE_CLASSIC_TEAM=falcon` (GitHub #14: tiles over the black bars; #15: Team C. Falcon's noise, console only) |
 | `metal`, `metalfd` | Rainbow Cruise / Final Destination, metal Zelda and Mario (`MELEE_DEBUG_VS_METAL`; metalfd in lockstep for before/after, GitHub #17) |
 | `cstick1p` | Classic stage 1 with its own settings.ini (`cstick_1p = 1`, `trigger_z = left`; build with `-DXSDK_SETTINGS_RESET`), lockstep: C-stick smash, trigger grab (GitHub #12, #13) |
+| `burn` | Pokemon Stadium, four CPUs (Link metal), capsules and crates, a 40-minute match: the v4.2 burn test (memory, faults, transformations) |
 | `special`, `info` | title > Data > Special; Data > Melee Records > Bonus Records (GitHub #9, #10: the rows' panel) |
 | `cont` | Classic stage 8 against Team DK, three self-destructs to the Continue screen, YES (`MELEE_CLASSIC_CHAR=6` for Link) |
 | `cntalk` | Adventure Corneria's Star Fox cutscene from boot (`MELEE_BOOT_SCENE=cutscene`, `MELEE_BOOT_CUTSCENE=5`): the comm window's lines, shots on Slippy and Falco talking |
