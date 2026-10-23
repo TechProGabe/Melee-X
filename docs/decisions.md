@@ -127,7 +127,11 @@ texgen exceed the NV2A's fixed function (skinning indexes matrices with
 by Belady's rule with the last frame as the forecast (the console had been
 reloading ~80 programs a frame). Only rewrites with the same output bits
 are allowed (`test_vp_opt.py`); the attenuation shortcut relies on
-rcp(1.0) being exactly 1. `renderer.md` "Shorter programs".
+rcp(1.0) being exactly 1. `renderer.md` "Shorter programs". Since v4.2 a
+key longer than 136 instructions before optimizing is kept whole when its
+optimized program fits, instead of dropping lights to the old generator's
+approximation (GitHub #16, the trophy room's spot lights): a few longer
+programs a frame, the right picture.
 
 **Fewer, bigger draws** (`gx_vtx.c`): a display list's batches merge into
 one draw (strips stitched with degenerate triangles), immediate-mode

@@ -245,7 +245,7 @@ static void simplify(VpKey* s) {
 
 int main(int argc, char** argv) {
     int nkeys = argc > 1 ? atoi(argv[1]) : 200000, t, i, fails = 0, degenerate = 0, overflowed = 0, shown = 0;
-    long sum_ref = 0, sum_new = 0, sum_unopt = 0, nfit = 0, npaired = 0;
+    long sum_ref = 0, sum_new = 0, sum_unopt = 0, nfit = 0, npaired = 0, nfull = 0;
     int hist_ref[3] = { 0 }, hist_new[3] = { 0 };
     static VpProgram ref, cur;
     static uint32_t unopt[512 * 4];
@@ -265,13 +265,31 @@ int main(int argc, char** argv) {
         vp_canon(&kc);
         vp_generate(&kc, &cur);
         if (len > VP_MAX_INSNS) overflowed++;
-        if (deg) {
-            degenerate++;
-            continue;
-        }
         if (len <= VP_MAX_INSNS && (int)ref.n != len) {
             printf("legacy_len %d, reference program %u instructions\n", len, ref.n);
             fails++;
+        }
+        /* a long key that fits once optimized (vp_generate, v4.2): against
+         * its own unoptimized program, not the reference's approximation */
+        if (len > VP_MAX_INSNS && !cur.approximated) {
+            nun = vp_test_unoptimized(&kc, unopt, 512);
+            nfull++;
+            for (i = 0; i < 4; i++) {
+                VpOut uo, co;
+                rand_input(&in, &k);
+                run(unopt, nun, &in, 6000u + (unsigned)i, 0, &uo);
+                run(cur.words, (int)cur.n, &in, 7000u + (unsigned)i, 0, &co);
+                if (uo.bad || co.bad || !out_eq(&uo, &co)) {
+                    fails++;
+                    if (shown++ < 10) printf("long key %d differs from its unoptimized program\n", t);
+                    break;
+                }
+            }
+            continue;
+        }
+        if (deg) {
+            degenerate++;
+            continue;
         }
         if (ref.approximated != cur.approximated) {
             printf("key %d: approximated %d, reference %d\n", t, cur.approximated, ref.approximated);
@@ -342,8 +360,9 @@ int main(int argc, char** argv) {
         printf("%d keys with a unit divided by q (VP_PROJ_DIVIDE): %d failed\n", dn, dfails);
         fails += dfails;
     }
-    printf("%d keys (%d longer than 136 before, %d of them cut by the old generator and skipped): %d failed\n", nkeys,
-           overflowed, degenerate, fails);
+    printf("%d keys (%d longer than 136 before: %ld whole now, checked against their unoptimized program; %d cut by "
+           "the old generator and skipped): %d failed\n",
+           nkeys, overflowed, nfull, degenerate, fails);
     printf("instructions per program: %.1f before, %.1f now (%.1f as generated), %.1f%% of instructions paired\n",
            (double)sum_ref / (nkeys - degenerate), (double)sum_new / (nkeys - degenerate),
            nfit ? (double)sum_unopt / nfit : 0.0, 100.0 * (double)npaired / (double)(sum_new ? sum_new : 1));
