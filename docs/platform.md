@@ -202,6 +202,12 @@ allows it and `progressive = 1`, else 480i (on an HDTV pack set to 480p,
 via nxdk's `XVideoInit`; PAL has no progressive modes in nxdk); 16:9 if
 the dashboard is set to widescreen. BACK held at boot gives 480i and saves
 `720p = 0`, `progressive = 0`, for a TV that doesn't show 720p.
+After the mode set, `[VIDEO] scanout:` logs the scanout registers the
+kernel's `AvSetDisplayMode` leaves (PRAMDAC general control, CR28's pixel
+depth, the pitch in CR13/CR19/CR25); where they don't match the mode
+(R5G6B5 needs general control's `ALT_MODE_SEL`), they are set back the
+way the stock kernel sets them and `[VIDEO] scanout set back:` says so
+(GitHub #18; `decisions.md`).
 `VIWaitForRetrace` is the frame boundary: it paces to 60.000 Hz, runs due
 alarms (the pad poll), then the retrace callbacks; `VISetBlack` is
 honoured at the flip.
