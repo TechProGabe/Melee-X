@@ -164,7 +164,9 @@ Fix order (2026-10-04):
 
 Other open:
 
-- **Upgraded-CPU BIOS patching rdtsc in .text (potential, look at later).**
+- **Upgraded-CPU BIOS patching rdtsc in .text: code repair at boot since
+  v4.2** (`xhw_code_repair.c`, decisions.md; needs a log from an upgraded
+  console: `[BOOT] code check`). The notes from before:
   OpenCrossing-Xbox (GitHub #3, 2026-10-05) found a custom BIOS on CPU-
   upgraded consoles (1 GHz Coppermine, 1.4 GHz Tualatin; kernel 1.0.5838.1,
   Cerbios/PrometheOS-like) rewriting a `0f 31` (rdtsc) as `cd 2e` (int 2Eh)

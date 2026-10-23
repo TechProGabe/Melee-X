@@ -190,6 +190,7 @@ static void main_body(void* arg) {
     xhw_logf("[BOOT] image %08x-%08x %.*s", xhw_image_base, xhw_image_end, (int)XeImageFileName[0].Length,
              XeImageFileName[0].Buffer);
     log_previous_exit();
+    xhw_code_repair();   /* before anything reads the TSC (upgraded-CPU BIOSes rewrite rdtsc) */
     xhw_watchdog_start();
     xhw_prof_set_game_thread();
     xhw_prof_start();

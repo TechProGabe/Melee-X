@@ -388,6 +388,22 @@ matrix with the PNMTXIDX it already has in `a0` (HSD always pairs them),
 from 30 more constant rows (`VPC_TEXMTX`); `test_vp_opt.py` checks the
 programs. `-DXGX_PV_TEXMTX=0` for the old behaviour.
 
+**Upgraded and overclocked CPUs: the code is checked at boot (v4.2).**
+Cerbios 3.x's `AdvCPUSupport` (on by default with a 1.0/1.4 GHz CPU)
+rewrites `0f 31` (rdtsc) as `cd 2e` (int 2Eh) in the title's code by
+signature; in OpenCrossing-Xbox it hit a pair inside another instruction
+and the game faulted (their GitHub #3). Melee-X's clocks don't depend on
+the CPU (the ACPI timer, the retrace, the AC97), but its .text has ~55
+`0f 31` pairs: the profiler's and the interrupt lock's rdtsc
+(`xhw_perf_now`, thousands of calls a frame, each a trap once rewritten)
+and byte pairs inside other instructions (Sheik's needles, roadmap).
+`xhw_code_repair.c` (OpenCrossing's, as Wings64-X carries it) compares
+.text with `D:\default.xbe` right after the boot's first log lines and
+writes back any bytes that differ (CR0.WP cleared around each store);
+over 64 differing bytes it only logs (the wrong file). `[BOOT] code
+check: .text matches` on a stock console; xemu: the same, 69 ms.
+`-DXHW_CODE_REPAIR=0` / `=2` (log only).
+
 **Writes to a full or unwritable E: (2026-10-04).** A player reported
 settings.ini never made, no BACK screenshots and widescreen doing nothing
 (all files in `E:\UDATA\4d580001\`; widescreen at 480 also needs the
