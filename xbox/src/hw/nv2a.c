@@ -2090,10 +2090,9 @@ static void build_texgen(const XgxState* st, int u, const XgxTexGen* tg) {
             pt[1][c] += s_d_unit_off[u][1] * pt[2][c];
         }
     }
-    if (pv) {   /* the matrix per vertex: VPC_TEXMTX (build_texmtx), then the post matrix */
+    if (pv) {   /* the matrix per vertex: VPC_TEXMTX (build_texmtx, once for the draw), then the post matrix */
         vc_mark(VPC_POSTMTX + u * 3, 3);
         for (r = 0; r < 3; r++) memcpy(s_vc[VPC_POSTMTX + u * 3 + r], pt[r], 16);
-        build_texmtx(st);
         return;
     }
     if (tg->normalize) {
@@ -3263,9 +3262,14 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
 #ifdef XGX_DEBUG_TRACE
     if (s_fbdump_once || s_shot_once) trace_draw(prim, count, st, s_d_rp->approximated, layout);   /* autopad SHOT or BACK */
 #endif
-    if ((d & DIRTY_TG) || (s_d_tg_posmtx && (d & XGX_DIRTY_POSMTX)))
-        for (i = 0; i < s_d_nunits; i++)
+    if ((d & DIRTY_TG) || (s_d_tg_posmtx && (d & XGX_DIRTY_POSMTX))) {
+        int pv = 0;
+        for (i = 0; i < s_d_nunits; i++) {
             build_texgen(st, i, unit_texgen(st, (uint32_t)s_d_unit_tc[i]));
+            pv |= s_d_vk.tex[i].pv_mtx;
+        }
+        if (pv) build_texmtx(st);
+    }
 
     /* constants */
     if (d & (XGX_DIRTY_PROJ | XGX_DIRTY_VIEWPORT)) build_proj(st);
@@ -3710,6 +3714,15 @@ int xgx_ztex_mask(const int32_t src[4], uint32_t z24, int clears) {
     static const VpKey k_mask = { .copy = 1 };
     int x0, y0, x1, y1, i;
     float z, *v;
+    {   /* the tiles' depth (s_ztex_g), from this copy's background even
+         * when no mask is made below; a change rebuilds the projections */
+        uint32_t zb = z24 & 0xFFFFFFu;
+        float g = (float)(zb > 0x40000u ? zb - 0x40000u : 0u) / 16777215.0f;
+        if (g != s_ztex_g) {
+            s_ztex_g = g;
+            s_draw_force |= XGX_DIRTY_PROJ;
+        }
+    }
     if (s_bpp != 32 && !clears) return XGX_COPY_COLOR;
     x0 = map_x((float)src[0]);
     y0 = map_y((float)src[1]);
@@ -3727,7 +3740,6 @@ int xgx_ztex_mask(const int32_t src[4], uint32_t z24, int clears) {
     /* a little in front of z24: the cleared background holds exactly z24,
      * and the quad's interpolated depth there must not round past it */
     z24 &= 0xFFFFFFu;
-    s_ztex_g = (float)(z24 > 0x40000u ? z24 - 0x40000u : 0u) / 16777215.0f;
     z = s_zg0 > 0.0f ? z_store((float)(z24 > 0x100u ? z24 - 0x100u : 0u) / 16777215.0f)
                      : (float)(z24 > 0x100u ? z24 - 0x100u : 0u) * (s_zmax / 16777215.0f);
     {

@@ -464,8 +464,10 @@ particles with `DispFog`, the title, intros, cutscenes, the trophy display.
   axis that isn't a power of two, so an image whose other axis repeats or
   mirrors (Data > Special's and Bonus Records' 152x128 row panel: two rows
   of texture, t from -1 to 1, four rows drawn) is resampled to a power of
-  two instead (`XGX_TEX_WRAPS`, set by `gx_tex.c`'s upload); as a linear
-  texture its top half was one flat block of edge texels (GitHub #9, #10).
+  two instead (`XGX_TEX_WRAPS`, set by `gx_tex.c`'s upload), and is a
+  cache entry of its own (`KEY_WRAPS` in the entry's format), so a clamped
+  bind of the same texels can't decide it; as a linear texture its top half
+  was one flat block of edge texels (GitHub #9, #10).
 - CMPR -> DXT1: GX's 8x8 tiles of four DXT1 blocks (TL, TR, BL, BR, small
   mips padded to a tile) are reordered into 4x4 block rows, both colours
   byte-swapped, each index byte's 2-bit fields reversed. Blocks with a
