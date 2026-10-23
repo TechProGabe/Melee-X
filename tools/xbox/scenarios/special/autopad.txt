@@ -1,0 +1,12 @@
+# Data > Special from the title (mninfo.c; GitHub #10): one shot of the list.
+env MELEE_BOOT_SCENE=title
+env MELEE_NO_ATTRACT=1
+430 START for 12    # main menu
+670 DOWN for 12     # VS
+730 DOWN for 12     # Trophies
+790 DOWN for 12     # Options
+850 DOWN for 12     # Data
+940 A for 12        # Data menu
+1130 UP for 12      # Special
+1220 A for 12
+1400 SHOT

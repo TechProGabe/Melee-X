@@ -213,6 +213,11 @@ enum {
     XGX_TEX_DXT3,        /* DXT3 blocks (GX CMPR with transparent texels: alpha, then colour) */
 };
 #define XGX_TEX_PALETTE_BYTES 1024
+/* or-ed into xgx_tex_create's format: a non-power-of-two image that must
+ * wrap (GX repeats or mirrors an axis whose size is a power of two even when
+ * the other isn't) is resampled to a power of two, not made a clamp-only
+ * linear texture */
+#define XGX_TEX_WRAPS 0x100u
 /* Returns a handle or 0 when the pool is full (after waiting for the GPU
  * to finish with textures already destroyed, if any are pending). */
 uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data);

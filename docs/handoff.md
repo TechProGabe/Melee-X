@@ -143,6 +143,7 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `castle` | Peach's Castle 4-CPU, untimed, a Bullet Bill every 30 frames (`MELEE_DEBUG_CASTLE_BILL`): read the `[CASTLE]` lines |
 | `clear` | Classic stage 1 won at once (`MELEE_INSTANT_WIN`): the Stage Clear screen's sepia freeze frame |
 | `rec` | title > Data > Melee Records > VS. Records (v54's crash), the grid, a cell's popup |
+| `special`, `info` | title > Data > Special; Data > Melee Records > Bonus Records (GitHub #9, #10: the rows' panel) |
 | `cont` | Classic stage 8 against Team DK, three self-destructs to the Continue screen, YES (`MELEE_CLASSIC_CHAR=6` for Link) |
 | `cntalk` | Adventure Corneria's Star Fox cutscene from boot (`MELEE_BOOT_SCENE=cutscene`, `MELEE_BOOT_CUTSCENE=5`): the comm window's lines, shots on Slippy and Falco talking |
 | `toy` | Classic's last stage won at once, Game Clear, START: the trophy fall (`gmregtyfall.c`, scene 15 of mode 21; a second START goes on to the credits) |

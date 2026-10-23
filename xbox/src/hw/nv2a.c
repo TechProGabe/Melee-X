@@ -932,15 +932,18 @@ static uint32_t tex_create_rect(uint32_t w, uint32_t h, uint32_t fmt, const uint
 
 uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data) {
     int id, pw, ph, l, lw, lh, sw, sh;
-    uint32_t bytes = 0, pal_bytes = fmt == XGX_TEX_P8 ? XGX_TEX_PALETTE_BYTES : 0;
+    uint32_t bytes = 0, pal_bytes;
     uint8_t *mem, *base;
     const uint8_t* src = (const uint8_t*)data;
     uint8_t* dst;
+    int wraps = (fmt & XGX_TEX_WRAPS) != 0;
+    fmt &= ~XGX_TEX_WRAPS;
+    pal_bytes = fmt == XGX_TEX_P8 ? XGX_TEX_PALETTE_BYTES : 0;
     if (!w || !h || w > 1024 || h > 1024 || !levels) return 0;
     pw = pot((int)w);
     ph = pot((int)h);
     if (fmt == XGX_TEX_P8 && !data) return 0;
-    if ((pw != (int)w || ph != (int)h) && data &&
+    if ((pw != (int)w || ph != (int)h) && data && !wraps &&
         (fmt == XGX_TEX_ARGB8 || fmt == XGX_TEX_AY8 || fmt == XGX_TEX_A8Y8))
         return tex_create_rect(w, h, fmt, (const uint8_t*)data);
     if (pw != (int)w || ph != (int)h) {
@@ -1410,7 +1413,11 @@ static void census_report(void) {
 #ifndef XHW_FBDUMP_EVERY
 #define XHW_FBDUMP_EVERY 0   /* [FBDUMP] screenshot every N presents (xhw_fbdump.c) */
 #endif
-void xgx_fbdump_next(void) { s_fbdump_once = 1; }
+/* autopad SHOT in xemu: like BACK below, the request comes from the pad
+ * code mid-frame and the next whole frame is dumped, so a
+ * -DXGX_DEBUG_TRACE trace and XGX_SKIP cover it too */
+static volatile int s_fbdump_req;
+void xgx_fbdump_next(void) { s_fbdump_req = 1; }
 /* BACK asks for a screenshot (s_shot_req, from the pad code at any point of
  * a frame); the next frame is the one taken (s_shot_once from its start), so
  * a -DXGX_DEBUG_TRACE trace and the EFB-copy dumps cover all of it. */
@@ -1571,6 +1578,10 @@ void xgx_present(int black) {
     if (s_shot_req) {
         s_shot_req = 0;
         s_shot_once = 1;
+    }
+    if (s_fbdump_req) {
+        s_fbdump_req = 0;
+        s_fbdump_once = 1;
     }
     if (!XGX_OVERLAP) release_deferred();
     log_first_fault();
@@ -2642,8 +2653,8 @@ static uint32_t rgb565_to_888(uint16_t v) {
 
 /* autopad "env XGX_SKIP=<first>-<last>": the traced frame leaves those
  * draws out, so a shot shows which pixels they make */
-static int trace_skip(uint32_t draw) {
-    static int lo = -2, hi = -1;
+static int trace_skip(uint32_t draw, uint32_t count) {
+    static int lo = -2, hi = -1, n = -1;
     if (lo == -2) {
         const char* e = getenv("XGX_SKIP");
         lo = hi = -1;
@@ -2651,8 +2662,10 @@ static int trace_skip(uint32_t draw) {
             lo = atoi(e);
             hi = strchr(e, '-') ? atoi(strchr(e, '-') + 1) : lo;
         }
+        e = getenv("XGX_SKIPN");   /* or every draw of that many vertices: draw numbers move with animation */
+        if (e) n = atoi(e);
     }
-    return (int)draw >= lo && (int)draw <= hi;
+    return ((int)draw >= lo && (int)draw <= hi) || (int)count == n;
 }
 
 /* -DXGX_DEBUG_TRACE: log every draw of the frame an autopad SHOT dumps */
@@ -3241,7 +3254,8 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     }
     emit_vertex_arrays(layout, st);
 #ifdef XGX_DEBUG_TRACE
-    if ((s_fbdump_once || s_shot_once) && trace_skip(s_draws)) count = 0;
+    int skipped = (s_fbdump_once || s_shot_once) && trace_skip(s_draws, count);
+    if (skipped) count = 0;
     if (count)
 #endif
     put1(NV097_SET_BEGIN_END, nv_prim(prim));
@@ -3258,7 +3272,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         count -= batch;
     }
 #ifdef XGX_DEBUG_TRACE
-    if (!(s_fbdump_once || s_shot_once) || !trace_skip(s_draws))
+    if (!skipped)
 #endif
     put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
     if (P - s_pb_mark >= PB_KICK) pb_close();

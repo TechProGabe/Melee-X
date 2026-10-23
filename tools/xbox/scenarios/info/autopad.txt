@@ -1,0 +1,21 @@
+# Data > Melee Records > Bonus Records from the title (mninfobonus.c;
+# GitHub #9: the rows' panel). Data > Special: scenarios/special.
+env MELEE_BOOT_SCENE=title
+env MELEE_NO_ATTRACT=1
+430 START for 12    # main menu
+670 DOWN for 12     # VS
+730 DOWN for 12     # Trophies
+790 DOWN for 12     # Options
+850 DOWN for 12     # Data
+940 A for 12        # Data menu
+1130 DOWN for 12    # Archives
+1190 DOWN for 12    # Melee Records
+1340 A for 12       # Records menu
+1500 SHOT
+1530 DOWN for 12
+1600 SHOT
+1630 A for 12
+1850 SHOT
+1880 DOWN for 12
+1950 DOWN for 12
+2100 SHOT

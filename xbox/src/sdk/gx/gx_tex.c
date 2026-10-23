@@ -627,6 +627,14 @@ static uint32_t upload_now(const TexObj* o, const TlutObj* tl, uint32_t levels, 
         memcpy(dst, pal, sizeof pal);
     }
     s_st_uploads++;
+    /* GitHub #9, #10: Data > Special's and Bonus Records' row panel is
+     * 152x128 with its t axis repeating (two rows of texture, four rows
+     * drawn); a clamp-only linear texture drew the top half as one flat
+     * block of the edge texels */
+    if ((o->w & (o->w - 1)) || (o->h & (o->h - 1))) {
+        int pot_w = !(o->w & (o->w - 1)), pot_h = !(o->h & (o->h - 1));
+        if ((pot_w && o->wrap_s != GX_CLAMP) || (pot_h && o->wrap_t != GX_CLAMP)) xfmt |= XGX_TEX_WRAPS;
+    }
     /* pool full: evict, wait for the GPU once, retry; each round frees
      * twice as much, since the pool fragments */
     tex = xgx_tex_create(o->w, o->h, levels, xfmt, s_scratch);

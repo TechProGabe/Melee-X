@@ -432,7 +432,7 @@ script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
 | `-DXGX_TEX_POOL_KB=<n>` | texture pool size (default 8192 at 480, 6144 at 720p) |
 | `-DXGX_STATS_EVERY=<n>` | `[NV2A]`/`[TEX]` stats period in frames (default 600) |
 | `-DXGX_NO_INDIRECT=1` | GX indirect stages draw direct (no BUMPENVMAP; up to v40) |
-| `-DXGX_DEBUG_TRACE` | log every draw of the frame a `SHOT` or BACK captures as `[DRAW]` lines (~400 KB, in `trace.log`); on a BACK frame each EFB copy's source is also a `shotNN.bmp` (up to 8), with autopad also `[FBDUMP]`. `env XGX_SKIP=a-b` leaves those draws out of the traced frame |
+| `-DXGX_DEBUG_TRACE` | log every draw of the frame a `SHOT` or BACK captures as `[DRAW]` lines (~400 KB, in `trace.log`); on a BACK frame each EFB copy's source is also a `shotNN.bmp` (up to 8), with autopad also `[FBDUMP]`. `env XGX_SKIP=a-b` leaves those draws out of the traced frame, `env XGX_SKIPN=<n>` every draw of n vertices (draw numbers move with menu animation). In xemu an autopad `SHOT` dumps the whole frame after the one it fires in, so it is traced like BACK |
 | `-DXGX_DEBUG_VPTRACE[=<n>]` | vertex-program selects of two frames every n (default 600) as `[VPT]`; replay with `vp_policy.py boot.log` |
 | `-DXGX_DEBUG_EFBLOG` | first 200 EFB copies as `[EFB]` lines |
 | `-DXGX_DEBUG_PBCHECK` | parse every pushbuffer segment before its kick, `[PBCHECK]` on malformed headers (first 16): a bad stream vs a GPU fault in xemu |
