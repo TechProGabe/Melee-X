@@ -6,7 +6,29 @@ notes don't travel between machines, so what they held is here. Read
 
 ## Where it stands
 
-Updated 2026-10-05 (night): **v4.1 candidate = v59** (v58 + `XGX_ZETA_GUARD`),
+Updated 2026-10-23: **v4.2 work on `dev`** (local commits, not pushed; no
+release until the user says so; the user approves any GitHub comment).
+The open GitHub issues, one commit each:
+
+| issue | fix | checked |
+|---|---|---|
+| #18 720p scrambled over an internal HDMI mod (1.6, encoder 004b0104) | `xhw_video.c` logs the scanout format after the mode set (`[VIDEO] scanout:`) and puts back the stock kernel's (R5G6B5's `ALT_MODE_SEL`, CR28 depth, pitch) | xemu: values match, nothing changed; needs the HDMI console or the user's HDMI adapter. The user ruled out a 480p fallback |
+| #9, #10 Bonus Records / Data Special rows one flat block | NPOT textures that repeat on their power-of-two axis are resampled, not clamp-only linear (`XGX_TEX_WRAPS`) | xemu `scenarios/special`, `info` |
+| #14 Classic team tiles over the black bars | Z24X8 Z-texture draws at one depth behind the bars (`build_proj`) | xemu `scenarios/team` (Falcon, Kirby, Jigglypuff, 16-bit) |
+| #15 Team C. Falcon card noise | not reproduced (xemu clean): console only | console round: `scenarios/team` (`MELEE_CLASSIC_TEAM=falcon`) at 480 |
+| #16 trophy fall dark | long vertex programs kept whole when they fit (no lights dropped) | xemu `scenarios/toy`, `test_vp_opt.py` |
+| #17 metal fighters in bands, chrome shimmer | per-vertex texture matrices (`VPC_TEXMTX`, `pv_mtx`) | xemu `scenarios/metalfd` (lockstep A/B), `test_vp_opt.py`; Rainbow Cruise/Great Bay chrome on the console |
+| #11 Special Movie audio drift | 32 kHz resampled as the GameCube's 32028.5 Hz; `[MOVIE]` wait counter | console: play the Special Movie to the end, read `[MOVIE]` |
+| #12, #13 trigger grab, C-stick in 1P | settings menu rows "Trigger as Z", "C-stick in 1P modes" (off by default) | xemu `scenarios/cstick1p` (lockstep A/B), `settings` |
+| OC consoles (user request) | boot check of .text against default.xbe (`xhw_code_repair.c`, from Wings64-X/OpenCrossing) | xemu: matches, 69 ms; an upgraded console's `[BOOT] code check` line |
+| #8 black screen from an SSD | nothing to go on: waiting for the reporter's logs | |
+
+Audio check for the next console build: `xhw_audio.c`'s resample step
+changed (32028.8 Hz); nothing else in the AC97 driver, interrupts or
+timing. PGO profile not retrained since (`docs/pgo.md`, a release step).
+In xemu the title with the settings menu up runs at ~1 fps (v4.1 too).
+
+Before that, 2026-10-05 (night): **v4.1 candidate = v59** (v58 + `XGX_ZETA_GUARD`),
 deployed to red's `Melee-X` for a 3 h+ 720p burn-in; gold (off tonight)
 gets it by FTP (`/E/Applications/Melee-X/`; at 480 the guard is off, so it
 runs as v58, whose 480i burn-in was clean). Uncommitted on `dev`, not
@@ -144,6 +166,8 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `clear` | Classic stage 1 won at once (`MELEE_INSTANT_WIN`): the Stage Clear screen's sepia freeze frame |
 | `rec` | title > Data > Melee Records > VS. Records (v54's crash), the grid, a cell's popup |
 | `team` | Classic stage 8's team card, `MELEE_CLASSIC_TEAM=falcon` (GitHub #14: tiles over the black bars; #15: Team C. Falcon's noise, console only) |
+| `metal`, `metalfd` | Rainbow Cruise / Final Destination, metal Zelda and Mario (`MELEE_DEBUG_VS_METAL`; metalfd in lockstep for before/after, GitHub #17) |
+| `cstick1p` | Classic stage 1 with its own settings.ini (`cstick_1p = 1`, `trigger_z = left`; build with `-DXSDK_SETTINGS_RESET`), lockstep: C-stick smash, trigger grab (GitHub #12, #13) |
 | `special`, `info` | title > Data > Special; Data > Melee Records > Bonus Records (GitHub #9, #10: the rows' panel) |
 | `cont` | Classic stage 8 against Team DK, three self-destructs to the Continue screen, YES (`MELEE_CLASSIC_CHAR=6` for Link) |
 | `cntalk` | Adventure Corneria's Star Fox cutscene from boot (`MELEE_BOOT_SCENE=cutscene`, `MELEE_BOOT_CUTSCENE=5`): the comm window's lines, shots on Slippy and Falco talking |
