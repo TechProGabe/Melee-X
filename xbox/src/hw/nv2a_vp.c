@@ -1071,9 +1071,9 @@ static int vp_optimize(Gen* g, VpProgram* out, int pairing) {
  * Keys
  * ====================================================================== */
 /* Instructions the generator emitted for k before the optimizer. Keys whose
- * program was longer than 136 then are approximated (lights past the first
- * two dropped, spot attenuation off) exactly as they were, so the picture
- * doesn't change; most of them would fit now. */
+ * program was longer than 136 then were approximated (lights past the first
+ * two dropped, spot attenuation off); since v4.2 they are only when the
+ * optimized program doesn't fit either (vp_generate). */
 static int light_len(const VpChan* ch) {
     if (ch->attn == VPL_SPEC) return 14;
     return 4 + (ch->diff_fn == 2 ? 2 : 1) + (ch->attn == VPL_SPOT ? 13 : 0) + 1;
@@ -1168,6 +1168,16 @@ void vp_generate(const VpKey* key, VpProgram* out) {
     int i;
     memset(out, 0, sizeof *out);
     if (legacy_len(&k) > VP_MAX_INSNS) {
+        /* GitHub #16: the trophy fall's room and the Trophy Collection light
+         * a trophy with several spot lights; dropping all but two left the
+         * trophies dark until the room lit up. Most such keys fit once
+         * optimized: the whole key first. */
+        gen_program(g, &k);
+        if (!g->approximated && (vp_optimize(g, out, 1) || vp_optimize(g, out, 0))) {
+            out->words[(out->n - 1) * 4 + 3] |= 1u;   /* FINAL */
+            return;
+        }
+        memset(out, 0, sizeof *out);
         /* too long (many spot lights): drop the lights and retry unlit */
         VpKey simple = k;
         for (i = 0; i < 4; i++) simple.chan[i].light_mask &= 0x3;

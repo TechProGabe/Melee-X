@@ -252,8 +252,13 @@ op first). The generator drops attenuation factors flagged as 1
 (`VpKey.ang_one`/`dist_one`), and `vp_canon` clears key fields a program
 doesn't depend on so such draws share a program. `tools/xbox/test_vp_opt.py`
 compares 200000 random keys against the original generator
-(`tests/xbox/vp_ref.c`) bit for bit, in hardware and xemu order; keys that
-didn't fit 136 instructions then are approximated as then (`legacy_len`).
+(`tests/xbox/vp_ref.c`) bit for bit, in hardware and xemu order. Keys that
+didn't fit 136 instructions then (`legacy_len`) are generated whole first
+and kept when the optimized program fits (v4.2; the test checks them
+against their own unoptimized program); only the rest are approximated as
+before (lights past the first two dropped, spot attenuation off). That
+approximation had left the trophy fall's spot-lit trophies dark until the
+room lit up (GitHub #16); matches had up to ~13 such draws a frame.
 
 ### Program memory
 
