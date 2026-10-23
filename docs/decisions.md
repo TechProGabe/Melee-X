@@ -404,6 +404,14 @@ over 64 differing bytes it only logs (the wrong file). `[BOOT] code
 check: .text matches` on a stock console; xemu: the same, 69 ms.
 `-DXHW_CODE_REPAIR=0` / `=2` (log only).
 
+**32 kHz is the GameCube's 32028.5 Hz (v4.2, GitHub #11).** The GameCube's
+AI clock is 54 MHz / 1124 / 1.5 (Dolphin). Resampled as 32000 Hz, every
+stream ran 0.09% slow; the Special Movie's soundtrack (a BGM stream) is
+timed against a picture driven by the OS clock, so after its 14 minutes the
+sound was ~0.75 s behind. `fill_48k` now steps 43730/65536 (32028.8 Hz);
+the mixer fills by consumption, so the game mixes at that rate too. Pitch
++0.09%, as on the hardware. `-DXHW_AUDIO_GC_RATE=0` for the old rate.
+
 **Writes to a full or unwritable E: (2026-10-04).** A player reported
 settings.ini never made, no BACK screenshots and widescreen doing nothing
 (all files in `E:\UDATA\4d580001\`; widescreen at 480 also needs the

@@ -405,6 +405,7 @@ script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
 | `-DXHW_MEMB=<n>` | `[MEMB]` memory breakdown every n seconds (default 60 in test builds; 0 = off, a release's default) |
 | `-DXHW_PAD_DRAIN=0` | SDL joystick events stay on and queue up unread (up to v52: the memory leak); test builds' `env MX_PAD_NOISE=<n>` queues n synthetic axis events a poll, as a real controller's changes do (`decisions.md` "Memory breakdown") |
 | `-DXHW_AUDIO_APU=0` | never use the xemu APU fallback |
+| `-DXHW_AUDIO_GC_RATE=0` | 32 kHz audio resampled as 32000 Hz (up to v4.1) instead of the GameCube's 32028.5 Hz (`xhw_audio.c`, GitHub #11) |
 | `-DXHW_CODE_REPAIR=0`, `=2`, `-DXHW_CODE_REPAIR_TEST` | no boot check of `.text` against `D:\default.xbe`; check and log only; rewrite the first `0f 31` as `cd 2e` first, as an upgraded-CPU BIOS does, so the repair shows (`[BOOT] code check`, `xhw_code_repair.c`) |
 | `-DXGX_PV_TEXMTX=0` | texgens ignore the vertex's TEXnMTXIDX and use TEXMTX0 for the whole draw (up to v4.1: metal fighters in bands, GitHub #17) |
 | `-DXHW_AUDIO_TEST=<bits>` | xemu audio tests (with `-DXHW_AUDIO_APU=0`, `scenarios/relaunch`): 1 leaves the AC97 engine running into the next boot at a relaunch; 2 reads CIV as 0 for good (an engine stuck from boot: the give-up path). Never on a console build |
