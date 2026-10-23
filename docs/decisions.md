@@ -379,6 +379,15 @@ nothing changes (xemu: `general control 00100030, CR28 83, pitch 2560` at
 480). If the picture stays scrambled, the reporter's boot.log shows what
 the board set. The user ruled out a 480p fallback for HDMI consoles.
 
+**Texture matrices per vertex (v4.2, GitHub #17).** GX lets a vertex pick
+its texgen's matrix (TEXnMTXIDX); HSD's skinned env maps load texture
+matrix k beside position matrix k and use that. The back end had used
+TEXMTX0 for the whole draw, so metal fighters and skinned chrome shaded in
+bands. Rather than carry the index, the vertex program reads the texture
+matrix with the PNMTXIDX it already has in `a0` (HSD always pairs them),
+from 30 more constant rows (`VPC_TEXMTX`); `test_vp_opt.py` checks the
+programs. `-DXGX_PV_TEXMTX=0` for the old behaviour.
+
 **Writes to a full or unwritable E: (2026-10-04).** A player reported
 settings.ini never made, no BACK screenshots and widescreen doing nothing
 (all files in `E:\UDATA\4d580001\`; widescreen at 480 also needs the
@@ -608,7 +617,7 @@ Logging, test hooks and Xbox features:
   `MELEE_CLASSIC_CHAR` picks that shortcut's character (Mario without it);
   `MELEE_CLASSIC_TEAM=falcon` (v4.2) the Team C. Falcon stage 8.
 - `src/melee/gm/gmvsmode.c` (`onEnterDebugVs`): `MELEE_DEBUG_VS_TIME`,
-  `_CHARS`, `_ITEMS`, `_INVISIBLE`; `ftkirby.c` (`ftKb_Init_OnDeath`):
+  `_CHARS`, `_ITEMS`, `_INVISIBLE`, `_METAL` (v4.2); `ftkirby.c` (`ftKb_Init_OnDeath`):
   `MELEE_DEBUG_KIRBY_HAT`. `TARGET_PC`, inert without the variables.
 - `src/melee/gm/gmboot.c`, `gm_1A3F.c` (`runGameMode`):
   `MELEE_BOOT_SCENE=cutscene` boots the debug cutscene mode at state

@@ -13,7 +13,8 @@
 #define VPC_TEXGEN 110   /* 4 units x 3 rows (s, t, q), post matrix folded in */
 #define VPC_POSTMTX 122  /* 4 units x 3 rows: post-transform after normalize */
 #define VPC_FOG 134      /* 3 rows: fog numerator, denominator, curve (nv2a_fog.h) */
-#define VPC_COUNT 137
+#define VPC_TEXMTX 137   /* 10 texture matrices x 3 rows (GX TEXMTX0..9), addressed by a0 = PNMTXIDX */
+#define VPC_COUNT 167
 
 /* vertex inputs */
 #define VPI_POS 0
@@ -41,6 +42,7 @@ typedef struct {
     uint8_t src;                  /* GXTexGenSrc */
     uint8_t proj;                 /* MTX3x4: q is used; VP_PROJ_DIVIDE: and s, t divided by it here */
     uint8_t normalize;            /* then post matrix */
+    uint8_t pv_mtx;               /* the matrix per vertex: c[A0 + VPC_TEXMTX] (TEXnMTXIDX), then post matrix */
 } VpTexGen;
 
 #define VP_PROJ_DIVIDE 2

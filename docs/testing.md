@@ -405,6 +405,7 @@ script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
 | `-DXHW_MEMB=<n>` | `[MEMB]` memory breakdown every n seconds (default 60 in test builds; 0 = off, a release's default) |
 | `-DXHW_PAD_DRAIN=0` | SDL joystick events stay on and queue up unread (up to v52: the memory leak); test builds' `env MX_PAD_NOISE=<n>` queues n synthetic axis events a poll, as a real controller's changes do (`decisions.md` "Memory breakdown") |
 | `-DXHW_AUDIO_APU=0` | never use the xemu APU fallback |
+| `-DXGX_PV_TEXMTX=0` | texgens ignore the vertex's TEXnMTXIDX and use TEXMTX0 for the whole draw (up to v4.1: metal fighters in bands, GitHub #17) |
 | `-DXHW_AUDIO_TEST=<bits>` | xemu audio tests (with `-DXHW_AUDIO_APU=0`, `scenarios/relaunch`): 1 leaves the AC97 engine running into the next boot at a relaunch; 2 reads CIV as 0 for good (an engine stuck from boot: the give-up path). Never on a console build |
 | `-DXHW_NO_SPLASH`, `-DXHW_SPLASH_MS=<n>`, `-DXHW_SPLASH_DUMP` | boot title card off; its hold time; stream it as `[FBDUMP]` |
 | `-DXHW_FBDUMP_EVERY=<n>` | screenshot every n presented frames |
@@ -472,6 +473,7 @@ env MELEE_DEBUG_VS_STOCKS=3    # stock match
 env MELEE_DEBUG_VS_CHARS=4:1h,0 # CKind[:costume][h] (yellow Kirby on port 1, Falcon CPU)
 env MELEE_DEBUG_VS_ITEMS=3     # items on, hex ItemKind mask (capsules, crates)
 env MELEE_DEBUG_VS_INVISIBLE=3 # players 1 and 2 cloaked (indirect refraction)
+env MELEE_DEBUG_VS_METAL=3     # players 1 and 2 metal (Metal Melee: the metal shading, scenarios/metal, metalfd)
 env MELEE_DEBUG_KIRBY_HAT=2    # Kirby spawns with that FighterKind's copy
 env MELEE_SEED=1               # fixed random seed (also the attract demo's pick)
 env MELEE_NO_ATTRACT=1         # no attract loop

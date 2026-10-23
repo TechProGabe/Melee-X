@@ -233,13 +233,21 @@ Constant rows (`nv2a_vp.h`):
 | 110-121 `VPC_TEXGEN` | 4 units x 3 rows (s, t, q), post matrix folded in when there is no normalize |
 | 122-133 `VPC_POSTMTX` | 4 units x 3 rows, the post-transform matrix after normalize |
 | 134-136 `VPC_FOG` | fog numerator, denominator and curve (see Fog) |
+| 137-166 `VPC_TEXMTX` | GX TEXMTX0..9 x 3 rows, indexed by `a0` like `VPC_POS` (texgens with a matrix per vertex) |
 
 Inputs: v0 position, v1 matrix index, v2 normal, v3/v4 colours 0/1, GX
 TEX0..6 -> v9..v15, TEX7 -> v8. The front end writes canonical vertices
 (`XgxLayout`): float positions, normals and texcoords, RGBA8 colours, and the
 matrix index as a float. Skinning: GX selects a position matrix per vertex
 (PNMTXIDX, 0..27 in steps of 3); the program loads it into `a0` and reads
-`c[A0+6]`, so a whole skinned mesh is one draw.
+`c[A0+6]`, so a whole skinned mesh is one draw. A texgen can take its
+matrix per vertex too (TEXnMTXIDX): HSD's skinned env maps (metal
+fighters, chrome) load texture matrix k beside position matrix k, one per
+envelope. The front end flags such texcoords (`XgxLayout.tc_mtx`, the
+index itself isn't kept) and the program reads `c[A0+137]`, the ten GX
+texture matrices at `VPC_TEXMTX` (`VpTexGen.pv_mtx`), then the post
+matrix. Until v4.2 TEXMTX0 served the whole draw, so each bone's part of a
+metal fighter reflected as the first bone's did, in bands (GitHub #17).
 
 ### Shorter programs
 

@@ -360,6 +360,65 @@ int main(int argc, char** argv) {
         printf("%d keys with a unit divided by q (VP_PROJ_DIVIDE): %d failed\n", dn, dfails);
         fails += dfails;
     }
+    /* pv_mtx (TEXnMTXIDX, v4.2) has no reference program either: the
+     * optimized program must match the generator's own, and a position
+     * texgen's s, t, q what c[a0 + VPC_TEXMTX], the normalize and the post
+     * matrix give */
+    {
+        int pfails = 0, pn = 0;
+        for (t = 0; t < nkeys / 10; t++) {
+            VpKey k;
+            VpIn in;
+            VpOut co, uo;
+            int u, nun, j, r, a0;
+            float m[3], s[4], e[3];
+            rand_key(&k);
+            if (k.copy) continue;   /* the EFB copy pass: no texgen */
+            if (!k.ntex) k.ntex = 1;
+            u = (int)(rnd() % k.ntex);
+            k.tex[u].pv_mtx = 1;
+            if (k.tex[u].proj == VP_PROJ_DIVIDE) k.tex[u].proj = 1;
+            if (rnd() % 2) k.tex[u].src = 0;   /* GX_TG_POS: checked by value too */
+            vp_canon(&k);
+            vp_generate(&k, &cur);
+            if (cur.approximated) continue;
+            nun = vp_test_unoptimized(&k, unopt, 512);
+            rand_input(&in, &k);
+            run(cur.words, (int)cur.n, &in, 8000u + (unsigned)t, 0, &co);
+            run(unopt, nun, &in, 9000u + (unsigned)t, 0, &uo);
+            pn++;
+            j = 9 + u;   /* oT0 + u */
+            if (co.bad || uo.bad || !out_eq(&co, &uo)) {
+                if (pfails++ < 5) printf("pv_mtx key %d unit %d differs from its unoptimized program\n", t, u);
+                continue;
+            }
+            if (k.tex[u].src != 0) continue;
+            a0 = (int)in.v[VPI_MTX][0];
+            for (r = 0; r < 3; r++) {
+                const float* row = in.c[VPC_TEXMTX + a0 + r];
+                m[r] = row[0] * in.v[VPI_POS][0] + row[1] * in.v[VPI_POS][1] + row[2] * in.v[VPI_POS][2] + row[3];
+            }
+            if (!k.tex[u].proj) m[2] = 1;
+            if (k.tex[u].normalize) {
+                float l = 1.0f / sqrtf(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+                m[0] *= l, m[1] *= l, m[2] *= l;
+            }
+            s[0] = m[0], s[1] = m[1], s[2] = m[2], s[3] = 1;
+            for (r = 0; r < 3; r++) {
+                const float* row = in.c[VPC_POSTMTX + u * 3 + r];
+                e[r] = row[0] * s[0] + row[1] * s[1] + row[2] * s[2] + row[3] * s[3];
+            }
+            if (fabsf(co.o[j][0] - e[0]) > 1e-3f * (1.0f + fabsf(e[0])) ||
+                fabsf(co.o[j][1] - e[1]) > 1e-3f * (1.0f + fabsf(e[1])) ||
+                fabsf(co.o[j][3] - e[2]) > 1e-3f * (1.0f + fabsf(e[2]))) {
+                if (pfails++ < 5)
+                    printf("pv_mtx key %d unit %d: s t q %g %g %g, want %g %g %g\n", t, u, co.o[j][0], co.o[j][1],
+                           co.o[j][3], e[0], e[1], e[2]);
+            }
+        }
+        printf("%d keys with a texture matrix per vertex (pv_mtx): %d failed\n", pn, pfails);
+        fails += pfails;
+    }
     printf("%d keys (%d longer than 136 before: %ld whole now, checked against their unoptimized program; %d cut by "
            "the old generator and skipped): %d failed\n",
            nkeys, overflowed, nfull, degenerate, fails);

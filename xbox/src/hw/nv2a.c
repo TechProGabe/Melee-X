@@ -2028,6 +2028,28 @@ static const float* texgen_src_mtx(const XgxState* st, uint32_t id, float out[3]
     return &out[0][0];
 }
 
+/* A texgen whose matrix comes per vertex (TEXnMTXIDX in the vertex; GitHub
+ * #17): HSD's skinned env maps (metal fighters, chrome) load texture matrix
+ * k next to position matrix k, one per envelope, and pick it per vertex.
+ * With one matrix for the whole draw (TEXMTX0, the first envelope's) each
+ * bone's part of a metal fighter reflected as if it faced another way, in
+ * bands. Only for a texgen through a texture matrix in a skinned draw. */
+static VpKey s_d_vk;   /* the draw's vertex-program key (derive_vk, below) */
+#ifndef XGX_PV_TEXMTX
+#define XGX_PV_TEXMTX 1   /* 0: TEXMTX0 for the whole draw, as up to v4.1 */
+#endif
+static int unit_pv_mtx(const XgxLayout* l, uint32_t tc, const XgxTexGen* tg) {
+    return XGX_PV_TEXMTX && tc < 8 && (l->tc_mtx >> tc & 1) && l->off_mtx >= 0 && tg->mtx >= GX_TEXMTX0 && tg->mtx < GX_IDENTITY;
+}
+
+/* GX TEXMTX0..9 at VPC_TEXMTX, three rows each, indexed like the position
+ * matrices (texture matrix k for PNMTXIDX 3k) */
+static void build_texmtx(const XgxState* st) {
+    int k;
+    vc_mark(VPC_TEXMTX, XGX_NUM_TEXMTX * 3);
+    for (k = 0; k < XGX_NUM_TEXMTX && k < 10; k++) memcpy(s_vc[VPC_TEXMTX + k * 3], st->texmtx[k], 48);
+}
+
 /* rows for unit u: texgen tg; the post matrix is folded in unless the
  * texgen normalizes first */
 static int s_d_unit_map[4];   /* (defined with the other derived state below) */
@@ -2037,7 +2059,7 @@ static float s_d_unit_off[4][2];
 
 static void build_texgen(const XgxState* st, int u, const XgxTexGen* tg) {
     float m[3][4], pt[3][4], out[3][4];
-    int r, c;
+    int r, c, pv = s_d_vk.tex[u].pv_mtx;
     texgen_src_mtx(st, tg->mtx, m);
     if (tg->type == GX_TG_MTX2x4) {
         m[2][0] = m[2][1] = m[2][2] = 0;
@@ -2067,6 +2089,12 @@ static void build_texgen(const XgxState* st, int u, const XgxTexGen* tg) {
             pt[0][c] += s_d_unit_off[u][0] * pt[2][c];
             pt[1][c] += s_d_unit_off[u][1] * pt[2][c];
         }
+    }
+    if (pv) {   /* the matrix per vertex: VPC_TEXMTX (build_texmtx), then the post matrix */
+        vc_mark(VPC_POSTMTX + u * 3, 3);
+        for (r = 0; r < 3; r++) memcpy(s_vc[VPC_POSTMTX + u * 3 + r], pt[r], 16);
+        build_texmtx(st);
+        return;
     }
     if (tg->normalize) {
         memcpy(out, m, 48);
@@ -2796,7 +2824,6 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
 static RcCfg s_d_rc;
 static const RcProg* s_d_rp;
 static int s_d_unit_map[4], s_d_unit_tc[4], s_d_nunits, s_d_unit_miss, s_d_tg_posmtx;
-static VpKey s_d_vk;
 static uint32_t s_d_spec_lights, s_d_layout = 0xFFFFFFFFu;
 static uint32_t s_d_maps;   /* derive_units: the maps that held a texture, bit per map */
 
@@ -3131,6 +3158,7 @@ static void derive_vk(const XgxState* st, const XgxLayout* layout) {
         vk->tex[i].proj = tg->type == GX_TG_MTX3x4;
         if (vk->tex[i].proj && s_d_unit_kind[i] == UNIT_BUMP) vk->tex[i].proj = VP_PROJ_DIVIDE;
         vk->tex[i].normalize = (uint8_t)(tg->normalize != 0);
+        vk->tex[i].pv_mtx = (uint8_t)unit_pv_mtx(layout, (uint32_t)s_d_unit_tc[i], tg);
         if (tg->mtx < GX_TEXMTX0) s_d_tg_posmtx = 1;
     }
     /* attenuation rows (build_lights) that make a spot light's factor 1:
@@ -3207,7 +3235,8 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     census_count(d, count);
 #endif
     s_draw_force = 0;
-    lay = (layout->off_nrm >= 0) | (layout->off_col[0] >= 0) << 1 | (layout->off_col[1] >= 0) << 2;
+    lay = (layout->off_nrm >= 0) | (layout->off_col[0] >= 0) << 1 | (layout->off_col[1] >= 0) << 2 |
+          (layout->off_mtx >= 0 ? (layout->tc_mtx & 0xFFu) << 3 : 0);
     /* Its inputs, without indirect stages: the TEV stages, swap tables and
      * Z texture (XGX_DIRTY_TEV), the texgens a bump pair uses (TEXGEN) and
      * which maps hold a texture. A draw that only rebinds textures (MAPS
@@ -3218,6 +3247,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         derive_units(st);
     if ((d & DIRTY_VK) || lay != s_d_layout) {
         VpKey old = s_d_vk;
+        if (lay >> 3 != s_d_layout >> 3) d |= XGX_DIRTY_TEXGEN;   /* per-vertex texture matrices on or off */
         derive_vk(st, layout);
         s_d_layout = lay;
         if (memcmp(&old, &s_d_vk, sizeof old) != 0) vp_select(&s_d_vk);
