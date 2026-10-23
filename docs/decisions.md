@@ -353,6 +353,23 @@ healthy boot's audio is unchanged. `-DXHW_AUDIO_TEST` leaves the engine
 running across a relaunch or fakes a stuck one, for xemu (`testing.md`
 "Audio at boot").
 
+**The scanout format is checked after the mode set (v4.2, GitHub #18).**
+A 1.6 console with an internal HDMI mod showed a scrambled 720p picture
+(sound fine, shapes just visible) and a good one at 480p; the same in the
+author's Pilotwings 64 port, which shares this video code. HDMI boards
+(XboxHD+, XboxHDMI) and Cerbios replace the kernel's `AvSetDisplayMode`
+with their own GPU and encoder setup, tuned on the retail games' modes;
+Melee-X's 720p is the rare 16-bit (R5G6B5) one, which on the stock kernel
+also sets PRAMDAC general control's `ALT_MODE_SEL` and CR28 depth 2
+(Cxbx-Reloaded's `AvSetDisplayMode`). A 565 picture scanned as 32-bit
+would look like the report. Not reproducible here (no HDMI-modded
+console; xemu has no such board), so `xhw_video.c` reads the format and
+pitch back after every mode set, logs them (`[VIDEO] scanout:`), and puts
+back the stock kernel's values where they differ; on a stock kernel
+nothing changes (xemu: `general control 00100030, CR28 83, pitch 2560` at
+480). If the picture stays scrambled, the reporter's boot.log shows what
+the board set. The user ruled out a 480p fallback for HDMI consoles.
+
 **Writes to a full or unwritable E: (2026-10-04).** A player reported
 settings.ini never made, no BACK screenshots and widescreen doing nothing
 (all files in `E:\UDATA\4d580001\`; widescreen at 480 also needs the

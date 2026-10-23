@@ -9,6 +9,7 @@
  * next to the game in 64 MB (OpenCrossing-Xbox's measurement); depth is
  * Z24S8 (nv2a.c XGX_Z24_16BPP; Z16 until v53). */
 #include <hal/video.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
@@ -71,6 +72,61 @@ static void set_mode_480(void) {
     s_mode.progressive = p480 && (s_pref_480p || (XVideoGetEncoderSettings() & VIDEO_ADAPTER_MASK) != AV_PACK_HDTV);
 }
 
+/* The scanout format, checked after each mode set (GitHub #18: 720p came up
+ * scrambled on an HDMI-modded 1.6 console whose 480p, at 32 bits, was fine).
+ * HDMI boards (XboxHD+, XboxHDMI) replace the kernel's AvSetDisplayMode
+ * with their own GPU and encoder setup, written for the retail games' modes;
+ * the 16-bit 720p mode is the one retail games rarely use. The stock kernel
+ * sets, for the format and pitch it is given: PRAMDAC general control's
+ * ALT_MODE_SEL (bit 12) for R5G6B5, CR28's depth (2 = 16, 3 = 32 bits) and
+ * the pitch in 8-byte units in CR13, CR19[7:5] and CR25[5] (Cxbx-Reloaded's
+ * AvSetDisplayMode; nouveau's NV_CIO_* names). Each is logged and, where it
+ * differs, put back the way the stock kernel leaves it; on a stock kernel
+ * nothing changes. */
+#define XHW_PRAMDAC_GENERAL_CONTROL 0x00680600
+#define XHW_GC_ALT_MODE_SEL 0x00001000u
+#define XHW_PRMCIO_CRX 0x006013D4
+#define XHW_PRMCIO_CR 0x006013D5
+#define XHW_CIO_SR_LOCK 0x1F
+#define XHW_CIO_SR_UNLOCK_RW 0x57
+#define XHW_PCRTC_START 0x00600800
+
+static unsigned crtc_rd(unsigned i) {
+    VIDEOREG8(XHW_PRMCIO_CRX) = (unsigned char)i;
+    return VIDEOREG8(XHW_PRMCIO_CR);
+}
+
+static void crtc_wr(unsigned i, unsigned v) {
+    VIDEOREG8(XHW_PRMCIO_CRX) = (unsigned char)i;
+    VIDEOREG8(XHW_PRMCIO_CR) = (unsigned char)v;
+}
+
+static void check_scanout(int width, int bpp) {
+    unsigned want_depth = bpp == 16 ? 2 : 3, want_pitch = (unsigned)(width * (bpp / 8)) / 8;
+    unsigned crx = VIDEOREG8(XHW_PRMCIO_CRX), lock, cr13, cr19, cr25, cr28, pitch;
+    uint32_t gc = VIDEOREG(XHW_PRAMDAC_GENERAL_CONTROL), gc_want;
+    lock = crtc_rd(XHW_CIO_SR_LOCK);
+    crtc_wr(XHW_CIO_SR_LOCK, XHW_CIO_SR_UNLOCK_RW);
+    cr13 = crtc_rd(0x13);
+    cr19 = crtc_rd(0x19);
+    cr25 = crtc_rd(0x25);
+    cr28 = crtc_rd(0x28);
+    pitch = cr13 | ((cr19 & 0xE0u) << 3) | ((cr25 & 0x20u) << 6);
+    gc_want = bpp == 16 ? (gc | XHW_GC_ALT_MODE_SEL) : (gc & ~XHW_GC_ALT_MODE_SEL);
+    xhw_logf("[VIDEO] scanout: general control %08x, CR28 %02x, pitch %u (want %u), CR19 %02x CR25 %02x, lock %02x, start %08x",
+             (unsigned)gc, cr28, pitch * 8, want_pitch * 8, cr19, cr25, lock, (unsigned)VIDEOREG(XHW_PCRTC_START));
+    if (gc != gc_want || (cr28 & 0x7Fu) != want_depth || pitch != want_pitch) {
+        VIDEOREG(XHW_PRAMDAC_GENERAL_CONTROL) = gc_want;
+        crtc_wr(0x28, 0x80u | want_depth);
+        crtc_wr(0x13, want_pitch & 0xFFu);
+        crtc_wr(0x19, (cr19 & 0x1Fu) | ((want_pitch & 0x700u) >> 3));
+        crtc_wr(0x25, (cr25 & ~0x20u) | ((want_pitch & 0x800u) >> 6));
+        xhw_logf("[VIDEO] scanout set back: general control %08x, CR28 %02x, pitch %u",
+                 (unsigned)VIDEOREG(XHW_PRAMDAC_GENERAL_CONTROL), crtc_rd(0x28), want_pitch * 8);
+    }
+    VIDEOREG8(XHW_PRMCIO_CRX) = (unsigned char)crx;
+}
+
 void xhw_video_boot(void) {
     xhw_splash_release();   /* XVideoSetMode frees the splash's framebuffer */
     s_mode.widescreen = xhw_video_widescreen_set();
@@ -101,6 +157,7 @@ void xhw_video_boot(void) {
              xhw_video_widescreen_set(), xhw_video_480p_allowed(), xhw_video_720p_allowed());
     xhw_logf("[VIDEO] %dx%d %d-bit%s%s", s_mode.width, s_mode.height, s_mode.bpp,
              s_mode.progressive ? " progressive" : " interlaced", s_mode.widescreen ? " 16:9" : " 4:3");
+    check_scanout(s_mode.width, s_mode.bpp);
 }
 
 /* The renderer calls this when 720p can't start (pb_init or its contiguous
@@ -109,6 +166,7 @@ void xhw_video_fallback_480(void) {
     set_mode_480();
     s_mode.widescreen = xhw_video_widescreen_set();
     xhw_logf("[VIDEO] fell back to 640x480");
+    check_scanout(s_mode.width, s_mode.bpp);
 }
 
 void xhw_wait_vblank(void) { XVideoWaitForVBlank(); }
