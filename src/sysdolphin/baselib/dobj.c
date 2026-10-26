@@ -322,6 +322,39 @@ static bool DObjCulled(HSD_DObj* dobj, Mtx pmtx)
     }
     return true;
 }
+
+/* PORT: the matrices a culled DObj would have loaded are loaded all the
+ * same. A joint's first rigid PObj loads its position, normal and (under a
+ * reflection or highlight texture) TEXMTX0 matrices and marks the joint;
+ * the joint's later PObjs find the mark and load nothing (pobj.c
+ * SetupRigidModelMtx). A reflective DObj after one without such a texture
+ * thus reflects with whatever TEXMTX0 was loaded last, and skipping a DObj
+ * changed what that was: Rainbow Cruise's chrome took another object's
+ * matrix whenever a part of the ship left the view, and its colours jumped
+ * as the camera moved. GetSetupFlags reads the current textures, which the
+ * material setup (HSD_TObjSetup) would have made the DObj's own; its unset
+ * clears them again. */
+extern HSD_TObj* tobj_head;   /* tobj.c */
+
+static void DObjCulledMtx(HSD_DObj* dobj, Mtx vmtx, Mtx pmtx, u32 rendermode)
+{
+    HSD_PObj* p;
+    bool setup = (rendermode & 0x4000000) == 0;
+
+    if (setup) {
+        tobj_head = dobj->mobj != NULL ? dobj->mobj->tobj : NULL;
+    }
+    for (p = dobj->pobj; p != NULL; p = p->next) {
+        if ((p->flags & (POBJ_CULLFRONT | POBJ_CULLBACK)) !=
+            (POBJ_CULLFRONT | POBJ_CULLBACK))
+        {
+            HSD_POBJ_METHOD(p)->setup_mtx(p, vmtx, pmtx, rendermode);
+        }
+    }
+    if (setup) {
+        tobj_head = NULL;
+    }
+}
 #endif
 
 void HSD_DObjDisp(HSD_DObj* dobj, Mtx vmtx, Mtx pmtx, u32 rendermode)
@@ -330,6 +363,7 @@ void HSD_DObjDisp(HSD_DObj* dobj, Mtx vmtx, Mtx pmtx, u32 rendermode)
 
 #ifdef TARGET_PC
     if (DObjCulled(dobj, pmtx)) {
+        DObjCulledMtx(dobj, vmtx, pmtx, rendermode);   /* PORT: above */
         return;
     }
 #endif
