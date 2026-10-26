@@ -6,6 +6,7 @@
 #include <dolphin/gx.h>
 #include <dolphin/os.h>
 #include <dolphin/vi.h>
+#include <stdlib.h>
 
 #include "pc/pc.h"
 #include "pc/widescreen.h"
@@ -106,6 +107,26 @@ static int s_render_prev = -1;
 void xsdk_perf_render_begin(int ticks) {
     xhw_perf_ticks((uint32_t)ticks);
     s_render_prev = xhw_perf_enter(XHW_PERF_RENDER);
+}
+
+/* Material and texture tracks that flip between two values every frame
+ * (strobes: Brinstar's background pieces) show the mean of the two (fobj.c):
+ * the GameCube's 480i on a CRT shows one value per field, a steady
+ * half-tone; whole frames (progressive, a modern TV, under 60 fps) flickered.
+ * -DXSDK_STROBE_BLEND=0 keeps the per-frame values; test builds also take
+ * env MX_STROBE_BLEND=0|1. */
+#ifndef XSDK_STROBE_BLEND
+#define XSDK_STROBE_BLEND 1
+#endif
+int xsdk_strobe_blend(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char* e = XHW_TEST_BUILD ? getenv("MX_STROBE_BLEND") : NULL;
+        on = e ? atoi(e) != 0 : XSDK_STROBE_BLEND;
+        if (on != XSDK_STROBE_BLEND)
+            xhw_logf("[ANIM] strobe tracks %s (MX_STROBE_BLEND)", on ? "blended" : "per frame");
+    }
+    return on;
 }
 
 void xsdk_perf_render_end(void) {
