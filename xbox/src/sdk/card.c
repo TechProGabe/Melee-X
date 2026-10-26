@@ -7,7 +7,9 @@
  * empty. The card is a 251-block (16 Mbit) card.
  *
  * Every call completes immediately; async callbacks are queued and run with
- * the alarms on the game thread (os.c), as the CARD interrupt handler did. */
+ * the alarms on the game thread (os.c), as the CARD interrupt handler did.
+ *
+ * Writes reach the disk from a writer thread (XSDK_CARD_ASYNC, below). */
 #include <dolphin/card.h>
 #include <dolphin/os.h>
 #include <stdio.h>
@@ -25,12 +27,33 @@
 
 typedef struct {
     int used;
+    int dirty;                   /* changed in memory, waiting for the writer */
     CARDDir dir;                 /* native byte order */
     u8* data;                    /* dir.length * BLOCK */
     char path[128];
 } File;
 
+/* The game saves one 8 KB sector per CARDWrite (four in a row when the main
+ * menu opens), and each was a whole .gci rewritten, flushed and renamed on
+ * the game thread: a hitch where the GameCube's card transfers ran in the
+ * background. CARDWrite and CARDSetStatus now change the file in memory and
+ * wake the writer thread, which waits WRITE_DELAY_MS for the rest of the
+ * burst and saves a copy taken under the lock. Create, rename, delete and
+ * format still save at once, once the writer is idle (drain), and every way
+ * out of the XBE drains it (xsdk_card_flush, xhw_main.c). A background save
+ * that fails puts up the notice; the game was told READY, and its next
+ * write tries again. 0: every write saves at once, as before. */
+#ifndef XSDK_CARD_ASYNC
+#define XSDK_CARD_ASYNC 1
+#endif
+#define WRITE_DELAY_MS 100
+
 static File s_files[CARD_MAX_FILE];
+static xhw_mutex* s_lock;        /* s_files' dirty, dir and data against the writer */
+static xhw_event* s_wake;
+static volatile int s_pending;   /* files dirty */
+static volatile int s_writing;   /* the writer is saving a copy */
+static volatile int s_hurry;     /* drain: skip the delay */
 static int s_mounted;
 static char s_game[4] = { 'G', 'A', 'L', 'E' };
 static char s_maker[2] = { '0', '1' };
@@ -113,6 +136,7 @@ static int save_file(File* f) {
     u8 hdr[GCI_HEADER];
     char tmp[sizeof f->path];
     size_t bytes = (size_t)f->dir.length * BLOCK;
+    uint64_t t0 = xhw_time_ns();
     FILE* fp;
     int ok, r = XHW_REPLACE_FAILED;
     dir_to_gci(&f->dir, hdr);
@@ -143,7 +167,8 @@ static int save_file(File* f) {
         if (r == XHW_REPLACE_FAILED) remove(tmp);
     }
     if (r == XHW_REPLACE_OK) {
-        xhw_logf("[CARD] saved %.32s (%u blocks)", (const char*)f->dir.fileName, (unsigned)f->dir.length);
+        xhw_logf("[CARD] saved %.32s (%u blocks, %u ms)", (const char*)f->dir.fileName, (unsigned)f->dir.length,
+                 (unsigned)((xhw_time_ns() - t0) / 1000000u));
         return 1;
     }
     if (r == XHW_REPLACE_LOST_TO) {
@@ -156,6 +181,92 @@ static int save_file(File* f) {
         xhw_notice("Save failed: can't write to E: (full?).", "The previous save is unchanged.");
     }
     return 0;
+}
+
+static void writer(void* arg) {
+    (void)arg;
+    for (;;) {
+        int i;
+        xhw_event_wait(s_wake, 0xFFFFFFFFu);
+        while (!s_hurry && xhw_event_wait(s_wake, WRITE_DELAY_MS)) {}   /* each write restarts the wait */
+        for (i = 0; i < CARD_MAX_FILE; i++) {
+            File copy;
+            size_t bytes;
+            xhw_mutex_lock(s_lock);
+            if (!s_files[i].dirty) {
+                xhw_mutex_unlock(s_lock);
+                continue;
+            }
+            copy = s_files[i];
+            bytes = (size_t)copy.dir.length * BLOCK;
+            s_files[i].dirty = 0;
+            s_writing = 1;
+            s_pending--;
+            copy.data = (u8*)malloc(bytes ? bytes : 1);
+            if (copy.data) {
+                memcpy(copy.data, s_files[i].data, bytes);
+                xhw_mutex_unlock(s_lock);
+                save_file(&copy);
+                free(copy.data);
+            } else {   /* no room for a copy: saved from the file itself, the game waiting on the lock */
+                save_file(&s_files[i]);
+                xhw_mutex_unlock(s_lock);
+            }
+            s_writing = 0;
+        }
+    }
+}
+
+/* The game thread: wait for the writer to save every dirty file, at most
+ * timeout_ms; 1 when it's idle. */
+static int drain(uint32_t timeout_ms) {
+    uint64_t end = xhw_time_ns() + (uint64_t)timeout_ms * 1000000u;
+    if (!s_lock) return 1;
+    s_hurry = 1;
+    while (s_pending || s_writing) {
+        if (xhw_time_ns() > end) {
+            s_hurry = 0;
+            return 0;
+        }
+        xhw_event_signal(s_wake);
+        xhw_sleep_ms(2);
+    }
+    s_hurry = 0;
+    return 1;
+}
+
+/* xhw_main.c, before every way out of the XBE: the background saves finish. */
+void xsdk_card_flush(void) {
+    if (s_lock && (s_pending || s_writing) && !drain(5000))
+        xhw_logf("[CARD] writer still busy after 5 s: the last save may be lost");
+}
+
+/* CARDWrite, CARDSetStatus: change_begin, the file changed in memory, then
+ * change_end saves it (the writer, or at once when there's none). */
+static void change_begin(void) {
+    static int tried;
+    if (XSDK_CARD_ASYNC && !tried) {
+        xhw_mutex* m = xhw_mutex_create();
+        tried = 1;
+        s_wake = xhw_event_create();
+        if (m && s_wake) {
+            s_lock = m;   /* before the thread runs: it takes it */
+            if (!xhw_thread_start(writer, NULL, 0, 32 * 1024)) s_lock = NULL;
+        }
+        if (!s_lock) xhw_logf("[CARD] no writer thread: saves on the game thread");
+    }
+    if (s_lock) xhw_mutex_lock(s_lock);
+}
+
+static int change_end(File* f) {
+    if (!s_lock) return save_file(f);
+    if (!f->dirty) {
+        f->dirty = 1;
+        s_pending++;
+    }
+    xhw_mutex_unlock(s_lock);
+    xhw_event_signal(s_wake);
+    return 1;
 }
 
 static File* alloc_file(void) {
@@ -347,6 +458,7 @@ s32 CARDFreeBlocks(s32 chan, s32* bytes, s32* files) {
 s32 CARDFormatAsync(s32 chan, CARDCallback cb) {
     int i;
     if (chan != CHAN_A) return CARD_RESULT_NOCARD;
+    drain(5000);
     for (i = 0; i < CARD_MAX_FILE; i++) {
         if (!s_files[i].used) continue;
         remove(s_files[i].path);
@@ -387,6 +499,7 @@ s32 CARDCreateAsync(s32 chan, const char* name, u32 size, CARDFileInfo* fi, CARD
     if (chan != CHAN_A) return CARD_RESULT_NOCARD;
     if (strlen(name) > CARD_FILENAME_MAX) return CARD_RESULT_NAMETOOLONG;
     if (find(name) >= 0) return finish(chan, CARD_RESULT_EXIST, cb);
+    drain(5000);
     if ((int)blocks > CARD_BLOCKS - used_blocks() || !(f = alloc_file())) return finish(chan, CARD_RESULT_INSSPACE, cb);
     memset(f, 0, sizeof *f);
     memcpy(f->dir.gameName, s_game, 4);
@@ -418,6 +531,7 @@ s32 CARDDeleteAsync(s32 chan, const char* name, CARDCallback cb) {
     if (chan != CHAN_A) return CARD_RESULT_NOCARD;
     n = find(name);
     if (n < 0) return finish(chan, CARD_RESULT_NOFILE, cb);
+    drain(5000);
     remove(s_files[n].path);
     free(s_files[n].data);
     memset(&s_files[n], 0, sizeof s_files[n]);
@@ -432,6 +546,7 @@ s32 CARDRenameAsync(s32 chan, const char* old_name, const char* new_name, CARDCa
     n = find(old_name);
     if (n < 0) return finish(chan, CARD_RESULT_NOFILE, cb);
     if (find(new_name) >= 0) return finish(chan, CARD_RESULT_EXIST, cb);
+    drain(5000);
     f = &s_files[n];
     {   /* the old file goes only once the new one is written */
         char old_path[sizeof f->path];
@@ -472,10 +587,11 @@ s32 CARDWriteAsync(const CARDFileInfo* fi, const void* addr, s32 length, s32 off
     f = &s_files[fi->fileNo];
     if (!f->used || offset < 0 || length < 0 || offset + length > f->dir.length * BLOCK)
         return finish(fi->chan, CARD_RESULT_LIMIT, cb);
+    change_begin();
     memcpy(f->data + offset, addr, (size_t)length);
     f->dir.time = (u32)(OSGetTime() / OS_TIMER_CLOCK);
     s_xferred = length;
-    return finish(fi->chan, save_file(f) ? CARD_RESULT_READY : CARD_RESULT_IOERROR, cb);
+    return finish(fi->chan, change_end(f) ? CARD_RESULT_READY : CARD_RESULT_IOERROR, cb);
 }
 
 s32 CARDWrite(const CARDFileInfo* fi, const void* addr, s32 length, s32 offset) {
@@ -558,13 +674,14 @@ s32 CARDSetStatusAsync(s32 chan, s32 file_no, const CARDStat* st, CARDCallback c
     if (chan != CHAN_A) return CARD_RESULT_NOCARD;
     if (file_no < 0 || file_no >= CARD_MAX_FILE || !s_files[file_no].used) return finish(chan, CARD_RESULT_NOFILE, cb);
     f = &s_files[file_no];
+    change_begin();
     f->dir.bannerFormat = st->bannerFormat;
     f->dir.iconAddr = st->iconAddr;
     f->dir.iconFormat = st->iconFormat;
     f->dir.iconSpeed = st->iconSpeed;
     f->dir.commentAddr = st->commentAddr;
     f->dir.time = (u32)(OSGetTime() / OS_TIMER_CLOCK);
-    return finish(chan, save_file(f) ? CARD_RESULT_READY : CARD_RESULT_IOERROR, cb);
+    return finish(chan, change_end(f) ? CARD_RESULT_READY : CARD_RESULT_IOERROR, cb);
 }
 
 s32 CARDSetStatus(s32 chan, s32 file_no, const CARDStat* st) { return CARDSetStatusAsync(chan, file_no, st, NULL); }

@@ -210,6 +210,7 @@ static void main_body(void* arg) {
 
 unsigned xsdk_frame_count(void);
 unsigned xhw_frame_count(void) { return xsdk_frame_count(); }
+void xsdk_card_flush(void);   /* card.c: the writer thread's saves reach the disk */
 
 int main(void) {
     xhw_crash_guard(main_body, NULL);
@@ -217,6 +218,7 @@ int main(void) {
 }
 
 void xhw_quit_to_dashboard(void) {
+    xsdk_card_flush();
     xhw_exit_write(s_exit_why[0] ? s_exit_why : "quit to the dashboard");
     xhw_led_shutdown();
     xhw_audio_shutdown();
@@ -232,6 +234,7 @@ void xhw_quit_to_dashboard(void) {
  * quick-reboots and doesn't come back; it returns only when the path has
  * no folder in it, and then the console reboots. */
 static void __attribute__((noreturn)) launch(char* path) {
+    xsdk_card_flush();
     xhw_exit_write(s_exit_why[0] ? s_exit_why : "relaunch");
     xhw_led_shutdown();
     xhw_audio_shutdown();
@@ -244,6 +247,7 @@ static void __attribute__((noreturn)) launch(char* path) {
 /* A full reboot (to the dashboard): resets the GPU too. A quick-reboot launch
  * after a GPU stall came up black (round 8: PGRAPH stays wedged across it). */
 void xhw_reboot_cold(void) {
+    xsdk_card_flush();
     xhw_exit_write(s_exit_why[0] ? s_exit_why : "cold reboot");
     HalReturnToFirmware(HalRebootRoutine);
     for (;;) Sleep(1000);
