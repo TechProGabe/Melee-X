@@ -1,0 +1,8 @@
+# Rainbow Cruise, four CPUs, a 60 s match: the stage's heaviest case on the
+# console (480i ~55 fps), for icount A/B of draw-path changes (v64's
+# DObjCulledMtx). No shots: run with -icount, stop at the end banner.
+env MELEE_BOOT_SCENE=vs
+env MELEE_DEBUG_VS_STAGE=11
+env MELEE_DEBUG_VS=cpu4
+env MELEE_DEBUG_VS_TIME=60
+env MELEE_SEED=1

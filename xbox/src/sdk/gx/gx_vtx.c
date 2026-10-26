@@ -71,6 +71,7 @@ static void make_plan(Plan* p, int vtxfmt) {
     uint8_t nrm_type = g_gx.desc[GX_VA_NRM] != GX_NONE ? g_gx.desc[GX_VA_NRM] : g_gx.desc[GX_VA_NBT];
     memset(l, 0xFF, sizeof *l);   /* every offset -1 */
     l->off_pos = 0;
+    l->tc_mtx = 0;
     p->n = 0;
     for (i = 0; i < N_ORDER; i++) {
         uint8_t a = k_order[i], type = a == GX_VA_NRM ? nrm_type : g_gx.desc[a];
@@ -91,8 +92,10 @@ static void make_plan(Plan* p, int vtxfmt) {
                 if (a >= GX_VA_TEX0 && a <= GX_VA_TEX7) {
                     s->dst = l->off_tc[a - GX_VA_TEX0] = off;
                     off += 8;
+                } else if (a >= GX_VA_TEX0MTXIDX && a <= GX_VA_TEX7MTXIDX) {
+                    l->tc_mtx |= 1u << (a - GX_VA_TEX0MTXIDX);   /* consumed, flagged (XgxLayout) */
                 }
-                break;   /* TEXnMTXIDX: consumed, not used */
+                break;
         }
     }
     l->stride = (uint32_t)off;

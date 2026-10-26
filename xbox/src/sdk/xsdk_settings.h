@@ -16,7 +16,10 @@ typedef struct {
     float stick_deadzone;    /* radial, fraction of full tilt */
     float cstick_deadzone;
     uint8_t trigger_click;   /* analog value from which L/R also click */
+    uint8_t trigger_z;       /* XSDK_TRIGGER_Z_*: a trigger that is Z (grab) instead of L/R (GitHub #12) */
 } xsdk_port_settings;
+
+enum { XSDK_TRIGGER_Z_OFF = 0, XSDK_TRIGGER_Z_LEFT, XSDK_TRIGGER_Z_RIGHT };
 
 typedef struct {
     int video_720p;          /* 1: use 720p when the dashboard allows it (experimental) */
@@ -26,6 +29,7 @@ typedef struct {
     int shots;               /* 1: BACK takes a screenshot (shotNN.bmp in the save folder) */
     int led;                 /* 1: front LED effects (KOs, the last seconds, GAME!) */
     float rumble;            /* 0..1 */
+    int cstick_1p;           /* 1: the C-stick attacks in 1P modes too (training...), not the camera (GitHub #13) */
     xsdk_port_settings port[4];
 } xsdk_settings;
 
@@ -35,6 +39,7 @@ extern xsdk_settings g_xsdk_settings_boot;   /* as loaded at boot: what the vide
 void xsdk_settings_load(void);
 int xsdk_settings_save(void);   /* 0: failed, settings.ini left as it was */
 int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b);   /* as settings.ini would hold them */
+int xsdk_cstick_1p(void);       /* game code (fighter.c, camera.c PORT): g_xsdk_settings.cstick_1p */
 
 /* menu.c. The title screen calls xsdk_menu_title_frame every frame
  * (gmtitle.c, PORT); 1: the menu is open and the title stands still.

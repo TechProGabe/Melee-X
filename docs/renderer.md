@@ -89,7 +89,12 @@ The cache keeps each list's model-space box (lists without per-vertex
 matrices); `HSD_DObjDisp` skips rigid PObjs wholly outside the view
 (`gx_dl_culled`: the transformed centre's view-aligned box against five
 planes made once per projection, `gx_cull.h`; never culls more than an
-eight-corner test). A list is known after its first draw.
+eight-corner test). A list is known after its first draw. A skipped DObj
+still loads the matrices it would have (`dobj.c` `DObjCulledMtx`): HSD
+loads a joint's position, normal and TEXMTX0 matrices only at its first
+rigid PObj, so the DObjs after it depend on them. Without that, Rainbow
+Cruise's chrome reflected with another object's TEXMTX0 whenever part of
+the ship was off screen and changed colour as the camera moved.
 
 ### Fewer, bigger draws
 
@@ -233,13 +238,21 @@ Constant rows (`nv2a_vp.h`):
 | 110-121 `VPC_TEXGEN` | 4 units x 3 rows (s, t, q), post matrix folded in when there is no normalize |
 | 122-133 `VPC_POSTMTX` | 4 units x 3 rows, the post-transform matrix after normalize |
 | 134-136 `VPC_FOG` | fog numerator, denominator and curve (see Fog) |
+| 137-166 `VPC_TEXMTX` | GX TEXMTX0..9 x 3 rows, indexed by `a0` like `VPC_POS` (texgens with a matrix per vertex) |
 
 Inputs: v0 position, v1 matrix index, v2 normal, v3/v4 colours 0/1, GX
 TEX0..6 -> v9..v15, TEX7 -> v8. The front end writes canonical vertices
 (`XgxLayout`): float positions, normals and texcoords, RGBA8 colours, and the
 matrix index as a float. Skinning: GX selects a position matrix per vertex
 (PNMTXIDX, 0..27 in steps of 3); the program loads it into `a0` and reads
-`c[A0+6]`, so a whole skinned mesh is one draw.
+`c[A0+6]`, so a whole skinned mesh is one draw. A texgen can take its
+matrix per vertex too (TEXnMTXIDX): HSD's skinned env maps (metal
+fighters, chrome) load texture matrix k beside position matrix k, one per
+envelope. The front end flags such texcoords (`XgxLayout.tc_mtx`, the
+index itself isn't kept) and the program reads `c[A0+137]`, the ten GX
+texture matrices at `VPC_TEXMTX` (`VpTexGen.pv_mtx`), then the post
+matrix. Until v4.2 TEXMTX0 served the whole draw, so each bone's part of a
+metal fighter reflected as the first bone's did, in bands (GitHub #17).
 
 ### Shorter programs
 
@@ -252,8 +265,13 @@ op first). The generator drops attenuation factors flagged as 1
 (`VpKey.ang_one`/`dist_one`), and `vp_canon` clears key fields a program
 doesn't depend on so such draws share a program. `tools/xbox/test_vp_opt.py`
 compares 200000 random keys against the original generator
-(`tests/xbox/vp_ref.c`) bit for bit, in hardware and xemu order; keys that
-didn't fit 136 instructions then are approximated as then (`legacy_len`).
+(`tests/xbox/vp_ref.c`) bit for bit, in hardware and xemu order. Keys that
+didn't fit 136 instructions then (`legacy_len`) are generated whole first
+and kept when the optimized program fits (v4.2; the test checks them
+against their own unoptimized program); only the rest are approximated as
+before (lights past the first two dropped, spot attenuation off). That
+approximation had left the trophy fall's spot-lit trophies dark until the
+room lit up (GitHub #16); matches had up to ~13 such draws a frame.
 
 ### Program memory
 
@@ -447,7 +465,14 @@ particles with `DispFog`, the title, intros, cutscenes, the trophy display.
   (`LU_IMAGE_AY8`/`A8Y8`/`A8R8G8B8`, rows 64-byte aligned), sampled in
   texels, so `build_texgen` scales a unit's s and t rows by the size (the
   post matrix when the texgen normalizes). GX allows only clamping and no
-  mipmaps at such sizes, as linear textures do.
+  mipmaps at such sizes, as linear textures do; but GX clamps only the
+  axis that isn't a power of two, so an image whose other axis repeats or
+  mirrors (Data > Special's and Bonus Records' 152x128 row panel: two rows
+  of texture, t from -1 to 1, four rows drawn) is resampled to a power of
+  two instead (`XGX_TEX_WRAPS`, set by `gx_tex.c`'s upload), and is a
+  cache entry of its own (`KEY_WRAPS` in the entry's format), so a clamped
+  bind of the same texels can't decide it; as a linear texture its top half
+  was one flat block of edge texels (GitHub #9, #10).
 - CMPR -> DXT1: GX's 8x8 tiles of four DXT1 blocks (TL, TR, BL, BR, small
   mips padded to a tile) are reordered into 4x4 block rows, both colours
   byte-swapped, each index byte's 2-bit fields reversed. Blocks with a
@@ -587,7 +612,12 @@ compressed depth buffer. At a depth-format copy (`_GX_TF_ZTF`)
 front of the copy's clear depth (GREATER), else 0. The copy takes that
 alpha (`XGX_COPY_ALPHA`); a draw with `ztex` set gets one more combiner
 stage (`APREV * TEXA`, `derive_units`) and an alpha test that drops 0
-(`emit_fixed`). The pass starts with a no-op quad (depth writes on, test
+(`emit_fixed`). A Z24X8 Z-texture draw (`ztex` 2: the team card's
+tiles) is also drawn at one depth, 0x40000 in front of the mask's clear
+depth (`build_proj` sets the projection's z row to it times w), so the
+card's black bars and NOW LOADING, which write nearer depths first, hide
+it as the copied fighter depths do on the GameCube (GitHub #14; they drew
+over the bars before). The pass starts with a no-op quad (depth writes on, test
 `NEVER`) so xemu rebinds its depth buffer. At 16 bits the mask goes into
 green (`XGX_COPY_GREEN`), which overwrites the rect's colour, so it is done
 only when the depth copy clears the rect after itself (`gm_1832.c`);
@@ -596,6 +626,23 @@ lands in its rgb and its alpha samples 1: such a texture is marked
 (`Tex.mask_rgb`) and the Z-texture stage reads its alpha from red (swap
 `0x24`). Until v53 it read alpha, every tile drew whole and the 720p team
 cards showed one fighter on a black right half.
+
+## Strobe tracks (`fobj.c`)
+
+Not the renderer's doing, but it looks like a rendering fault: some stage
+materials and textures are animated to flip between two values on every
+frame (Brinstar's background pieces black/white). The GameCube draws them
+so too; its 480i on a CRT shows one value per field, a steady half-tone,
+while whole frames (progressive output, a modern TV, under 60 fps) show a
+flicker. Since v4.2 such tracks show the mean of their two values:
+`HSD_FObjLoadDesc` flags a track whose keys all last one frame and
+alternate between two values, and while a material or texture animates
+(`xsdk_strobe_blend`, `vi.c`) it shows the mean; a texture's image or
+palette number holds the first. Joints are never changed, so the
+simulation is the same (`decisions.md` "Strobe tracks"); `scenarios/strobe`
+shows one. Not every blink is a strobe: Brinstar's lamp glows are shown
+for five frames a second by a joint's branch track, swelling from a dot
+to a blob by a scale track, which the GameCube shows as well.
 
 ## Build switches
 
@@ -619,6 +666,7 @@ Renderer switches (all switches: `testing.md`):
 | `-DXGX_CHECK_VERTS` | log display lists with non-finite or huge positions |
 | `-DXGX_DEBUG_VPTRACE` | vertex-program select traces for `vp_policy.py` |
 | `-DXGX_CENSUS=1` | draw census (Probes) |
+| `-DXSDK_STROBE_BLEND=0` | strobe tracks show their per-frame values, not the mean of the two (Strobe tracks) |
 
 Known wrong in xemu: Mute City's distant skyline band renders as white
 speckle.

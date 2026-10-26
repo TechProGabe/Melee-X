@@ -278,7 +278,15 @@ void HSD_TObjAnim(HSD_TObj* tobj)
 
     /* PORT: no call when nothing plays (aobj.h) */
     if (HSD_AObjIsPlaying(tobj->aobj)) {
+#ifdef TARGET_XBOX
+        /* PORT: strobe tracks (colours: their mean; images: the first)
+         * (fobj.h) */
+        HSD_FObjStrobeKind = xsdk_strobe_blend() ? HSD_FOBJ_STROBE_TOBJ : 0;
+#endif
         HSD_AObjInterpretAnim(tobj->aobj, tobj, TObjUpdateFunc);
+#ifdef TARGET_XBOX
+        HSD_FObjStrobeKind = 0;
+#endif
     }
 }
 

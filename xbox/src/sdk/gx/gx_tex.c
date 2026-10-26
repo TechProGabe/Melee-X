@@ -592,6 +592,22 @@ static void convert_level(const uint8_t* src, uint32_t fmt, uint32_t xfmt, uint3
     }
 }
 
+/* GitHub #9, #10: Data > Special's and Bonus Records' row panel is 152x128
+ * with its t axis repeating (two rows of texture, four rows drawn); as a
+ * clamp-only linear texture its top half was one flat block of the edge
+ * texels. GX clamps only an axis that isn't a power of two, so such an image
+ * is uploaded resampled to a power of two (XGX_TEX_WRAPS), and it is its own
+ * cache entry (KEY_WRAPS): a clamped bind of the same texels first must not
+ * decide how a wrapping one samples. */
+#define KEY_WRAPS 0x80u   /* in Entry.fmt, over the GX format (< 0x40) */
+static int npot_wraps(const TexObj* o) {
+    int pot_w = !(o->w & (o->w - 1)), pot_h = !(o->h & (o->h - 1));
+    if (pot_w && pot_h) return 0;
+    return (pot_w && o->wrap_s != GX_CLAMP) || (pot_h && o->wrap_t != GX_CLAMP);
+}
+
+static uint8_t key_fmt(const TexObj* o) { return (uint8_t)(o->fmt | (npot_wraps(o) ? KEY_WRAPS : 0u)); }
+
 static uint32_t upload_now(const TexObj* o, const TlutObj* tl, uint32_t levels, uint32_t bytes) {
     uint32_t need = 0, w = o->w, h = o->h, l, tex, room, xfmt = native_fmt(o, levels);
     const uint8_t* src = o->data;
@@ -627,6 +643,7 @@ static uint32_t upload_now(const TexObj* o, const TlutObj* tl, uint32_t levels, 
         memcpy(dst, pal, sizeof pal);
     }
     s_st_uploads++;
+    if (npot_wraps(o)) xfmt |= XGX_TEX_WRAPS;
     /* pool full: evict, wait for the GPU once, retry; each round frees
      * twice as much, since the pool fragments */
     tex = xgx_tex_create(o->w, o->h, levels, xfmt, s_scratch);
@@ -725,7 +742,7 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
 #endif
     /* the GX size (never 0: w and h are) only when the texels are hashed or
      * uploaded, not for a lookup that finds a texture already checked */
-    e = find(o->data, o->w, o->h, o->fmt, (uint8_t)levels, tl ? tl->data : NULL);
+    e = find(o->data, o->w, o->h, key_fmt(o), (uint8_t)levels, tl ? tl->data : NULL);
     if (e && e->efb && s_frame - e->last_used > TEX_IDLE_FRAMES && (e->w != o->w || e->h != o->h)) {
         drop(e);   /* an idle copy's memory, now a texture of another size */
         e = NULL;
@@ -782,7 +799,7 @@ static void bind_new(uint32_t map, const TexObj* o, const TlutObj* tl) {
         c = cold_of(e);
         e->w = o->w;
         e->h = o->h;
-        e->fmt = o->fmt;
+        e->fmt = key_fmt(o);
         e->levels = (uint8_t)levels;
         e->tlut_data = tl ? tl->data : NULL;
         c->hash = hash_bytes(o->data, bytes);
@@ -899,7 +916,7 @@ void gx_tex_frame_end(void) {
             if (s_cache[i].last_used == s_frame && !s_cache[i].efb) {
                 uint32_t f = s_cache[i].fmt & 15;
                 n[f]++;
-                kb[f] += GXGetTexBufferSize(s_cache[i].w, s_cache[i].h, s_cache[i].fmt, s_cache[i].levels > 1,
+                kb[f] += GXGetTexBufferSize(s_cache[i].w, s_cache[i].h, s_cache[i].fmt & ~KEY_WRAPS, s_cache[i].levels > 1,
                                             s_cache[i].levels) / 1024;
                 pkb[f] += xgx_tex_bytes(s_cache[i].tex) / 1024;
                 live++;

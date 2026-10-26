@@ -46,12 +46,16 @@ static int find_image_in(const char* dir, char* out, size_t cap) {
 /* Next to the XBE. Test builds also take the release folder's image, so a
  * console round can put build variants in folders of their own
  * (F:\Applications\Melee-X-r2a\default.xbe, ...) without a copy of the disc
- * in each (docs/fps-plan.md, round 2). */
+ * in each (docs/fps-plan.md, round 2). A console without F: (a softmod
+ * keeps the game on E:) has the release folder there. */
 static int find_disc_image(char* out, size_t cap) {
     if (find_image_in("D:", out, cap)) return 1;
     if (!XHW_TEST_BUILD) return 0;
-    if (!nxIsDriveMounted('F') && !nxMountDrive('F', "\\Device\\Harddisk0\\Partition6\\")) return 0;
-    return find_image_in("F:\\Applications\\Melee-X", out, cap);
+    if ((nxIsDriveMounted('F') || nxMountDrive('F', "\\Device\\Harddisk0\\Partition6\\")) &&
+        find_image_in("F:\\Applications\\Melee-X", out, cap))
+        return 1;
+    if (!nxIsDriveMounted('E') && !nxMountDrive('E', "\\Device\\Harddisk0\\Partition1\\")) return 0;
+    return find_image_in("E:\\Applications\\Melee-X", out, cap);
 }
 
 void xhw_error_screen(const char* title, const char* const* lines) {
@@ -190,6 +194,7 @@ static void main_body(void* arg) {
     xhw_logf("[BOOT] image %08x-%08x %.*s", xhw_image_base, xhw_image_end, (int)XeImageFileName[0].Length,
              XeImageFileName[0].Buffer);
     log_previous_exit();
+    xhw_code_repair();   /* before anything reads the TSC (upgraded-CPU BIOSes rewrite rdtsc) */
     xhw_watchdog_start();
     xhw_prof_set_game_thread();
     xhw_prof_start();
@@ -209,6 +214,7 @@ static void main_body(void* arg) {
 
 unsigned xsdk_frame_count(void);
 unsigned xhw_frame_count(void) { return xsdk_frame_count(); }
+void xsdk_card_flush(void);   /* card.c: the writer thread's saves reach the disk */
 
 int main(void) {
     xhw_crash_guard(main_body, NULL);
@@ -216,6 +222,7 @@ int main(void) {
 }
 
 void xhw_quit_to_dashboard(void) {
+    xsdk_card_flush();
     xhw_exit_write(s_exit_why[0] ? s_exit_why : "quit to the dashboard");
     xhw_led_shutdown();
     xhw_audio_shutdown();
@@ -231,6 +238,7 @@ void xhw_quit_to_dashboard(void) {
  * quick-reboots and doesn't come back; it returns only when the path has
  * no folder in it, and then the console reboots. */
 static void __attribute__((noreturn)) launch(char* path) {
+    xsdk_card_flush();
     xhw_exit_write(s_exit_why[0] ? s_exit_why : "relaunch");
     xhw_led_shutdown();
     xhw_audio_shutdown();
@@ -243,6 +251,7 @@ static void __attribute__((noreturn)) launch(char* path) {
 /* A full reboot (to the dashboard): resets the GPU too. A quick-reboot launch
  * after a GPU stall came up black (round 8: PGRAPH stays wedged across it). */
 void xhw_reboot_cold(void) {
+    xsdk_card_flush();
     xhw_exit_write(s_exit_why[0] ? s_exit_why : "cold reboot");
     HalReturnToFirmware(HalRebootRoutine);
     for (;;) Sleep(1000);

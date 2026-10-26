@@ -213,7 +213,10 @@ baseline in `Melee-X`) returns to the dashboard. `watch` waits for the
 dashboard's FTP and pulls into `$MX_HW/logs-rN`, `report` tabulates fps,
 buckets and GPU waits per run, `shots` groups byte-identical shots (with
 `MX_LOCKSTEP=1` and `TSHOT`), `clean` removes the folders. The first run of
-a chain is ~4% slow: make it a warm-up. Round 7 (not run yet) prices v53's
+a chain is ~4% slow: make it a warm-up. On a console without F: (gold),
+`MX_ROUND_DRIVE=E` puts the folders and the chain's `MX_NEXT_XBE` paths on
+E:, and test builds take the image from `E:\Applications\Melee-X` when F:
+has none. Round 7 (not run yet) prices v53's
 Z24S8 depth at 720p: `MX_Z24` 0/1 on Fountain and Stadium, Z24S8 without Z
 compression, FD, and Stadium's arrowhead shots (`fps-plan.md`).
 
@@ -281,8 +284,11 @@ Tags (switch-only tags such as `[EFB]`, `[DRAW]`, `[VPT]`, `[PBCHECK]`,
   cache. `[GAME] match ends: outcome N` is TIME!/GAME!, `[GAME] end banner
   done` the results taking over.
 - `[PERF]`: above. Test builds add `[PERFX]` (buckets in µs, raw counts, the
-  mixer's time per bucket, x87 control word and MXCSR; `027f` = 53-bit) and
-  `[CAL]` (20M instructions timed; 40000 µs under `-icount shift=1`).
+  mixer's time per bucket, x87 control word and MXCSR; `027f` = 53-bit),
+  `[PERFW]` (the period's longest frame: its ms, frame number, ticks run
+  for it and ms per bucket; a hitch such as a KO's shows here, not in the
+  5 s average) and `[CAL]` (20M instructions timed; 40000 µs under
+  `-icount shift=1`).
 - `[SIMH] tick N: hash`: test builds, every 60 ticks of a match: fighters'
   state and the random seed hashed. Equal lines = the same simulation.
 - `[CPU]`: test builds at boot: CPUID, CR0/CR3/CR4, MXCSR, x87 control word;
@@ -405,11 +411,16 @@ script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
 | `-DXHW_MEMB=<n>` | `[MEMB]` memory breakdown every n seconds (default 60 in test builds; 0 = off, a release's default) |
 | `-DXHW_PAD_DRAIN=0` | SDL joystick events stay on and queue up unread (up to v52: the memory leak); test builds' `env MX_PAD_NOISE=<n>` queues n synthetic axis events a poll, as a real controller's changes do (`decisions.md` "Memory breakdown") |
 | `-DXHW_AUDIO_APU=0` | never use the xemu APU fallback |
+| `-DXHW_AUDIO_GC_RATE=0` | 32 kHz audio resampled as 32000 Hz (up to v4.1) instead of the GameCube's 32028.5 Hz (`xhw_audio.c`, GitHub #11) |
+| `-DXHW_CODE_REPAIR=0`, `=2`, `-DXHW_CODE_REPAIR_TEST` | no boot check of `.text` against `D:\default.xbe`; check and log only; rewrite the first `0f 31` as `cd 2e` first, as an upgraded-CPU BIOS does, so the repair shows (`[BOOT] code check`, `xhw_code_repair.c`) |
+| `-DXGX_PV_TEXMTX=0` | texgens ignore the vertex's TEXnMTXIDX and use TEXMTX0 for the whole draw (up to v4.1: metal fighters in bands, GitHub #17) |
 | `-DXHW_AUDIO_TEST=<bits>` | xemu audio tests (with `-DXHW_AUDIO_APU=0`, `scenarios/relaunch`): 1 leaves the AC97 engine running into the next boot at a relaunch; 2 reads CIV as 0 for good (an engine stuck from boot: the give-up path). Never on a console build |
 | `-DXHW_NO_SPLASH`, `-DXHW_SPLASH_MS=<n>`, `-DXHW_SPLASH_DUMP` | boot title card off; its hold time; stream it as `[FBDUMP]` |
 | `-DXHW_FBDUMP_EVERY=<n>` | screenshot every n presented frames |
 | `-DXHW_VIDEO_480_BPP=16` | 640x480 at 16 bits (R5G6B5, 720p's depth format and pool sizes): the 720p path at a size xemu can show. Test only: shots are 16-bit. Real 720p in xemu: `env MX_VIDEO=720` with an EEPROM whose video flags allow 720p ("720p in xemu") |
+| `-DXSDK_STROBE_BLEND=0` | material and texture tracks that flip every frame (strobes: Brinstar's background pieces) show their per-frame values instead of the mean of the two (`vi.c`, `fobj.c`; renderer.md "Strobe tracks"); test builds: `env MX_STROBE_BLEND=0\|1` |
 | `-DXSDK_FPS_DEFAULT=<0/1>` | the counter's default when `settings.ini` has no `fps` line (default `XHW_TEST_BUILD`) |
+| `-DXSDK_CARD_ASYNC=0` | card saves on the game thread, each `CARDWrite` a whole `.gci` rewrite (up to v4.1: the hitch as the main menu opens) instead of the writer thread (`card.c`, `platform.md` CARD) |
 | `-DXSDK_SETTINGS_RESET` | test builds: delete `settings.ini` at boot, then copy `D:\settings.ini` over it if staged (`MX_STAGE_EXTRA`) |
 | `-DXSDK_ARAM_VERIFY=1` | compare every ARAM copy left on the disc (`ar.c`) with the image; `[AR] verify:` |
 | `-DXSDK_MEM1_VA`, `-DXSDK_MEM1_SIZE`, `-DXSDK_ARAM_VA` | MEM1 and ARAM placement (0x10000000, 24 MB; 0x12000000): layout constants, not test knobs |
@@ -432,7 +443,7 @@ script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
 | `-DXGX_TEX_POOL_KB=<n>` | texture pool size (default 8192 at 480, 6144 at 720p) |
 | `-DXGX_STATS_EVERY=<n>` | `[NV2A]`/`[TEX]` stats period in frames (default 600) |
 | `-DXGX_NO_INDIRECT=1` | GX indirect stages draw direct (no BUMPENVMAP; up to v40) |
-| `-DXGX_DEBUG_TRACE` | log every draw of the frame a `SHOT` or BACK captures as `[DRAW]` lines (~400 KB, in `trace.log`); on a BACK frame each EFB copy's source is also a `shotNN.bmp` (up to 8), with autopad also `[FBDUMP]`. `env XGX_SKIP=a-b` leaves those draws out of the traced frame |
+| `-DXGX_DEBUG_TRACE` | log every draw of the frame a `SHOT` or BACK captures as `[DRAW]` lines (~400 KB, in `trace.log`; each with its screen box and z24 range, and the frame's clears); on a BACK frame each EFB copy's source is also a `shotNN.bmp` (up to 8), with autopad also `[FBDUMP]`. `env XGX_SKIP=a-b` leaves those draws out of the traced frame, `env XGX_SKIPN=<n>` every draw of n vertices (draw numbers move with menu animation). In xemu an autopad `SHOT` dumps the whole frame after the one it fires in, so it is traced like BACK |
 | `-DXGX_DEBUG_VPTRACE[=<n>]` | vertex-program selects of two frames every n (default 600) as `[VPT]`; replay with `vp_policy.py boot.log` |
 | `-DXGX_DEBUG_EFBLOG` | first 200 EFB copies as `[EFB]` lines |
 | `-DXGX_DEBUG_PBCHECK` | parse every pushbuffer segment before its kick, `[PBCHECK]` on malformed headers (first 16): a bad stream vs a GPU fault in xemu |
@@ -442,6 +453,7 @@ script (test builds). Test builds are `-DXHW_TEST_BUILD=1`, implied by
 | `-DPC_AUDIO_SCALAR` | the mixer in plain C instead of SSE1 (`test_audio_mix.py` builds both) |
 | `env MX_LOCKSTEP=1` | game clock moves 1/60 s per frame: every frame is one tick ("Comparing builds by screenshot"); pacing off, `[PERF]` keeps the real clock |
 | `env MX_SIMH_VERBOSE=1` | `[SIMH]` every tick |
+| `env MX_STROBE_BLEND=0\|1` | strobe tracks per frame (0) or showing the mean of their two values (1, the default; `-DXSDK_STROBE_BLEND`) |
 | `env MX_NEXT_XBE=<path>` | 12 s after the match (or at `NEXT`) launch that XBE (`F:\Applications\<folder>\default.xbe` or a `\Device\` path), or `dashboard`; chains a console round |
 | `env MX_VIDEO=480\|480i\|720` | video mode over settings.ini's (`[VIDEO] MX_VIDEO=`); 720 still needs the dashboard to allow it |
 | `env MELEE_CLASSIC_CHAR=<CharacterKind>` | `MELEE_BOOT_SCENE=classic` plays that character instead of Mario (6 Link); `scenarios/cont` |
@@ -472,6 +484,7 @@ env MELEE_DEBUG_VS_STOCKS=3    # stock match
 env MELEE_DEBUG_VS_CHARS=4:1h,0 # CKind[:costume][h] (yellow Kirby on port 1, Falcon CPU)
 env MELEE_DEBUG_VS_ITEMS=3     # items on, hex ItemKind mask (capsules, crates)
 env MELEE_DEBUG_VS_INVISIBLE=3 # players 1 and 2 cloaked (indirect refraction)
+env MELEE_DEBUG_VS_METAL=3     # players 1 and 2 metal (Metal Melee: the metal shading, scenarios/metal, metalfd)
 env MELEE_DEBUG_KIRBY_HAT=2    # Kirby spawns with that FighterKind's copy
 env MELEE_SEED=1               # fixed random seed (also the attract demo's pick)
 env MELEE_NO_ATTRACT=1         # no attract loop

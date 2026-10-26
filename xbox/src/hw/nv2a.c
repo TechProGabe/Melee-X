@@ -94,6 +94,18 @@ static float z_store(float g) {
     return g * s_zmax;
 }
 
+/* A Z-texture draw's depth (GitHub #14): GX replaces each fragment's depth
+ * with the copied one, which the NV2A can't. The team card's tiles are
+ * drawn at one depth, 0x40000 in front of their capture's background
+ * (z24 fbffff for its ffffff; xgx_ztex_mask): about where a fighter stands
+ * (the card's Mario is at fc2...-fc4...), in front of the banner (fd...-fe...),
+ * behind what the card drew in front with depth writes (its black bars at
+ * f4699a, NOW LOADING at f45453), as on the GameCube. The tiles write no
+ * depth, so they still layer by draw order. Just in front of the background
+ * (ffffdff) was behind the banner area's depth. -1: no mask yet, the
+ * quads' own depth. */
+static float s_ztex_g = -1.0f;
+
 static uint32_t s_draw_force = XGX_DIRTY_ALL;   /* groups xgx_draw must rebuild regardless of dirty bits */
 static float s_display_aspect = 4.0f / 3.0f;
 static float s_content_aspect = 73.0f / 60.0f;
@@ -932,15 +944,18 @@ static uint32_t tex_create_rect(uint32_t w, uint32_t h, uint32_t fmt, const uint
 
 uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data) {
     int id, pw, ph, l, lw, lh, sw, sh;
-    uint32_t bytes = 0, pal_bytes = fmt == XGX_TEX_P8 ? XGX_TEX_PALETTE_BYTES : 0;
+    uint32_t bytes = 0, pal_bytes;
     uint8_t *mem, *base;
     const uint8_t* src = (const uint8_t*)data;
     uint8_t* dst;
+    int wraps = (fmt & XGX_TEX_WRAPS) != 0;
+    fmt &= ~XGX_TEX_WRAPS;
+    pal_bytes = fmt == XGX_TEX_P8 ? XGX_TEX_PALETTE_BYTES : 0;
     if (!w || !h || w > 1024 || h > 1024 || !levels) return 0;
     pw = pot((int)w);
     ph = pot((int)h);
     if (fmt == XGX_TEX_P8 && !data) return 0;
-    if ((pw != (int)w || ph != (int)h) && data &&
+    if ((pw != (int)w || ph != (int)h) && data && !wraps &&
         (fmt == XGX_TEX_ARGB8 || fmt == XGX_TEX_AY8 || fmt == XGX_TEX_A8Y8))
         return tex_create_rect(w, h, fmt, (const uint8_t*)data);
     if (pw != (int)w || ph != (int)h) {
@@ -1170,6 +1185,9 @@ void xgx_clear(const int32_t r[4], const uint8_t rgba[4], uint32_t z24, int colo
     int x0, y0, x1, y1;
     uint32_t argb = (uint32_t)rgba[3] << 24 | (uint32_t)rgba[0] << 16 | (uint32_t)rgba[1] << 8 | rgba[2];
     (void)alpha;
+#ifdef XGX_DEBUG_TRACE
+    if (s_fbdump_once) xhw_logf("[DRAW] clear %d,%d %dx%d z %06x depth %d", (int)r[0], (int)r[1], (int)r[2], (int)r[3], (unsigned)z24, depth);
+#endif
     x0 = map_x((float)r[0]);
     y0 = map_y((float)r[1]);
     x1 = map_x((float)(r[0] + r[2]));
@@ -1410,7 +1428,11 @@ static void census_report(void) {
 #ifndef XHW_FBDUMP_EVERY
 #define XHW_FBDUMP_EVERY 0   /* [FBDUMP] screenshot every N presents (xhw_fbdump.c) */
 #endif
-void xgx_fbdump_next(void) { s_fbdump_once = 1; }
+/* autopad SHOT in xemu: like BACK below, the request comes from the pad
+ * code mid-frame and the next whole frame is dumped, so a
+ * -DXGX_DEBUG_TRACE trace and XGX_SKIP cover it too */
+static volatile int s_fbdump_req;
+void xgx_fbdump_next(void) { s_fbdump_req = 1; }
 /* BACK asks for a screenshot (s_shot_req, from the pad code at any point of
  * a frame); the next frame is the one taken (s_shot_once from its start), so
  * a -DXGX_DEBUG_TRACE trace and the EFB-copy dumps cover all of it. */
@@ -1571,6 +1593,10 @@ void xgx_present(int black) {
     if (s_shot_req) {
         s_shot_req = 0;
         s_shot_once = 1;
+    }
+    if (s_fbdump_req) {
+        s_fbdump_req = 0;
+        s_fbdump_once = 1;
     }
     if (!XGX_OVERLAP) release_deferred();
     log_first_fault();
@@ -1921,6 +1947,8 @@ static void build_proj(const XgxState* st) {
             s_zg0 > 0.0f ? (s_zrow_gx[c] - s_zmax * s_zg0 * p[3][c]) / (1.0f - s_zg0) : s_zrow_gx[c];
         s_vc[VPC_PROJ + 3][c] = p[3][c];
     }
+    if (st->ztex == 2 && s_ztex_g >= 0.0f)   /* z/w = the constant: z = it times w */
+        for (c = 0; c < 4; c++) s_vc[VPC_PROJ + 2][c] = z_store(s_ztex_g) * p[3][c];
     if (st->fog_type & 7) build_fog(st);
 }
 
@@ -2000,6 +2028,28 @@ static const float* texgen_src_mtx(const XgxState* st, uint32_t id, float out[3]
     return &out[0][0];
 }
 
+/* A texgen whose matrix comes per vertex (TEXnMTXIDX in the vertex; GitHub
+ * #17): HSD's skinned env maps (metal fighters, chrome) load texture matrix
+ * k next to position matrix k, one per envelope, and pick it per vertex.
+ * With one matrix for the whole draw (TEXMTX0, the first envelope's) each
+ * bone's part of a metal fighter reflected as if it faced another way, in
+ * bands. Only for a texgen through a texture matrix in a skinned draw. */
+static VpKey s_d_vk;   /* the draw's vertex-program key (derive_vk, below) */
+#ifndef XGX_PV_TEXMTX
+#define XGX_PV_TEXMTX 1   /* 0: TEXMTX0 for the whole draw, as up to v4.1 */
+#endif
+static int unit_pv_mtx(const XgxLayout* l, uint32_t tc, const XgxTexGen* tg) {
+    return XGX_PV_TEXMTX && tc < 8 && (l->tc_mtx >> tc & 1) && l->off_mtx >= 0 && tg->mtx >= GX_TEXMTX0 && tg->mtx < GX_IDENTITY;
+}
+
+/* GX TEXMTX0..9 at VPC_TEXMTX, three rows each, indexed like the position
+ * matrices (texture matrix k for PNMTXIDX 3k) */
+static void build_texmtx(const XgxState* st) {
+    int k;
+    vc_mark(VPC_TEXMTX, XGX_NUM_TEXMTX * 3);
+    for (k = 0; k < XGX_NUM_TEXMTX && k < 10; k++) memcpy(s_vc[VPC_TEXMTX + k * 3], st->texmtx[k], 48);
+}
+
 /* rows for unit u: texgen tg; the post matrix is folded in unless the
  * texgen normalizes first */
 static int s_d_unit_map[4];   /* (defined with the other derived state below) */
@@ -2009,7 +2059,7 @@ static float s_d_unit_off[4][2];
 
 static void build_texgen(const XgxState* st, int u, const XgxTexGen* tg) {
     float m[3][4], pt[3][4], out[3][4];
-    int r, c;
+    int r, c, pv = s_d_vk.tex[u].pv_mtx;
     texgen_src_mtx(st, tg->mtx, m);
     if (tg->type == GX_TG_MTX2x4) {
         m[2][0] = m[2][1] = m[2][2] = 0;
@@ -2039,6 +2089,11 @@ static void build_texgen(const XgxState* st, int u, const XgxTexGen* tg) {
             pt[0][c] += s_d_unit_off[u][0] * pt[2][c];
             pt[1][c] += s_d_unit_off[u][1] * pt[2][c];
         }
+    }
+    if (pv) {   /* the matrix per vertex: VPC_TEXMTX (build_texmtx, once for the draw), then the post matrix */
+        vc_mark(VPC_POSTMTX + u * 3, 3);
+        for (r = 0; r < 3; r++) memcpy(s_vc[VPC_POSTMTX + u * 3 + r], pt[r], 16);
+        return;
     }
     if (tg->normalize) {
         memcpy(out, m, 48);
@@ -2642,8 +2697,8 @@ static uint32_t rgb565_to_888(uint16_t v) {
 
 /* autopad "env XGX_SKIP=<first>-<last>": the traced frame leaves those
  * draws out, so a shot shows which pixels they make */
-static int trace_skip(uint32_t draw) {
-    static int lo = -2, hi = -1;
+static int trace_skip(uint32_t draw, uint32_t count) {
+    static int lo = -2, hi = -1, n = -1;
     if (lo == -2) {
         const char* e = getenv("XGX_SKIP");
         lo = hi = -1;
@@ -2651,8 +2706,10 @@ static int trace_skip(uint32_t draw) {
             lo = atoi(e);
             hi = strchr(e, '-') ? atoi(strchr(e, '-') + 1) : lo;
         }
+        e = getenv("XGX_SKIPN");   /* or every draw of that many vertices: draw numbers move with animation */
+        if (e) n = atoi(e);
     }
-    return (int)draw >= lo && (int)draw <= hi;
+    return ((int)draw >= lo && (int)draw <= hi) || (int)count == n;
 }
 
 /* -DXGX_DEBUG_TRACE: log every draw of the frame an autopad SHOT dumps */
@@ -2662,9 +2719,9 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
              s_draws, prim, count, st->ntev, st->nind, st->ntexgen, approx, st->blend_type, st->blend_src,
              st->blend_dst, st->alpha_comp0, st->alpha_ref0, st->alpha_op, st->alpha_comp1, st->alpha_ref1,
              st->z_enable, st->z_func, st->z_update);
-    if (l->off_pos >= 0 && !st->proj_ortho) {
-        /* screen box (EFB pixels) of the draw's vertices, to find a draw in a shot */
-        float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+    if (l->off_pos >= 0) {
+        /* screen box (EFB pixels) and depth range (z24) of the draw's vertices, to find a draw in a shot */
+        float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f, z0 = 1e9f, z1 = -1e9f;
         uint32_t v;
         for (v = 0; v < count; v++) {
             const uint8_t* vx = s_draw_base + v * l->stride;
@@ -2683,8 +2740,13 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
             if (c[0] > x1) x1 = c[0];
             if (c[1] < y0) y0 = c[1];
             if (c[1] > y1) y1 = c[1];
+            c[2] = ((st->viewport[5] - st->viewport[4]) * c[2] / c[3] + st->viewport[5]) * 16777215.0f;
+            if (c[2] < z0) z0 = c[2];
+            if (c[2] > z1) z1 = c[2];
         }
-        if (x0 <= x1) xhw_logf("[DRAW]  screen %d,%d - %d,%d", (int)x0, (int)y0, (int)x1, (int)y1);
+        if (x0 <= x1)
+            xhw_logf("[DRAW]  screen %d,%d - %d,%d z %06x-%06x", (int)x0, (int)y0, (int)x1, (int)y1,
+                     (unsigned)(int)z0, (unsigned)(int)z1);
         xhw_logf("[DRAW]  scissor %d,%d %dx%d viewport %d,%d %dx%d", (int)st->scissor[0], (int)st->scissor[1],
                  (int)st->scissor[2], (int)st->scissor[3], (int)st->viewport[0], (int)st->viewport[1],
                  (int)st->viewport[2], (int)st->viewport[3]);
@@ -2761,7 +2823,6 @@ static void trace_draw(uint32_t prim, uint32_t count, const XgxState* st, int ap
 static RcCfg s_d_rc;
 static const RcProg* s_d_rp;
 static int s_d_unit_map[4], s_d_unit_tc[4], s_d_nunits, s_d_unit_miss, s_d_tg_posmtx;
-static VpKey s_d_vk;
 static uint32_t s_d_spec_lights, s_d_layout = 0xFFFFFFFFu;
 static uint32_t s_d_maps;   /* derive_units: the maps that held a texture, bit per map */
 
@@ -3096,6 +3157,7 @@ static void derive_vk(const XgxState* st, const XgxLayout* layout) {
         vk->tex[i].proj = tg->type == GX_TG_MTX3x4;
         if (vk->tex[i].proj && s_d_unit_kind[i] == UNIT_BUMP) vk->tex[i].proj = VP_PROJ_DIVIDE;
         vk->tex[i].normalize = (uint8_t)(tg->normalize != 0);
+        vk->tex[i].pv_mtx = (uint8_t)unit_pv_mtx(layout, (uint32_t)s_d_unit_tc[i], tg);
         if (tg->mtx < GX_TEXMTX0) s_d_tg_posmtx = 1;
     }
     /* attenuation rows (build_lights) that make a spot light's factor 1:
@@ -3172,7 +3234,8 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     census_count(d, count);
 #endif
     s_draw_force = 0;
-    lay = (layout->off_nrm >= 0) | (layout->off_col[0] >= 0) << 1 | (layout->off_col[1] >= 0) << 2;
+    lay = (layout->off_nrm >= 0) | (layout->off_col[0] >= 0) << 1 | (layout->off_col[1] >= 0) << 2 |
+          (layout->off_mtx >= 0 ? (layout->tc_mtx & 0xFFu) << 3 : 0);
     /* Its inputs, without indirect stages: the TEV stages, swap tables and
      * Z texture (XGX_DIRTY_TEV), the texgens a bump pair uses (TEXGEN) and
      * which maps hold a texture. A draw that only rebinds textures (MAPS
@@ -3183,6 +3246,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         derive_units(st);
     if ((d & DIRTY_VK) || lay != s_d_layout) {
         VpKey old = s_d_vk;
+        if (lay >> 3 != s_d_layout >> 3) d |= XGX_DIRTY_TEXGEN;   /* per-vertex texture matrices on or off */
         derive_vk(st, layout);
         s_d_layout = lay;
         if (memcmp(&old, &s_d_vk, sizeof old) != 0) vp_select(&s_d_vk);
@@ -3198,9 +3262,14 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
 #ifdef XGX_DEBUG_TRACE
     if (s_fbdump_once || s_shot_once) trace_draw(prim, count, st, s_d_rp->approximated, layout);   /* autopad SHOT or BACK */
 #endif
-    if ((d & DIRTY_TG) || (s_d_tg_posmtx && (d & XGX_DIRTY_POSMTX)))
-        for (i = 0; i < s_d_nunits; i++)
+    if ((d & DIRTY_TG) || (s_d_tg_posmtx && (d & XGX_DIRTY_POSMTX))) {
+        int pv = 0;
+        for (i = 0; i < s_d_nunits; i++) {
             build_texgen(st, i, unit_texgen(st, (uint32_t)s_d_unit_tc[i]));
+            pv |= s_d_vk.tex[i].pv_mtx;
+        }
+        if (pv) build_texmtx(st);
+    }
 
     /* constants */
     if (d & (XGX_DIRTY_PROJ | XGX_DIRTY_VIEWPORT)) build_proj(st);
@@ -3241,7 +3310,8 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
     }
     emit_vertex_arrays(layout, st);
 #ifdef XGX_DEBUG_TRACE
-    if ((s_fbdump_once || s_shot_once) && trace_skip(s_draws)) count = 0;
+    int skipped = (s_fbdump_once || s_shot_once) && trace_skip(s_draws, count);
+    if (skipped) count = 0;
     if (count)
 #endif
     put1(NV097_SET_BEGIN_END, nv_prim(prim));
@@ -3258,7 +3328,7 @@ void xgx_draw(uint32_t prim, uint32_t count, const XgxLayout* layout, XgxState* 
         count -= batch;
     }
 #ifdef XGX_DEBUG_TRACE
-    if (!(s_fbdump_once || s_shot_once) || !trace_skip(s_draws))
+    if (!skipped)
 #endif
     put1(NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
     if (P - s_pb_mark >= PB_KICK) pb_close();
@@ -3644,6 +3714,15 @@ int xgx_ztex_mask(const int32_t src[4], uint32_t z24, int clears) {
     static const VpKey k_mask = { .copy = 1 };
     int x0, y0, x1, y1, i;
     float z, *v;
+    {   /* the tiles' depth (s_ztex_g), from this copy's background even
+         * when no mask is made below; a change rebuilds the projections */
+        uint32_t zb = z24 & 0xFFFFFFu;
+        float g = (float)(zb > 0x40000u ? zb - 0x40000u : 0u) / 16777215.0f;
+        if (g != s_ztex_g) {
+            s_ztex_g = g;
+            s_draw_force |= XGX_DIRTY_PROJ;
+        }
+    }
     if (s_bpp != 32 && !clears) return XGX_COPY_COLOR;
     x0 = map_x((float)src[0]);
     y0 = map_y((float)src[1]);

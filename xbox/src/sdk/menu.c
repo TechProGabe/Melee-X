@@ -31,14 +31,15 @@
 #include "xsdk_settings.h"
 
 enum {
-    ROW_VIDEO, ROW_WIDE, ROW_FPS, ROW_SHOTS, ROW_LED, ROW_RUMBLE, ROW_PORT, ROW_STICK, ROW_CSTICK, ROW_TRIGGER,
-    ROW_RESTART, ROW_CLOSE, N_ROWS
+    ROW_VIDEO, ROW_WIDE, ROW_FPS, ROW_SHOTS, ROW_LED, ROW_RUMBLE, ROW_CSTICK1P, ROW_PORT, ROW_STICK, ROW_CSTICK,
+    ROW_TRIGGER, ROW_TRIGZ, ROW_RESTART, ROW_CLOSE, N_ROWS
 };
 static const char* const k_label[N_ROWS] = {
     "Video output", "Widescreen (16:9)", "Frame-rate counter", "BACK screenshots", "Front LED effects",
-    "Rumble", "Controller", "  Stick dead zone", "  C-stick dead zone", "  Trigger click",
-    "Save and restart", "Save and close",
+    "Rumble", "C-stick in 1P modes", "Controller", "  Stick dead zone", "  C-stick dead zone", "  Trigger click",
+    "  Trigger as Z", "Save and restart", "Save and close",
 };
+static const char* const k_trigz[3] = { "Off", "Left", "Right" };
 
 #define DIRS (XHW_BTN_UP | XHW_BTN_DOWN | XHW_BTN_LEFT | XHW_BTN_RIGHT)
 #define STICK_DIR 16000      /* left stick as a d-pad: about half tilt */
@@ -122,6 +123,8 @@ static void row_text(int r, char* out, size_t cap) {
         case ROW_STICK: snprintf(v, sizeof v, "%d%%", pct(ps->stick_deadzone)); break;
         case ROW_CSTICK: snprintf(v, sizeof v, "%d%%", pct(ps->cstick_deadzone)); break;
         case ROW_TRIGGER: snprintf(v, sizeof v, "%d", ps->trigger_click); break;
+        case ROW_CSTICK1P: snprintf(v, sizeof v, "%s", g->cstick_1p ? "Attacks" : "Camera"); break;
+        case ROW_TRIGZ: snprintf(v, sizeof v, "%s", k_trigz[ps->trigger_z % 3]); break;
     }
     if (!v[0]) snprintf(out, cap, "%s %s", sel ? ">" : " ", k_label[r]);
     else if (sel) snprintf(out, cap, "> %-20s < %s >%s", k_label[r], v, boot_only ? " *" : "");
@@ -149,7 +152,7 @@ static void info_text(char* out, size_t cap) {
         case ROW_SHOTS: snprintf(out, cap, "BACK saves shotNN.bmp next to settings.ini"); break;
         case ROW_RUMBLE: snprintf(out, cap, "Controller motor strength"); break;
         case ROW_LED: snprintf(out, cap, "Not with an LED modchip (Kronos...)"); break;
-        case ROW_PORT: snprintf(out, cap, "The three settings below are per port"); break;
+        case ROW_PORT: snprintf(out, cap, "The four settings below are per port"); break;
         case ROW_STICK:
         case ROW_CSTICK:
             if (!p) {
@@ -163,6 +166,13 @@ static void info_text(char* out, size_t cap) {
         case ROW_TRIGGER:
             if (!p) snprintf(out, cap, "No controller in port %d", s_port + 1);
             else snprintf(out, cap, "L/R click from %d of 255 (now %d, %d)", ps->trigger_click, p->lt, p->rt);
+            break;
+        case ROW_CSTICK1P:
+            snprintf(out, cap, g->cstick_1p ? "Smash attacks in training, Classic..." : "Moves the camera, as on the GameCube");
+            break;
+        case ROW_TRIGZ:
+            if (ps->trigger_z) snprintf(out, cap, "%s trigger grabs (Z), no longer shields", k_trigz[ps->trigger_z % 3]);
+            else snprintf(out, cap, "Both triggers are L/R; White/Black are Z");
             break;
         case ROW_RESTART: snprintf(out, cap, "Writes settings.ini, restarts Melee-X"); break;
         default: snprintf(out, cap, "Writes settings.ini (B does too)"); break;
@@ -186,12 +196,12 @@ static void draw_menu(void) {
              vm->height >= 720 ? "720p" : vm->progressive ? "480p" : "480i",
              vm->height >= 720 || (vm->widescreen && g_xsdk_settings_boot.widescreen) ? "16:9" : "4:3");
     add_row(line, 0xFFFFFF);
-    add_row("", 0);
     for (r = 0; r < N_ROWS; r++) {
         row_text(r, line, sizeof line);
         add_row(line, r == s_sel ? 0xFFE070 : r >= ROW_RESTART ? 0xB0C0E0 : 0xE0E4F0);
     }
-    /* no blank line before the hint: 17 rows; 18 is the most that fit at 720p */
+    /* no blank lines (v4.2: none under the title either, for the C-stick
+     * and trigger rows): 18 rows, the most that fit at 720p */
     info_text(line, sizeof line);
     add_row(line, 0xA0B4D8);
     if (s_msg_frames > 0) {
@@ -309,6 +319,8 @@ static void change(int dir, int wrap) {
         case ROW_STICK: ps->stick_deadzone = step(pct(ps->stick_deadzone), dir, 5, 0, 60, wrap) / 100.0f; break;
         case ROW_CSTICK: ps->cstick_deadzone = step(pct(ps->cstick_deadzone), dir, 5, 0, 60, wrap) / 100.0f; break;
         case ROW_TRIGGER: ps->trigger_click = (uint8_t)step(ps->trigger_click, dir, 5, 5, 255, wrap); break;
+        case ROW_CSTICK1P: g->cstick_1p = !g->cstick_1p; break;
+        case ROW_TRIGZ: ps->trigger_z = (uint8_t)step(ps->trigger_z, dir, 1, 0, 2, 1); break;
         default: return;
     }
     row_text(s_sel, line, sizeof line);

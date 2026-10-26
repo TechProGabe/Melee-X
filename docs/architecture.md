@@ -116,5 +116,8 @@ mapped to GameCube pads (`PADStatus`):
 | Start | Start |
 | D-pad | D-pad |
 
-Remappable per port in `settings.ini`. Rumble maps to the pad's motors.
+Remappable per port in `settings.ini`; per port a trigger can be Z
+instead of L/R (`trigger_z`), and `cstick_1p` gives the C-stick to the
+fighter in 1P modes too (both in the settings menu since v4.2). Rumble
+maps to the pad's motors.
 Details: `docs/platform.md` (PAD, `settings.ini`).

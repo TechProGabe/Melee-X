@@ -1,0 +1,20 @@
+# Brinstar, four CPUs, lockstep, consecutive ticks: the lamp pieces at the
+# top left (y ~100) whose materials flip black/white every frame. With the
+# strobe blend (fobj.c, the default) they are a steady grey in every shot;
+# env MX_STROBE_BLEND=0 shows the per-frame black/white.
+# The lamps' glow sprites flash once a second (a branch track shows them for
+# five frames of 60, a scale track swells them from a dot at 600 to a blob
+# at 602): the game's own beacon, not a strobe. At 630 they are hidden, 660
+# is the next flash.
+env MELEE_BOOT_SCENE=vs
+env MELEE_DEBUG_VS=cpu4
+env MELEE_DEBUG_VS_STAGE=6
+env MELEE_DEBUG_VS_TIME=60
+env MELEE_SEED=1
+env MX_LOCKSTEP=1
+600 TSHOT
+601 TSHOT
+602 TSHOT
+603 TSHOT
+630 TSHOT
+660 TSHOT

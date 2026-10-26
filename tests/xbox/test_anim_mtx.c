@@ -458,6 +458,119 @@ static void test_streams(u32 runs)
            (unsigned long long) steps, (unsigned long long) updates);
 }
 
+/* ---- strobe tracks (fobj.c FObjStrobeScan, FObjStrobe) */
+
+/* n keys, each "value wait" with U8 values in 1.7 fixed point (Brinstar's
+ * background material: 0, 1, 0, 1, ... one frame each, the last key's wait
+ * 0). last_wait: the last key's wait, -1 for none */
+static u32 strobe_stream(u8* buf, u8 op, const u8* vals, u32 nvals, u32 n, u32 wait, int last_wait)
+{
+    u32 len = 0, i;
+    buf[len++] = (u8) (op | 0x80 | (((n - 1) & 7) << 4));
+    put_varint(buf, &len, (n - 1) >> 3);
+    for (i = 0; i < n; i++) {
+        buf[len++] = vals[i % nvals];
+        if (i + 1 < n) {
+            put_varint(buf, &len, wait);
+        } else if (last_wait >= 0) {
+            put_varint(buf, &len, (u32) last_wait);
+        }
+    }
+    return len;
+}
+
+static void strobe_fobj(HSD_FObj* f, u8* buf, u32 len, u8 frac)
+{
+    memset(f, 0, sizeof(*f));
+    f->ad_head = buf;
+    f->length = len;
+    f->frac_value = frac;
+    f->obj_type = 4;
+    FObjStrobeScan(f);
+}
+
+static void test_strobe(void)
+{
+    static u8 buf[1024];
+    static const u8 v01[] = { 0x00, 0x80 }, v012[] = { 0x00, 0x40, 0x80 }, vcc[] = { 0x00, 0x66 };
+    HSD_FObj f, g;
+    u32 len, frame, i, checked = 0;
+
+    /* flagged: the Brinstar track as on the disc (c2 16 00 01 80 01 ...,
+     * the last key's wait 0); the same with wait 1; alpha 0 / 0.8 with no
+     * wait after the last key */
+    len = strobe_stream(buf, HSD_A_OP_LIN, v01, 2, 181, 1, 0);
+    if (len != 364 || buf[0] != 0xc2 || buf[1] != 0x16 || buf[363] != 0) fail("strobe: Brinstar stream", 7, len, buf[1]);
+    strobe_fobj(&f, buf, len, HSD_A_FRAC_U8 | 7);
+    if (!f.strobe || f.strobe_a != 0.0f || f.strobe_b != 1.0f) {
+        fail("strobe: Brinstar track not flagged", 0, f.strobe, u_of(f.strobe_b));
+    }
+    len = strobe_stream(buf, HSD_A_OP_LIN, v01, 2, 181, 1, 1);
+    strobe_fobj(&f, buf, len, HSD_A_FRAC_U8 | 7);
+    if (!f.strobe) fail("strobe: 0/1 track (last wait 1) not flagged", 8, f.strobe, 0);
+    len = strobe_stream(buf, HSD_A_OP_CON, vcc, 2, 8, 1, -1);
+    strobe_fobj(&f, buf, len, HSD_A_FRAC_U8 | 7);
+    if (!f.strobe || f.strobe_b != (f32) 0x66 / 128.0f) {
+        fail("strobe: CON track not flagged", 1, f.strobe, u_of(f.strobe_b));
+    }
+    /* not flagged: keys two frames long, three values, too short, a spline, one value */
+    len = strobe_stream(buf, HSD_A_OP_LIN, v01, 2, 40, 2, 1);
+    strobe_fobj(&f, buf, len, HSD_A_FRAC_U8 | 7);
+    if (f.strobe) fail("strobe: 2-frame keys flagged", 2, 1, 0);
+    len = strobe_stream(buf, HSD_A_OP_LIN, v012, 3, 40, 1, 1);
+    strobe_fobj(&f, buf, len, HSD_A_FRAC_U8 | 7);
+    if (f.strobe) fail("strobe: three values flagged", 3, 1, 0);
+    len = strobe_stream(buf, HSD_A_OP_LIN, v01, 2, 3, 1, 1);
+    strobe_fobj(&f, buf, len, HSD_A_FRAC_U8 | 7);
+    if (f.strobe) fail("strobe: three keys flagged", 4, 1, 0);
+    len = strobe_stream(buf, HSD_A_OP_SPL0, v01, 2, 40, 1, 1);
+    strobe_fobj(&f, buf, len, HSD_A_FRAC_U8 | 7);
+    if (f.strobe) fail("strobe: spline flagged", 5, 1, 0);
+    len = strobe_stream(buf, HSD_A_OP_LIN, v01, 1, 40, 1, 1);
+    strobe_fobj(&f, buf, len, HSD_A_FRAC_U8 | 7);
+    if (f.strobe) fail("strobe: constant flagged", 6, 1, 0);
+
+    /* interpreted. Off: the reference's values bit for bit, a loop's rewind
+     * every 37 frames included. A material track: the mean of its two values
+     * every update; a texture's image index: the first held; a texture's
+     * colour track (another type): the mean */
+    len = strobe_stream(buf, HSD_A_OP_LIN, v01, 2, 181, 1, 0);
+    for (i = 0; i < 4; i++) {
+        static const u32 kind[4] = { 0, HSD_FOBJ_STROBE_MOBJ, HSD_FOBJ_STROBE_TOBJ, HSD_FOBJ_STROBE_TOBJ };
+        static const u8 type[4] = { 4, 4, 1, 4 };   /* 1: HSD_A_T_TIMG */
+        const f32 want = i == 2 ? 0.0f : 0.5f;
+        strobe_fobj(&f, buf, len, HSD_A_FRAC_U8 | 7);
+        f.obj_type = type[i];
+        g = f;
+        HSD_FObjReqAnimAll(&f, 0.0f);
+        ref_HSD_FObjReqAnimAll(&g, 0.0f);
+        for (frame = 1; frame <= 150; frame++) {
+            u32 k;
+            log_new.n = log_ref.n = 0;
+            HSD_FObjStrobeKind = kind[i];
+            if (frame % 37 == 0) {
+                HSD_FObjStopAnimAll(&f, NULL, update_new, 1.0f);
+                HSD_FObjReqAnimAll(&f, 0.0f);
+                ref_HSD_FObjStopAnimAll(&g, NULL, update_ref, 1.0f);
+                ref_HSD_FObjReqAnimAll(&g, 0.0f);
+            }
+            HSD_FObjInterpretAnimAll(&f, NULL, update_new, 1.0f);
+            HSD_FObjStrobeKind = 0;
+            ref_HSD_FObjInterpretAnimAll(&g, NULL, update_ref, 1.0f);
+            if (i == 0) {
+                if (!logs_same()) fail("strobe: off differs from the reference", frame, log_new.n, log_ref.n);
+                checked += log_new.n;
+                continue;
+            }
+            if (log_new.n != log_ref.n) fail("strobe: update count differs from the reference", frame, log_new.n, log_ref.n);
+            for (k = 0; k < log_new.n; k++, checked++) {
+                if (log_new.val[k] != u_of(want)) fail("strobe: not the blended value", (i << 16) | frame, log_new.val[k], u_of(want));
+            }
+        }
+    }
+    printf("strobe tracks: flagging and %u updates checked\n", checked);
+}
+
 /* ---- matrices */
 
 static void fail_mtx(const char* what, u64 i, Mtx a, Mtx b)
@@ -560,6 +673,7 @@ int main(int argc, char** argv)
     test_parse_float();
     test_hermite();
     test_streams(20000);
+    test_strobe();
     test_mtx(2000000);
     if (failures) {
         printf("FAILED: %d mismatches\n", failures);

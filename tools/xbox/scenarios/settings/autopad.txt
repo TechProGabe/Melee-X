@@ -7,9 +7,9 @@
 # Presses are held 12 retraces, 30 apart: the title with the menu up runs
 # at ~12 fps in xemu (5 retraces a frame), and a 6-retrace press or a gap
 # under one frame gets lost or merged there.
-# Rows (v53, no 128 MB row): Video output, Widescreen, Frame-rate counter,
-# BACK screenshots, Front LED effects, Rumble, Controller, Stick dead zone,
-# C-stick dead zone, Trigger click, Save and restart, Save and close.
+# Rows (v4.2): Video output, Widescreen, Frame-rate counter, BACK screenshots,
+# Front LED effects, Rumble, C-stick in 1P modes, Controller, Stick dead zone,
+# C-stick dead zone, Trigger click, Trigger as Z, Save and restart, Save and close.
 env MELEE_BOOT_SCENE=title
 env MELEE_NO_ATTRACT=1
 400 SHOT            # title with the hint line
@@ -25,15 +25,21 @@ env MELEE_NO_ATTRACT=1
 720 A for 12        # on -> off (LED handed back to the SMC)
 750 DOWN for 12     # Rumble
 780 LEFT for 12     # 100% -> 75%
-810 DOWN for 12     # Controller
-840 DOWN for 12     # Stick dead zone (port 1)
-870 RIGHT for 12    # 20% -> 25%
-900 SHOT            # changed rows, restart mark, no counter
-930 B for 12        # save and close
-980 SHOT            # hint line: saved, restart to apply
-1010 BACK for 12    # open again: the values stayed
-1060 SHOT
-1090 UP for 12      # Save and close
-1120 UP for 12      # Save and restart
-1150 SHOT
-1180 A for 12       # restart
+810 DOWN for 12     # C-stick in 1P modes
+840 A for 12        # Camera -> Attacks
+870 DOWN for 12     # Controller
+900 DOWN for 12     # Stick dead zone (port 1)
+930 RIGHT for 12    # 20% -> 25%
+960 DOWN for 12     # C-stick dead zone
+990 DOWN for 12     # Trigger click
+1020 DOWN for 12    # Trigger as Z
+1050 RIGHT for 12   # Off -> Left
+1080 SHOT           # changed rows, restart mark, no counter
+1110 B for 12        # save and close
+1160 SHOT            # hint line: saved, restart to apply
+1190 BACK for 12    # open again: the values stayed
+1240 SHOT
+1270 UP for 12      # Save and close
+1300 UP for 12      # Save and restart
+1330 SHOT
+1360 A for 12       # restart

@@ -7,6 +7,8 @@
  *   Start -> Start          D-pad -> D-pad
  *   left stick -> control stick         right stick -> C-stick
  *   L/R triggers -> analog L/R, digital L/R click near the end of travel
+ *   (settings.ini trigger_z = left/right: that trigger is Z instead, GitHub
+ *   #12: grabbing with White/Black was awkward)
  *
  * Sticks: a radial dead zone (worn Duke/S sticks rest well off centre;
  * OpenCrossing-Xbox measured 18-35%), then scaled so full tilt reaches the
@@ -110,6 +112,13 @@ u32 PADRead(PADStatus* status) {
         s->button = map_buttons(p.buttons, ps);
         stick(p.lx, p.ly, ps->stick_deadzone, &s->stickX, &s->stickY);
         stick(p.rx, p.ry, ps->cstick_deadzone, &s->substickX, &s->substickY);
+        if (ps->trigger_z == XSDK_TRIGGER_Z_LEFT) {   /* a Z button: no analog L, no L click */
+            if (p.lt >= ps->trigger_click) s->button |= PAD_TRIGGER_Z;
+            p.lt = 0;
+        } else if (ps->trigger_z == XSDK_TRIGGER_Z_RIGHT) {
+            if (p.rt >= ps->trigger_click) s->button |= PAD_TRIGGER_Z;
+            p.rt = 0;
+        }
         s->triggerLeft = p.lt;
         s->triggerRight = p.rt;
         if (p.lt >= ps->trigger_click) s->button |= PAD_TRIGGER_L;

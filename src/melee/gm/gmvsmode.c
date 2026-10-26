@@ -250,6 +250,15 @@ void onEnterDebugVs(GameModeState* state)
             start->players[i].vs_invisible = (mask >> i) & 1;
         }
     }
+    /* PORT: MELEE_DEBUG_VS_METAL=<hex mask of players>: those fighters
+     * metal for the whole match, as Special Melee's Metal Melee does (the
+     * metal shading, GitHub #17). */
+    if (getenv("MELEE_DEBUG_VS_METAL") != NULL) {
+        unsigned long mask = strtoul(getenv("MELEE_DEBUG_VS_METAL"), NULL, 16);
+        for (i = 0; i < 4; i++) {
+            start->players[i].vs_metal = (mask >> i) & 1;
+        }
+    }
     /* PORT: MELEE_DEBUG_VS_TIME=<seconds>: a timed match, so a run reaches
      * the TIME! ending (docs/testing.md). */
     if (getenv("MELEE_DEBUG_VS_TIME") != NULL) {
