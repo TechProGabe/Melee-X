@@ -1,7 +1,7 @@
 xbox/melee.profdata: PGO profile for XBOX_PGO=xbox/melee.profdata builds (docs/pgo.md)
-trained on: 91cf383 + local changes (2026-10-04)
+trained on: 9810216 + local changes (2026-10-23)
 scenarios: gl fodperf fd2 ps corn (xemu -icount shift=1, autopad, MELEE_SEED=1)
 llvm: LLVM version 21.1.8
-Total functions: 19300
-Maximum function count: 107076736
-Total count: 6480053942
+Total functions: 19307
+Maximum function count: 107687888
+Total count: 6571056907
