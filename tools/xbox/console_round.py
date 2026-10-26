@@ -33,7 +33,8 @@ HW = Path(os.environ.get('MX_HW', Path.home() / 'xemu' / 'hw'))
 STAGE = LOGS = None   # main(): per round
 ROUND = 0
 UDATA = '/E/UDATA/4d580001'
-APPS = '/F/Applications'
+DRIVE = os.environ.get('MX_ROUND_DRIVE', 'F')   # E on a console without F: (gold: the game on E:)
+APPS = f'/{DRIVE}/Applications'
 
 FOD = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=2', 'env MELEE_DEBUG_VS=cpu4',
        'env MELEE_DEBUG_VS_TIME=120', 'env MELEE_SEED=1']
@@ -65,6 +66,9 @@ PS = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=3', 'env MELEE_DEBUG_
 PSSHOT = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=3', 'env MELEE_DEBUG_VS=cpu4',
           'env MELEE_DEBUG_VS_TIME=40', 'env MELEE_SEED=1', 'env MX_LOCKSTEP=1',
           '600 TSHOT', '1200 TSHOT', '1800 TSHOT']
+# round 15: Stadium, 4 CPUs, capsules and crates (scenarios/burn's items), 150 s
+PSITEMS = ['env MELEE_BOOT_SCENE=vs', 'env MELEE_DEBUG_VS_STAGE=3', 'env MELEE_DEBUG_VS=cpu4',
+           'env MELEE_DEBUG_VS_ITEMS=3', 'env MELEE_DEBUG_VS_TIME=150', 'env MELEE_SEED=1']
 # folder, build, scenario, switches: in the order they run. Rounds 2 and 3
 # end on dev's baseline in Melee-X itself, which can't chain: it stays on
 # its results. A round whose last folder is its own ends at the dashboard
@@ -265,6 +269,22 @@ CHAINS[14] = [
     ('Melee-X-r14d', 'final', 'stall12', dict(R14, MX_COPY_FIX='39')),
     ('Melee-X-r14e', 'final', 'stall12', dict(R14, MX_COPY_FIX='103')),
 ]
+# round 15 (v4.2 RC): v66's overnight 720p Stadium ran 31 fps against v63's
+# 40 with twice the GPU wait, in a match set up by hand. The same seeded
+# match at 720p: v63's code ('old', HEAD 9810216 with its profile), v66's
+# ('new'), v66 without the culled DObjs' matrix loads ('nochrome', dobj.c
+# DObjCulledMtx), and v66 with strobe tracks per frame (MX_STROBE_BLEND 0).
+R15 = {'MX_VIDEO': '720'}
+CHAINS[15] = [
+    ('Melee-X-r15a', 'new', 'psitems', dict(R15)),   # warm-up
+    ('Melee-X-r15b', 'old', 'psitems', dict(R15)),
+    ('Melee-X-r15c', 'new', 'psitems', dict(R15)),
+    ('Melee-X-r15d', 'nochrome', 'psitems', dict(R15)),
+    ('Melee-X-r15e', 'new', 'psitems', dict(R15, MX_STROBE_BLEND='0')),
+    ('Melee-X-r15f', 'old', 'psitems', dict(R15)),
+    ('Melee-X-r15g', 'new', 'psitems', dict(R15)),
+    ('Melee-X-r15h', 'nochrome', 'psitems', dict(R15)),
+]
 CHAIN = []   # main(): CHAINS[N]
 
 
@@ -273,10 +293,10 @@ def script(i):
     lines = [f'# docs/fps-plan.md round {ROUND}, run {i + 1} of {len(CHAIN)}: {build}, {scen}, '
              + (' '.join(f'{k}={v}' for k, v in sw.items()) or 'no switches')]
     lines += {'fod': FOD, 'fodlong': FODLONG, 'fd': FD, 'fodshot': FODSHOT, 'menu': MENU,
-              'stall': STALL, 'stall8': STALL8, 'stall12': STALL12, 'ps': PS, 'psshot': PSSHOT}[scen]
+              'stall': STALL, 'stall8': STALL8, 'stall12': STALL12, 'ps': PS, 'psshot': PSSHOT, 'psitems': PSITEMS}[scen]
     lines += [f'env {k}={v}' for k, v in sw.items()]
     if i + 1 < len(CHAIN):
-        lines.append(f'env MX_NEXT_XBE=F:\\Applications\\{CHAIN[i + 1][0]}\\default.xbe')
+        lines.append(f'env MX_NEXT_XBE={DRIVE}:\\Applications\\{CHAIN[i + 1][0]}\\default.xbe')
     elif folder != 'Melee-X':   # a chained build ends the round: back to the dashboard, FTP up
         lines.append('env MX_NEXT_XBE=dashboard')
     return '\n'.join(lines) + '\n'

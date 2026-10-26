@@ -82,6 +82,28 @@ void xhw_perf_audio(uint64_t ticks) {
 /* tenths, for printing without floating point (pdclib's %f is unreliable) */
 static unsigned tenths(uint64_t num, uint64_t den) { return den ? (unsigned)((num * 10 + den / 2) / den) : 0; }
 
+#if XHW_TEST_BUILD
+/* Test builds: each period's longest frame and where its time went, as a
+ * [PERFW] line. A hitch (a KO, a load) is a few frames, lost in the 5 s
+ * average. The buckets at the last frame are kept to take the difference. */
+static uint64_t s_last, s_snap[XHW_PERF_N], s_worst, s_worst_acc[XHW_PERF_N];
+static uint32_t s_snap_ticks, s_worst_ticks, s_worst_at;
+
+static void worst_frame(uint64_t now) {
+    int i;
+    charge();
+    if (s_last && now - s_last > s_worst) {
+        s_worst = now - s_last;
+        for (i = 0; i < XHW_PERF_N; i++) s_worst_acc[i] = s_acc[i] - s_snap[i];
+        s_worst_ticks = s_ticks - s_snap_ticks;
+        s_worst_at = xhw_frame_count();
+    }
+    s_last = now;
+    for (i = 0; i < XHW_PERF_N; i++) s_snap[i] = s_acc[i];
+    s_snap_ticks = s_ticks;
+}
+#endif
+
 void xhw_perf_frame(uint32_t draws, uint32_t verts) {
     static const char* const k_names[XHW_PERF_N] = { "sim", "render", "dlist", "draw", "tex", "efb", "gpu", "vsync" };
     uint64_t now = rdtsc(), ns = xhw_time_ns(), span, span_ns, audio, per_ms;
@@ -90,6 +112,9 @@ void xhw_perf_frame(uint32_t draws, uint32_t verts) {
     s_frames++;
     s_draws += draws;
     s_verts += verts;
+#if XHW_TEST_BUILD
+    worst_frame(now);
+#endif
     if (!s_t0) {
         s_t0 = now;
         s_ns0 = ns;
@@ -133,6 +158,16 @@ void xhw_perf_frame(uint32_t draws, uint32_t verts) {
         }
         snprintf(line + n, sizeof line - (size_t)n, " | fcw %04x mxcsr %08lx", fcw, (unsigned long)mxcsr);
         xhw_log(line);
+        {
+            unsigned w = tenths(s_worst, per_ms);
+            n = snprintf(line, sizeof line, "[PERFW] worst frame %u.%u ms at frame %u, %u ticks | ms", w / 10, w % 10,
+                         s_worst_at, s_worst_ticks);
+            for (i = 0; i < XHW_PERF_N; i++) {
+                unsigned t = tenths(s_worst_acc[i], per_ms);
+                n += snprintf(line + n, sizeof line - (size_t)n, " %s %u.%u", k_names[i], t / 10, t % 10);
+            }
+            xhw_log(line);
+        }
     }
 #endif
 #if XHW_PMC
@@ -140,6 +175,11 @@ void xhw_perf_frame(uint32_t draws, uint32_t verts) {
 #endif
     for (i = 0; i < XHW_PERF_N; i++) s_acc[i] = 0;
     s_frames = s_draws = s_verts = s_ticks = s_renders = 0;
+#if XHW_TEST_BUILD
+    for (i = 0; i < XHW_PERF_N; i++) s_snap[i] = 0;
+    s_snap_ticks = 0;
+    s_worst = 0;
+#endif
     s_t0 = now;
     s_ns0 = ns;
 }
