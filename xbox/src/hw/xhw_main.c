@@ -46,12 +46,16 @@ static int find_image_in(const char* dir, char* out, size_t cap) {
 /* Next to the XBE. Test builds also take the release folder's image, so a
  * console round can put build variants in folders of their own
  * (F:\Applications\Melee-X-r2a\default.xbe, ...) without a copy of the disc
- * in each (docs/fps-plan.md, round 2). */
+ * in each (docs/fps-plan.md, round 2). A console without F: (a softmod
+ * keeps the game on E:) has the release folder there. */
 static int find_disc_image(char* out, size_t cap) {
     if (find_image_in("D:", out, cap)) return 1;
     if (!XHW_TEST_BUILD) return 0;
-    if (!nxIsDriveMounted('F') && !nxMountDrive('F', "\\Device\\Harddisk0\\Partition6\\")) return 0;
-    return find_image_in("F:\\Applications\\Melee-X", out, cap);
+    if ((nxIsDriveMounted('F') || nxMountDrive('F', "\\Device\\Harddisk0\\Partition6\\")) &&
+        find_image_in("F:\\Applications\\Melee-X", out, cap))
+        return 1;
+    if (!nxIsDriveMounted('E') && !nxMountDrive('E', "\\Device\\Harddisk0\\Partition1\\")) return 0;
+    return find_image_in("E:\\Applications\\Melee-X", out, cap);
 }
 
 void xhw_error_screen(const char* title, const char* const* lines) {
