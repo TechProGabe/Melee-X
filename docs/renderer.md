@@ -89,7 +89,12 @@ The cache keeps each list's model-space box (lists without per-vertex
 matrices); `HSD_DObjDisp` skips rigid PObjs wholly outside the view
 (`gx_dl_culled`: the transformed centre's view-aligned box against five
 planes made once per projection, `gx_cull.h`; never culls more than an
-eight-corner test). A list is known after its first draw.
+eight-corner test). A list is known after its first draw. A skipped DObj
+still loads the matrices it would have (`dobj.c` `DObjCulledMtx`): HSD
+loads a joint's position, normal and TEXMTX0 matrices only at its first
+rigid PObj, so the DObjs after it depend on them. Without that, Rainbow
+Cruise's chrome reflected with another object's TEXMTX0 whenever part of
+the ship was off screen and changed colour as the camera moved.
 
 ### Fewer, bigger draws
 
@@ -622,6 +627,23 @@ lands in its rgb and its alpha samples 1: such a texture is marked
 `0x24`). Until v53 it read alpha, every tile drew whole and the 720p team
 cards showed one fighter on a black right half.
 
+## Strobe tracks (`fobj.c`)
+
+Not the renderer's doing, but it looks like a rendering fault: some stage
+materials and textures are animated to flip between two values on every
+frame (Brinstar's background pieces black/white). The GameCube draws them
+so too; its 480i on a CRT shows one value per field, a steady half-tone,
+while whole frames (progressive output, a modern TV, under 60 fps) show a
+flicker. Since v4.2 such tracks show the mean of their two values:
+`HSD_FObjLoadDesc` flags a track whose keys all last one frame and
+alternate between two values, and while a material or texture animates
+(`xsdk_strobe_blend`, `vi.c`) it shows the mean; a texture's image or
+palette number holds the first. Joints are never changed, so the
+simulation is the same (`decisions.md` "Strobe tracks"); `scenarios/strobe`
+shows one. Not every blink is a strobe: Brinstar's lamp glows are shown
+for five frames a second by a joint's branch track, swelling from a dot
+to a blob by a scale track, which the GameCube shows as well.
+
 ## Build switches
 
 Renderer switches (all switches: `testing.md`):
@@ -644,6 +666,7 @@ Renderer switches (all switches: `testing.md`):
 | `-DXGX_CHECK_VERTS` | log display lists with non-finite or huge positions |
 | `-DXGX_DEBUG_VPTRACE` | vertex-program select traces for `vp_policy.py` |
 | `-DXGX_CENSUS=1` | draw census (Probes) |
+| `-DXSDK_STROBE_BLEND=0` | strobe tracks show their per-frame values, not the mean of the two (Strobe tracks) |
 
 Known wrong in xemu: Mute City's distant skyline band renders as white
 speckle.

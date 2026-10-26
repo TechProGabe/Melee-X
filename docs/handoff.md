@@ -6,6 +6,31 @@ notes don't travel between machines, so what they held is here. Read
 
 ## Where it stands
 
+2026-10-26: **v4.2 released from v66's code** (LTO+PGO; console RC
+`C:\xemu\hw\stage-v66`). Overnight burn-in on v66: red 13.3 h at 480i
+(median 58 fps), gold 12.8 h at 720p Stadium with items (median 31 fps),
+both clean, free memory flat. Gold's 31 against v63's 40 was the match,
+not the build: console round 15 (the same seeded 720p Stadium match on
+gold) ran v63's code at 30.9 fps and v66's at 30.4, inside run-to-run
+noise; the chrome fix and the strobe blend cost nothing measurable. A/B on
+gold: v4.1 has no 720p picture on HDMI or component (pitch 6656), v66
+does (#18). Red still has round 15's folders (`console_round.py 15
+clean`).
+
+2026-10-24 (console round on v62/v63, both consoles; roadmap "v4.2" has
+the results): **v64 staged, not deployed** (`C:\xemu\hw\stage-v64`, LTO+PGO
+test build, PGO retrained; xemu boot smoke clean). Uncommitted on `dev`
+over 9810216: background card writer (`card.c`, the START hitch, fixed on
+the console in v63), Rainbow Cruise chrome (`dobj.c` `DObjCulledMtx`),
+strobe tracks blended (`fobj.c`; Brinstar's slabs; the scan now takes a
+last-key wait of 0, which v63 missed), Marth/Roy colour animation length
+(`ftcolanim.c`), `MELEE_CLASSIC_TEAM=mario`. Console checks for v64:
+Rainbow Cruise chrome steady while the camera moves, Brinstar's lamp
+slabs steady grey (the lamps' glow flashing 5 frames a second is the
+GameCube's), Marth's Dancing Blade glow, saves still kept. v63 burn-in:
+92 min red, 95 min gold, clean. Open: a rare boot freeze at the audio
+start (v63, roadmap), the flying carpet, Great Bay's hook.
+
 Updated 2026-10-23: **v4.2 work on `dev`** (pushed to origin/dev; no
 release until the user says so; the user approves any GitHub comment).
 The open GitHub issues, one commit each:
@@ -193,7 +218,9 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `clear` | Classic stage 1 won at once (`MELEE_INSTANT_WIN`): the Stage Clear screen's sepia freeze frame |
 | `rec` | title > Data > Melee Records > VS. Records (v54's crash), the grid, a cell's popup |
 | `team` | Classic stage 8's team card, `MELEE_CLASSIC_TEAM=falcon` (GitHub #14: tiles over the black bars; #15: Team C. Falcon's noise, console only) |
+| `teammario` | the same card against Team Mario (`MELEE_CLASSIC_TEAM=mario`), lockstep, a shot every 4 frames while the ten tiles appear (one every 8 frames: the game's own timing, `gm_1832.c` `fn_801857C4`) |
 | `metal`, `metalfd` | Rainbow Cruise / Final Destination, metal Zelda and Mario (`MELEE_DEBUG_VS_METAL`; metalfd in lockstep for before/after, GitHub #17) |
+| `strobe` | Brinstar, 4 CPUs, lockstep, ticks 600-603, 630, 660: the lamp pieces at the top left (y ~100) whose materials flip every frame: steady grey with the strobe blend, black/white per frame with `env MX_STROBE_BLEND=0` (renderer.md "Strobe tracks"). The lamps' glow sprites appear at 600 as dots, swell to blobs at 602 and are gone after 604: the game's own once-a-second beacon flash (a branch track shows them five frames of 60, a scale track swells them), the same at 660; at 630 they are hidden |
 | `cstick1p` | Classic stage 1 with its own settings.ini (`cstick_1p = 1`, `trigger_z = left`; build with `-DXSDK_SETTINGS_RESET`), lockstep: C-stick smash, trigger grab (GitHub #12, #13) |
 | `burn` | Pokemon Stadium, four CPUs (Link metal), capsules and crates, a 40-minute match: the v4.2 burn test (memory, faults, transformations) |
 | `special`, `info` | title > Data > Special; Data > Melee Records > Bonus Records (GitHub #9, #10: the rows' panel) |

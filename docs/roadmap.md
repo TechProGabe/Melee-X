@@ -64,6 +64,27 @@ commits and the burn test); the console round is still to come:
   restored after the mode set; console: the user's HDMI adapter, the
   `[VIDEO] scanout` line.
 - Upgraded/overclocked CPUs: `.text` checked against default.xbe at boot.
+- Console round 2026-10-24 (v62/v63): #18 confirmed on gold at 720p (its
+  kernel left pitch 6656, set back to 2560, picture clean); a tester's
+  "720p always 4:3" fixed with v62 (user, 2026-10-24; not on GitHub, no
+  log: likely the same scanout restore, unproven); #11 movie
+  ends with 0 ticks waiting; #9/#10, settings rows, team card (the tiles'
+  one-at-a-time pop-in is the GameCube's own) checked by the user. v63
+  adds the background card writer (the hitch after START on the title,
+  `platform.md` CARD; gone on the console, user 2026-10-24) and strobe
+  tracks flipping per rendered frame.
+- Open: **freeze at boot during the audio start** (v63, red, 2 of 6 boots
+  of the v63 family): boot.log ends after `[AUDIO] found: codec`, before
+  `[AUDIO] idle`; no hang.log, `[BEAT]` stops (a hard freeze). The same
+  binary booted from another folder and later from the same one; v62 and
+  a plain v63 booted; xhw_audio.c unchanged and the same size since v62;
+  the AC97/APU state found was the same as good boots'. Suspect: the
+  idle sequence (bus masters halted, APU DSPs reset, cold reset) racing
+  something the dashboard left running; same family as roadmap item 9.
+  The two freeze logs were overwritten by the next pull (read before:
+  39 and 38 lines, the last the codec line); the good boots are in
+  `C:\xemu\hw\logs63-red-ab`, `-r1`, `-r2`. Next time: pull to a fresh
+  name at once, and a `[AUDIO]` line per idle step would place it.
 - Open: #15 Team C. Falcon card noise (console only, not seen in xemu),
   #8 black screen from an SSD (no logs from the reporter).
 - Open, older: a rare **out of memory at 720p** (a player's report, older
@@ -234,7 +255,16 @@ Other open:
   needs their `boot.log`/`hang.log`/`crash.log` from
   `E:\UDATA\4d580001\` (or next to `default.xbe`).
 
-- Rainbow Cruise flicker (v48, 720p, looks like shadows): **still
+- Rainbow Cruise flicker: **found 2026-10-24 (v4.2)**: the chrome's
+  reflection matrix depended on which ship parts were off screen (the
+  port's DObj culling skipped their matrix loads; `dobj.c`
+  `DObjCulledMtx`, renderer.md "Off-screen culling"). Brinstar's pillars
+  are strobe tracks, the GameCube's own, now shown as their mean
+  (renderer.md "Strobe tracks", `-DXSDK_STROBE_BLEND=0`). Console check
+  pending (v64). Still open on Rainbow Cruise: the flying carpet popping
+  in and out (not reproduced in xemu: needs a BACK shot while it's gone)
+  and Great Bay's hut hook. Older notes:
+  (v48, 720p, looks like shadows): **still
   flickers on the console with v53's Z24S8** (user, 2026-10-04:
   "flicker/flashing"), so not (only) depth precision; known issue for the
   v54 RC, fix after. In xemu at 720p with Z16, pale slivers of a far

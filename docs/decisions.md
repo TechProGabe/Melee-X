@@ -388,6 +388,33 @@ matrix with the PNMTXIDX it already has in `a0` (HSD always pairs them),
 from 30 more constant rows (`VPC_TEXMTX`); `test_vp_opt.py` checks the
 programs. `-DXGX_PV_TEXMTX=0` for the old behaviour.
 
+**Strobe tracks (v4.2).** Some stage materials and textures are animated
+to flip between two values on every frame: Brinstar's background pieces
+black/white (a diffuse track 0, 1, 0, 1 ... over its 180-frame loop). The
+decoding and playback are the GameCube's own (checked against the decomp:
+LIN, 181 keys, U8 with 7 fraction bits, rate 1, looping), so the GameCube
+draws them alternating too; its 480i on a CRT shows one value per field,
+which reads as a steady half-tone, and 30 fps videos show one phase. On
+the Xbox (progressive output, a modern TV, or under 60 fps) whole frames
+show, and the pieces flickered (the user's reports, both consoles; v4.1
+alike). v63 flipped them once per rendered frame; that still flickered,
+and the user chose the steady look: `fobj.c` flags a track at load whose
+every key (CON, LIN or KEY) lasts one frame and whose values alternate
+between two, four keys at least, and while a material or texture animates
+(`HSD_MObjAnim`, `HSD_TObjAnim`) such a track shows the mean of its two
+values. A texture image or palette number (TIMG, TCLT) can't be averaged
+and holds the first. Joint tracks are never touched (stage collision
+follows joints; `[SIMH]` stays equal). `-DXSDK_STROBE_BLEND=0` (test
+builds also `env MX_STROBE_BLEND=0`) keeps the per-frame values. Rainbow
+Cruise's chrome was a different bug (off-screen culling, below). Brinstar
+has three such materials (diffuse 0/1 over 181 keys, 0/1 and 0.5/1 over
+121; the last key's wait is 0, which the scan accepts). The glow sprites
+on the lamps are not strobes: their parent joint's branch track shows
+them for five frames of every 60, and over those frames a scale track
+(LIN, S16) swells the billboards from 0.18 to 1.46 and back to 0.71, a
+beacon flash once a second that the GameCube shows too; the strobe
+scenario's ticks 600-603 fall on one.
+
 **Upgraded and overclocked CPUs: the code is checked at boot (v4.2).**
 Cerbios 3.x's `AdvCPUSupport` (on by default with a 1.0/1.4 GHz CPU)
 rewrites `0f 31` (rdtsc) as `cd 2e` (int 2Eh) in the title's code by
@@ -416,6 +443,19 @@ timed against a picture driven by the OS clock, so after its 14 minutes the
 sound was ~0.75 s behind. `fill_48k` now steps 43730/65536 (32028.8 Hz);
 the mixer fills by consumption, so the game mixes at that rate too. Pitch
 +0.09%, as on the hardware. `-DXHW_AUDIO_GC_RATE=0` for the old rate.
+
+**Card saves in the background (v4.2).** On the console the game hitched
+as the main menu opened after START on the title (the GameCube pauses on
+the title instead, loading the menu from the disc). Melee saves one 8 KB
+sector per `CARDWrite`, four in a row there, and each was a whole `.gci`
+written, flushed and renamed (plus a volume flush) on the game thread. The
+GameCube's card transfers were asynchronous, so the game never waited on
+them. A writer thread (`card.c`) now saves a copy of the file 100 ms after
+the last write of a burst; create, rename, delete and format wait for it,
+and every exit drains it (`xsdk_card_flush`). Trade: a failed background
+save can't return `CARD_RESULT_IOERROR` (notice and retry at the next
+write), and a power-off in the ~0.1 s window loses the newest write but
+never the previous save. `-DXSDK_CARD_ASYNC=0` restores the old path.
 
 **Writes to a full or unwritable E: (2026-10-04).** A player reported
 settings.ini never made, no BACK screenshots and widescreen doing nothing
@@ -490,6 +530,10 @@ Math and libraries:
   time in SSE, same operations per lane, bit-identical.
 
 Game fixes:
+- `src/melee/ft/ftcolanim.c`, `.h` (`ftCo_800BFFD0`): the colour
+  animation's duration is `int`, not `bool` (melee-pc ebf45b7ed, v4.2):
+  `_Bool` made every duration 1 frame (Marth's Dancing Blade, Roy's
+  Double-Edge Dance glow).
 - `src/melee/ft/ft_0D31.c` (`ftCo_DeadUpStar_Anim`): the star KO reads
   `x508`..`x51C_radians` by name, not past a local copy of `x504` (the stack).
 - `src/melee/lb/lbfile.c`, `ft/ftdata.c` (two places), `gr/grdisplay.c`:
@@ -562,6 +606,12 @@ Game fixes:
   order). Linked apart, the 120 name indices overwrote the menu's model
   descriptors after it: VS Records crashed in `HSD_JObjLoadJoint` on
   `MenMainConB1_Top.joint` = 0x38393a3b (indices 56-59; v54, console).
+- `src/sysdolphin/baselib/fobj.c` (`HSD_FObjLoadDesc`, `FObjUpdateAnim`),
+  `fobj.h`, `mobj.c` (`HSD_MObjAnim`), `tobj.c` (`HSD_TObjAnim`): strobe
+  tracks show the mean of their two values (v4.2; "Strobe tracks" under
+  Rendering). `TARGET_XBOX`; `xsdk_strobe_blend` (`xbox/src/sdk/vi.c`)
+  turns it on; `test_anim_mtx.py` checks the flagging, the mean, the held
+  image and that off changes nothing.
 
 Speed (same results, bit for bit where a test is named):
 - HSD animation and matrices (`test_anim_mtx.py`, `anim_mtx_ref.c`; a NaN
@@ -584,7 +634,13 @@ Speed (same results, bit for bit where a test is named):
 - `src/sysdolphin/baselib/dobj.c` (`HSD_DObjDisp`): a rigid DObj whose
   cached lists lie outside the view (`gx_dl_culled`, `gx_vtx.c`, rehashed
   after 16 frames) is skipped before material setup (Mute City 1391 -> ~525
-  draws in xemu).
+  draws in xemu). Its matrix loads still happen (`DObjCulledMtx`: the PObjs'
+  `setup_mtx` with the DObj's own textures current): HSD loads a joint's
+  matrices and TEXMTX0 once, at its first rigid PObj, so later reflective
+  DObjs of the joint reflect with whatever TEXMTX0 was loaded last; with
+  the skip, Rainbow Cruise's ship chrome took another object's matrix when
+  part of the ship left the view, and its colours jumped as the camera moved.
+  Culled or not, the picture is now the same.
 - `HSD_PREFETCH` (`xbox_game_prelude.h`), hints for the next nodes in
   `jobj.c`, `dobj.c`, `pobj.c`, `mobj.c`, `tobj.c`, `fobj.c`, `aobj.c` and
   `displayfunc.c`'s list walks.
@@ -644,7 +700,8 @@ Logging, test hooks and Xbox features:
 - `src/melee/gm/gmclassic.c`: melee-pc's Classic test hooks moved into
   `pc_classic_stage_override`, also called by `MELEE_BOOT_SCENE=classic`;
   `MELEE_CLASSIC_CHAR` picks that shortcut's character (Mario without it);
-  `MELEE_CLASSIC_TEAM=falcon` (v4.2) the Team C. Falcon stage 8.
+  `MELEE_CLASSIC_TEAM=falcon` (v4.2) the Team C. Falcon stage 8, `mario` Team
+  Mario's.
 - `src/melee/gm/gmvsmode.c` (`onEnterDebugVs`): `MELEE_DEBUG_VS_TIME`,
   `_CHARS`, `_ITEMS`, `_INVISIBLE`, `_METAL` (v4.2); `ftkirby.c` (`ftKb_Init_OnDeath`):
   `MELEE_DEBUG_KIRBY_HAT`. `TARGET_PC`, inert without the variables.
