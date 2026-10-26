@@ -256,6 +256,16 @@ real hardware). Under xemu (CPUID) an MCPX APU voice is used instead.
   save. On failure a create or rename is undone, the game gets
   `CARD_RESULT_IOERROR`, `[CARD] FAILED to save` is logged and a notice
   goes up.
+- **In the background** (v4.2, `XSDK_CARD_ASYNC`): `CARDWrite` and
+  `CARDSetStatus` change the file in memory and return; a writer thread
+  waits 100 ms for the rest of the burst (the game writes one 8 KB sector
+  a call) and saves a copy. `[CARD] saved ... (N blocks, M ms)` is logged
+  from there. Create, rename, delete and format wait for it first, and
+  every way out of the XBE (`xhw_main.c`: dashboard, relaunch, cold
+  reboot) calls `xsdk_card_flush`. A background save that fails puts up
+  the notice; the game already had `READY`, and its next write retries.
+  A power-off within ~0.1 s of a write loses that write (the previous
+  save stays whole).
 - **At load** (`recover_tmp`): a whole `.tmp` (header plus all its blocks)
   whose `.gci` is missing becomes the `.gci` (the old file was deleted but
   the rename failed); any other `.tmp` is an unfinished write, deleted.
