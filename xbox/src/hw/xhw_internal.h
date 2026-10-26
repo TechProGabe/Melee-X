@@ -61,6 +61,7 @@ void xhw_overlay_draw(void* fb, int w, int h, int bpp, int pitch, const struct x
 
 /* xhw_watchdog.c: hang dumper (hang.log + screen) */
 void xhw_watchdog_start(void);
+void xhw_code_repair(void);           /* boot: .text bytes a BIOS patcher changed put back (xhw_code_repair.c) */
 void xhw_prof_set_game_thread(void);   /* call on the game thread */
 void* xhw_game_thread(void);           /* its PKTHREAD, NULL before xhw_prof_set_game_thread */
 /* Where a thread that is not running was interrupted: the EIP of the

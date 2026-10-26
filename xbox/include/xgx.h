@@ -124,7 +124,8 @@ typedef struct {
     /* GXSetZTexture REPLACE/ADD: the last TEV stage's texture is a depth
      * copy. Emulated as a mask (nv2a.c, xgx_ztex_mask): the copy holds 1
      * where the copied depth was in front of the clear depth, and the draw
-     * keeps only those pixels. */
+     * keeps only those pixels. 2: a Z24X8 one (the team card), also drawn
+     * at the depth of the copy's background (nv2a.c build_proj). */
     uint32_t ztex;
 
     /* textures */
@@ -154,11 +155,16 @@ enum {
 /* Canonical vertex, built by the front end from GX attributes. Only the
  * attributes present in the draw are written; offsets are bytes into the
  * vertex, -1 when absent. pos is 3 floats, nrm 3 floats (a GX normal), col
- * 4 bytes RGBA, mtx 1 float (the PNMTXIDX row, 0..27), tc 2 floats. */
+ * 4 bytes RGBA, mtx 1 float (the PNMTXIDX row, 0..27), tc 2 floats.
+ * tc_mtx: bit n when the vertex has TEXnMTXIDX. HSD's skinned env maps load
+ * texture matrix k for position matrix k (pobj.c, HSD_Index2TexMtx), so the
+ * index itself isn't kept: the back end takes texgen n's matrix from the
+ * vertex's PNMTXIDX (GitHub #17). */
 typedef struct {
     uint32_t stride;
     int32_t off_pos, off_nrm, off_col[2], off_mtx;
     int32_t off_tc[8];
+    uint32_t tc_mtx;
 } XgxLayout;
 
 /* primitives (GXPrimitive values) */
@@ -213,6 +219,11 @@ enum {
     XGX_TEX_DXT3,        /* DXT3 blocks (GX CMPR with transparent texels: alpha, then colour) */
 };
 #define XGX_TEX_PALETTE_BYTES 1024
+/* or-ed into xgx_tex_create's format: a non-power-of-two image that must
+ * wrap (GX repeats or mirrors an axis whose size is a power of two even when
+ * the other isn't) is resampled to a power of two, not made a clamp-only
+ * linear texture */
+#define XGX_TEX_WRAPS 0x100u
 /* Returns a handle or 0 when the pool is full (after waiting for the GPU
  * to finish with textures already destroyed, if any are pending). */
 uint32_t xgx_tex_create(uint32_t w, uint32_t h, uint32_t levels, uint32_t fmt, const void* data);

@@ -1,0 +1,31 @@
+# Classic stage 8's team card against Team Mario, a shot every 4 frames
+# while the ten tiles appear (gm_1832.c fn_801857C4: one every 8 frames,
+# the game's own timing) and once they are all up. Lockstep: frame N is
+# the card's tick N in xemu; on the console the first shots may land on
+# the loading frames. Tiles must stay inside the banner (GitHub #14).
+env MELEE_BOOT_SCENE=classic
+env MELEE_CLASSIC_STAGE_OVERRIDE=8
+env MELEE_CLASSIC_TEAM=mario
+env MX_LOCKSTEP=1
+4 SHOT
+8 SHOT
+12 SHOT
+16 SHOT
+20 SHOT
+24 SHOT
+28 SHOT
+32 SHOT
+36 SHOT
+40 SHOT
+44 SHOT
+48 SHOT
+52 SHOT
+56 SHOT
+60 SHOT
+64 SHOT
+68 SHOT
+72 SHOT
+76 SHOT
+80 SHOT
+84 SHOT
+100 SHOT

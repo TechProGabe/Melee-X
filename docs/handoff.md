@@ -6,7 +6,81 @@ notes don't travel between machines, so what they held is here. Read
 
 ## Where it stands
 
-Updated 2026-10-05 (night): **v4.1 candidate = v59** (v58 + `XGX_ZETA_GUARD`),
+2026-10-26: **v4.2 released from v66's code** (LTO+PGO; console RC
+`C:\xemu\hw\stage-v66`). Overnight burn-in on v66: red 13.3 h at 480i
+(median 58 fps), gold 12.8 h at 720p Stadium with items (median 31 fps),
+both clean, free memory flat. Gold's 31 against v63's 40 was the match,
+not the build: console round 15 (the same seeded 720p Stadium match on
+gold) ran v63's code at 30.9 fps and v66's at 30.4, inside run-to-run
+noise; the chrome fix and the strobe blend cost nothing measurable. A/B on
+gold: v4.1 has no 720p picture on HDMI or component (pitch 6656), v66
+does (#18). Red still has round 15's folders (`console_round.py 15
+clean`).
+
+2026-10-24 (console round on v62/v63, both consoles; roadmap "v4.2" has
+the results): **v64 staged, not deployed** (`C:\xemu\hw\stage-v64`, LTO+PGO
+test build, PGO retrained; xemu boot smoke clean). Uncommitted on `dev`
+over 9810216: background card writer (`card.c`, the START hitch, fixed on
+the console in v63), Rainbow Cruise chrome (`dobj.c` `DObjCulledMtx`),
+strobe tracks blended (`fobj.c`; Brinstar's slabs; the scan now takes a
+last-key wait of 0, which v63 missed), Marth/Roy colour animation length
+(`ftcolanim.c`), `MELEE_CLASSIC_TEAM=mario`. Console checks for v64:
+Rainbow Cruise chrome steady while the camera moves, Brinstar's lamp
+slabs steady grey (the lamps' glow flashing 5 frames a second is the
+GameCube's), Marth's Dancing Blade glow, saves still kept. v63 burn-in:
+92 min red, 95 min gold, clean. Open: a rare boot freeze at the audio
+start (v63, roadmap), the flying carpet, Great Bay's hook.
+
+Updated 2026-10-23: **v4.2 work on `dev`** (pushed to origin/dev; no
+release until the user says so; the user approves any GitHub comment).
+The open GitHub issues, one commit each:
+
+| issue | fix | checked |
+|---|---|---|
+| #18 720p scrambled over an internal HDMI mod (1.6, encoder 004b0104) | `xhw_video.c` logs the scanout format after the mode set (`[VIDEO] scanout:`) and puts back the stock kernel's (R5G6B5's `ALT_MODE_SEL`, CR28 depth, pitch) | xemu: values match, nothing changed; needs the HDMI console or the user's HDMI adapter. The user ruled out a 480p fallback |
+| #9, #10 Bonus Records / Data Special rows one flat block | NPOT textures that repeat on their power-of-two axis are resampled, not clamp-only linear (`XGX_TEX_WRAPS`) | xemu `scenarios/special`, `info` |
+| #14 Classic team tiles over the black bars | Z24X8 Z-texture draws at one depth behind the bars (`build_proj`) | xemu `scenarios/team` (Falcon, Kirby, Jigglypuff, 16-bit) |
+| #15 Team C. Falcon card noise | not reproduced (xemu clean): console only | console round: `scenarios/team` (`MELEE_CLASSIC_TEAM=falcon`) at 480 |
+| #16 trophy fall dark | long vertex programs kept whole when they fit (no lights dropped) | xemu `scenarios/toy`, `test_vp_opt.py` |
+| #17 metal fighters in bands, chrome shimmer | per-vertex texture matrices (`VPC_TEXMTX`, `pv_mtx`) | xemu `scenarios/metalfd` (lockstep A/B), `test_vp_opt.py`; Rainbow Cruise/Great Bay chrome on the console |
+| #11 Special Movie audio drift | 32 kHz resampled as the GameCube's 32028.5 Hz; `[MOVIE]` wait counter | console: play the Special Movie to the end, read `[MOVIE]` |
+| #12, #13 trigger grab, C-stick in 1P | settings menu rows "Trigger as Z", "C-stick in 1P modes" (off by default) | xemu `scenarios/cstick1p` (lockstep A/B), `settings` |
+| OC consoles (user request) | boot check of .text against default.xbe (`xhw_code_repair.c`, from Wings64-X/OpenCrossing) | xemu: matches, 69 ms; an upgraded console's `[BOOT] code check` line |
+| #8 black screen from an SSD | nothing to go on: waiting for the reporter's logs | |
+
+Code review (`cd3224f`): the texture cache keys NPOT images that wrap
+apart, code repair checks the file is the running build and repairs any
+number of rewritten rdtsc, the team card depth follows every depth copy.
+
+Burn test in xemu (2026-10-23, two slots, `C:\xemu\burn`): `scenarios/burn`
+(Stadium, 4 CPUs, items, metal Link) for ~33 min of game time at 480:
+free RAM flat ~15 MB, MEM1+ARAM 17.6 MB, no fault, stall or texture drop.
+At real 720p (a slot EEPROM from `eeprom_video.py`, encoder 004b0104 as
+the #18 reporter's): a match and results, the Team C. Falcon card, the
+trophy fall, the credits, metal fighters on Rainbow Cruise all right;
+`[VIDEO] scanout: general control 00101030, CR28 82, pitch 2560` (nothing
+to set back on xemu's stock kernel). Against v4.1 (a worktree build, same
+720p runs): texture use within ~1%, results screen 37 vs 126 KB of pool
+free (17 vs 12 allocations needing an eviction, no drops), main RAM the
+same; the trophy fall 0 approximated draws vs 5. Two open notes from it,
+in `roadmap.md` "v4.2": the 720p overflow-pool out-of-memory path
+(v4.1 the same) and one `[NV2A] GPU stalled` at frame 2 of 3 of ~12
+straight-to-match boots in xemu.
+
+The console round: test build v61 (`-DXHW_TEST_BUILD=1`, BACK shots on)
+staged at `C:\xemu\hw\stage-v61`, map `melee_x.v61.map`, not deployed
+(both consoles were off). Check: 720p over the user's HDMI adapter
+(`[VIDEO] scanout`), the Team C. Falcon card at 480i on gold (#15), the
+Special Movie to the end (`[MOVIE]`), Rainbow Cruise's chrome, Trigger as
+Z and C-stick in 1P in a match, `[BOOT] code check`, no `GPU stalled` after
+a boot. Pull logs before deploying.
+
+Audio check for the next console build: `xhw_audio.c`'s resample step
+changed (32028.8 Hz); nothing else in the AC97 driver, interrupts or
+timing. PGO profile not retrained since (`docs/pgo.md`, a release step).
+In xemu the title with the settings menu up runs at ~1 fps (v4.1 too).
+
+Before that, 2026-10-05 (night): **v4.1 candidate = v59** (v58 + `XGX_ZETA_GUARD`),
 deployed to red's `Melee-X` for a 3 h+ 720p burn-in; gold (off tonight)
 gets it by FTP (`/E/Applications/Melee-X/`; at 480 the guard is off, so it
 runs as v58, whose 480i burn-in was clean). Uncommitted on `dev`, not
@@ -143,6 +217,13 @@ Autopad scripts for `MX_STAGE_EXTRA` (need an `-DXHW_AUTOPAD=1` build).
 | `castle` | Peach's Castle 4-CPU, untimed, a Bullet Bill every 30 frames (`MELEE_DEBUG_CASTLE_BILL`): read the `[CASTLE]` lines |
 | `clear` | Classic stage 1 won at once (`MELEE_INSTANT_WIN`): the Stage Clear screen's sepia freeze frame |
 | `rec` | title > Data > Melee Records > VS. Records (v54's crash), the grid, a cell's popup |
+| `team` | Classic stage 8's team card, `MELEE_CLASSIC_TEAM=falcon` (GitHub #14: tiles over the black bars; #15: Team C. Falcon's noise, console only) |
+| `teammario` | the same card against Team Mario (`MELEE_CLASSIC_TEAM=mario`), lockstep, a shot every 4 frames while the ten tiles appear (one every 8 frames: the game's own timing, `gm_1832.c` `fn_801857C4`) |
+| `metal`, `metalfd` | Rainbow Cruise / Final Destination, metal Zelda and Mario (`MELEE_DEBUG_VS_METAL`; metalfd in lockstep for before/after, GitHub #17) |
+| `strobe` | Brinstar, 4 CPUs, lockstep, ticks 600-603, 630, 660: the lamp pieces at the top left (y ~100) whose materials flip every frame: steady grey with the strobe blend, black/white per frame with `env MX_STROBE_BLEND=0` (renderer.md "Strobe tracks"). The lamps' glow sprites appear at 600 as dots, swell to blobs at 602 and are gone after 604: the game's own once-a-second beacon flash (a branch track shows them five frames of 60, a scale track swells them), the same at 660; at 630 they are hidden |
+| `cstick1p` | Classic stage 1 with its own settings.ini (`cstick_1p = 1`, `trigger_z = left`; build with `-DXSDK_SETTINGS_RESET`), lockstep: C-stick smash, trigger grab (GitHub #12, #13) |
+| `burn` | Pokemon Stadium, four CPUs (Link metal), capsules and crates, a 40-minute match: the v4.2 burn test (memory, faults, transformations) |
+| `special`, `info` | title > Data > Special; Data > Melee Records > Bonus Records (GitHub #9, #10: the rows' panel) |
 | `cont` | Classic stage 8 against Team DK, three self-destructs to the Continue screen, YES (`MELEE_CLASSIC_CHAR=6` for Link) |
 | `cntalk` | Adventure Corneria's Star Fox cutscene from boot (`MELEE_BOOT_SCENE=cutscene`, `MELEE_BOOT_CUTSCENE=5`): the comm window's lines, shots on Slippy and Falco talking |
 | `toy` | Classic's last stage won at once, Game Clear, START: the trophy fall (`gmregtyfall.c`, scene 15 of mode 21; a second START goes on to the credits) |

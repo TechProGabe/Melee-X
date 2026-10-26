@@ -127,7 +127,11 @@ texgen exceed the NV2A's fixed function (skinning indexes matrices with
 by Belady's rule with the last frame as the forecast (the console had been
 reloading ~80 programs a frame). Only rewrites with the same output bits
 are allowed (`test_vp_opt.py`); the attenuation shortcut relies on
-rcp(1.0) being exactly 1. `renderer.md` "Shorter programs".
+rcp(1.0) being exactly 1. `renderer.md` "Shorter programs". Since v4.2 a
+key longer than 136 instructions before optimizing is kept whole when its
+optimized program fits, instead of dropping lights to the old generator's
+approximation (GitHub #16, the trophy room's spot lights): a few longer
+programs a frame, the right picture.
 
 **Fewer, bigger draws** (`gx_vtx.c`): a display list's batches merge into
 one draw (strips stitched with degenerate triangles), immediate-mode
@@ -164,8 +168,13 @@ than the textbook formula). The cost: less fog mid-span on long polygons
 
 **`GXSetZTexture` as a mask.** The depth test at a depth copy writes a 0/1
 mask into alpha (green at 16-bit, only for a copy that clears its rect),
-and the Z-texture draw alpha-tests by it. Exact for Melee's use (the
-Classic team card), not a general depth replace.
+and the Z-texture draw alpha-tests by it. Not a general depth replace: the
+team card's tiles (Z24X8) are drawn at one depth, 0x40000 in front of
+their capture's background (v4.2, GitHub #14). With the quads' own depth
+they drew over the card's black bars, which write depth first (z24
+f4699a) and on the GameCube hide the tiles' copied fighter depths; just in
+front of the background they fell behind the banner's area. Between the
+tiles it is draw order, as before.
 
 **TEV swap tables as dot products.** A swizzled source (GXInit's `RRRA`
 and the like) costs one combiner stage dotting it with a unit vector;
@@ -353,6 +362,101 @@ healthy boot's audio is unchanged. `-DXHW_AUDIO_TEST` leaves the engine
 running across a relaunch or fakes a stuck one, for xemu (`testing.md`
 "Audio at boot").
 
+**The scanout format is checked after the mode set (v4.2, GitHub #18).**
+A 1.6 console with an internal HDMI mod showed a scrambled 720p picture
+(sound fine, shapes just visible) and a good one at 480p; the same in the
+author's Pilotwings 64 port, which shares this video code. HDMI boards
+(XboxHD+, XboxHDMI) and Cerbios replace the kernel's `AvSetDisplayMode`
+with their own GPU and encoder setup, tuned on the retail games' modes;
+Melee-X's 720p is the rare 16-bit (R5G6B5) one, which on the stock kernel
+also sets PRAMDAC general control's `ALT_MODE_SEL` and CR28 depth 2
+(Cxbx-Reloaded's `AvSetDisplayMode`). A 565 picture scanned as 32-bit
+would look like the report. Not reproducible here (no HDMI-modded
+console; xemu has no such board), so `xhw_video.c` reads the format and
+pitch back after every mode set, logs them (`[VIDEO] scanout:`), and puts
+back the stock kernel's values where they differ; on a stock kernel
+nothing changes (xemu: `general control 00100030, CR28 83, pitch 2560` at
+480). If the picture stays scrambled, the reporter's boot.log shows what
+the board set. The user ruled out a 480p fallback for HDMI consoles.
+
+**Texture matrices per vertex (v4.2, GitHub #17).** GX lets a vertex pick
+its texgen's matrix (TEXnMTXIDX); HSD's skinned env maps load texture
+matrix k beside position matrix k and use that. The back end had used
+TEXMTX0 for the whole draw, so metal fighters and skinned chrome shaded in
+bands. Rather than carry the index, the vertex program reads the texture
+matrix with the PNMTXIDX it already has in `a0` (HSD always pairs them),
+from 30 more constant rows (`VPC_TEXMTX`); `test_vp_opt.py` checks the
+programs. `-DXGX_PV_TEXMTX=0` for the old behaviour.
+
+**Strobe tracks (v4.2).** Some stage materials and textures are animated
+to flip between two values on every frame: Brinstar's background pieces
+black/white (a diffuse track 0, 1, 0, 1 ... over its 180-frame loop). The
+decoding and playback are the GameCube's own (checked against the decomp:
+LIN, 181 keys, U8 with 7 fraction bits, rate 1, looping), so the GameCube
+draws them alternating too; its 480i on a CRT shows one value per field,
+which reads as a steady half-tone, and 30 fps videos show one phase. On
+the Xbox (progressive output, a modern TV, or under 60 fps) whole frames
+show, and the pieces flickered (the user's reports, both consoles; v4.1
+alike). v63 flipped them once per rendered frame; that still flickered,
+and the user chose the steady look: `fobj.c` flags a track at load whose
+every key (CON, LIN or KEY) lasts one frame and whose values alternate
+between two, four keys at least, and while a material or texture animates
+(`HSD_MObjAnim`, `HSD_TObjAnim`) such a track shows the mean of its two
+values. A texture image or palette number (TIMG, TCLT) can't be averaged
+and holds the first. Joint tracks are never touched (stage collision
+follows joints; `[SIMH]` stays equal). `-DXSDK_STROBE_BLEND=0` (test
+builds also `env MX_STROBE_BLEND=0`) keeps the per-frame values. Rainbow
+Cruise's chrome was a different bug (off-screen culling, below). Brinstar
+has three such materials (diffuse 0/1 over 181 keys, 0/1 and 0.5/1 over
+121; the last key's wait is 0, which the scan accepts). The glow sprites
+on the lamps are not strobes: their parent joint's branch track shows
+them for five frames of every 60, and over those frames a scale track
+(LIN, S16) swells the billboards from 0.18 to 1.46 and back to 0.71, a
+beacon flash once a second that the GameCube shows too; the strobe
+scenario's ticks 600-603 fall on one.
+
+**Upgraded and overclocked CPUs: the code is checked at boot (v4.2).**
+Cerbios 3.x's `AdvCPUSupport` (on by default with a 1.0/1.4 GHz CPU)
+rewrites `0f 31` (rdtsc) as `cd 2e` (int 2Eh) in the title's code by
+signature; in OpenCrossing-Xbox it hit a pair inside another instruction
+and the game faulted (their GitHub #3). Melee-X's clocks don't depend on
+the CPU (the ACPI timer, the retrace, the AC97), but its .text has ~55
+`0f 31` pairs: the profiler's and the interrupt lock's rdtsc
+(`xhw_perf_now`, thousands of calls a frame, each a trap once rewritten)
+and byte pairs inside other instructions (Sheik's needles, roadmap).
+`xhw_code_repair.c` (OpenCrossing's, as Wings64-X carries it) compares
+.text with `D:\default.xbe` right after the boot's first log lines and
+writes back any bytes that differ (CR0.WP cleared around each store).
+Only when the file is the running build (its header's time stamps and
+size: an A/B build next to another default.xbe is left alone) and the
+differences look like the patcher's: any number of rewritten rdtsc (all
+~55 would be 110 bytes) and at most 16 other bytes; otherwise it only logs.
+`-DXHW_CODE_REPAIR_TEST` (one pair rewritten first): "1 rdtsc rewritten,
+put back", 77 ms in xemu. `[BOOT] code
+check: .text matches` on a stock console; xemu: the same, 69 ms.
+`-DXHW_CODE_REPAIR=0` / `=2` (log only).
+
+**32 kHz is the GameCube's 32028.5 Hz (v4.2, GitHub #11).** The GameCube's
+AI clock is 54 MHz / 1124 / 1.5 (Dolphin). Resampled as 32000 Hz, every
+stream ran 0.09% slow; the Special Movie's soundtrack (a BGM stream) is
+timed against a picture driven by the OS clock, so after its 14 minutes the
+sound was ~0.75 s behind. `fill_48k` now steps 43730/65536 (32028.8 Hz);
+the mixer fills by consumption, so the game mixes at that rate too. Pitch
++0.09%, as on the hardware. `-DXHW_AUDIO_GC_RATE=0` for the old rate.
+
+**Card saves in the background (v4.2).** On the console the game hitched
+as the main menu opened after START on the title (the GameCube pauses on
+the title instead, loading the menu from the disc). Melee saves one 8 KB
+sector per `CARDWrite`, four in a row there, and each was a whole `.gci`
+written, flushed and renamed (plus a volume flush) on the game thread. The
+GameCube's card transfers were asynchronous, so the game never waited on
+them. A writer thread (`card.c`) now saves a copy of the file 100 ms after
+the last write of a burst; create, rename, delete and format wait for it,
+and every exit drains it (`xsdk_card_flush`). Trade: a failed background
+save can't return `CARD_RESULT_IOERROR` (notice and retry at the next
+write), and a power-off in the ~0.1 s window loses the newest write but
+never the previous save. `-DXSDK_CARD_ASYNC=0` restores the old path.
+
 **Writes to a full or unwritable E: (2026-10-04).** A player reported
 settings.ini never made, no BACK screenshots and widescreen doing nothing
 (all files in `E:\UDATA\4d580001\`; widescreen at 480 also needs the
@@ -426,6 +530,10 @@ Math and libraries:
   time in SSE, same operations per lane, bit-identical.
 
 Game fixes:
+- `src/melee/ft/ftcolanim.c`, `.h` (`ftCo_800BFFD0`): the colour
+  animation's duration is `int`, not `bool` (melee-pc ebf45b7ed, v4.2):
+  `_Bool` made every duration 1 frame (Marth's Dancing Blade, Roy's
+  Double-Edge Dance glow).
 - `src/melee/ft/ft_0D31.c` (`ftCo_DeadUpStar_Anim`): the star KO reads
   `x508`..`x51C_radians` by name, not past a local copy of `x504` (the stack).
 - `src/melee/lb/lbfile.c`, `ft/ftdata.c` (two places), `gr/grdisplay.c`:
@@ -498,6 +606,12 @@ Game fixes:
   order). Linked apart, the 120 name indices overwrote the menu's model
   descriptors after it: VS Records crashed in `HSD_JObjLoadJoint` on
   `MenMainConB1_Top.joint` = 0x38393a3b (indices 56-59; v54, console).
+- `src/sysdolphin/baselib/fobj.c` (`HSD_FObjLoadDesc`, `FObjUpdateAnim`),
+  `fobj.h`, `mobj.c` (`HSD_MObjAnim`), `tobj.c` (`HSD_TObjAnim`): strobe
+  tracks show the mean of their two values (v4.2; "Strobe tracks" under
+  Rendering). `TARGET_XBOX`; `xsdk_strobe_blend` (`xbox/src/sdk/vi.c`)
+  turns it on; `test_anim_mtx.py` checks the flagging, the mean, the held
+  image and that off changes nothing.
 
 Speed (same results, bit for bit where a test is named):
 - HSD animation and matrices (`test_anim_mtx.py`, `anim_mtx_ref.c`; a NaN
@@ -520,7 +634,13 @@ Speed (same results, bit for bit where a test is named):
 - `src/sysdolphin/baselib/dobj.c` (`HSD_DObjDisp`): a rigid DObj whose
   cached lists lie outside the view (`gx_dl_culled`, `gx_vtx.c`, rehashed
   after 16 frames) is skipped before material setup (Mute City 1391 -> ~525
-  draws in xemu).
+  draws in xemu). Its matrix loads still happen (`DObjCulledMtx`: the PObjs'
+  `setup_mtx` with the DObj's own textures current): HSD loads a joint's
+  matrices and TEXMTX0 once, at its first rigid PObj, so later reflective
+  DObjs of the joint reflect with whatever TEXMTX0 was loaded last; with
+  the skip, Rainbow Cruise's ship chrome took another object's matrix when
+  part of the ship left the view, and its colours jumped as the camera moved.
+  Culled or not, the picture is now the same.
 - `HSD_PREFETCH` (`xbox_game_prelude.h`), hints for the next nodes in
   `jobj.c`, `dobj.c`, `pobj.c`, `mobj.c`, `tobj.c`, `fobj.c`, `aobj.c` and
   `displayfunc.c`'s list walks.
@@ -579,9 +699,11 @@ Logging, test hooks and Xbox features:
   inert without the variable.
 - `src/melee/gm/gmclassic.c`: melee-pc's Classic test hooks moved into
   `pc_classic_stage_override`, also called by `MELEE_BOOT_SCENE=classic`;
-  `MELEE_CLASSIC_CHAR` picks that shortcut's character (Mario without it).
+  `MELEE_CLASSIC_CHAR` picks that shortcut's character (Mario without it);
+  `MELEE_CLASSIC_TEAM=falcon` (v4.2) the Team C. Falcon stage 8, `mario` Team
+  Mario's.
 - `src/melee/gm/gmvsmode.c` (`onEnterDebugVs`): `MELEE_DEBUG_VS_TIME`,
-  `_CHARS`, `_ITEMS`, `_INVISIBLE`; `ftkirby.c` (`ftKb_Init_OnDeath`):
+  `_CHARS`, `_ITEMS`, `_INVISIBLE`, `_METAL` (v4.2); `ftkirby.c` (`ftKb_Init_OnDeath`):
   `MELEE_DEBUG_KIRBY_HAT`. `TARGET_PC`, inert without the variables.
 - `src/melee/gm/gmboot.c`, `gm_1A3F.c` (`runGameMode`):
   `MELEE_BOOT_SCENE=cutscene` boots the debug cutscene mode at state
@@ -591,6 +713,14 @@ Logging, test hooks and Xbox features:
   logged with free memory (`xsdk_scene_log`).
 - `src/melee/gm/gmvs.c`: `[GAME]` lines at a match's end and at the
   hand-over to the results.
+- `src/melee/lb/lbmthp.c` (`fn_8001F2A4`): `[MOVIE]` once a minute of a
+  movie, the ticks its clock waited for an undecoded frame (v4.2, GitHub
+  #11; the sound doesn't wait). `TARGET_XBOX`.
+- `src/melee/ft/fighter.c` (human input), `src/melee/cm/camera.c`
+  (`Camera_8002B0E0`): with settings.ini `cstick_1p = 1` (the menu's
+  "C-stick in 1P modes", v4.2, GitHub #13) a player's C-stick is read in 1P
+  modes and training too, which zero it on the GameCube, and no longer
+  zooms the 1P camera (`xsdk_cstick_1p`; `TARGET_XBOX`, off by default).
 - `src/melee/ft/fighter.c` (knockback): the first 32 hits a boot not from a
   fighter, or with knockback over 200, are logged (`[WARN] hit:`, `[WARN]
   hit by item kind`).

@@ -767,13 +767,14 @@ void GXSetLineWidth(u8 width, GXTexOffset off) { (void)width; (void)off; }
 void GXSetPointSize(u8 size, GXTexOffset off) { (void)size; (void)off; }
 void GXEnableTexOffsets(GXTexCoordID coord, GXBool line, GXBool point) { (void)coord; (void)line; (void)point; }
 void GXSetZTexture(GXZTexOp op, GXTexFmt fmt, u32 bias) {
-    uint32_t on = op != GX_ZT_DISABLE;
-    (void)fmt;
+    /* 2: the team card's Z24X8 tiles, drawn at their capture's depth (nv2a.c
+     * build_proj); 1: the others (HSD_EraseRect's Z8) */
+    uint32_t on = op == GX_ZT_DISABLE ? 0 : fmt == GX_TF_Z24X8 ? 2 : 1;
     (void)bias;
     if (g_xgx.ztex == on) return;
     FLUSH();
     g_xgx.ztex = on;
-    DIRTY(XGX_DIRTY_TEV | XGX_DIRTY_PIXEL);
+    DIRTY(XGX_DIRTY_TEV | XGX_DIRTY_PIXEL | XGX_DIRTY_PROJ);   /* nv2a.c build_proj: the tiles' depth */
 }
 void GXSetCoPlanar(GXBool on) { (void)on; }
 

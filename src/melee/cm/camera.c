@@ -46,6 +46,16 @@
 #include <sysdolphin/baselib/random.h>
 #include <sysdolphin/baselib/wobj.h>
 
+#ifdef TARGET_XBOX
+/* PORT: settings.ini cstick_1p, the settings menu's "C-stick in 1P modes"
+ * (xbox/src/sdk/settings.c; GitHub #13): the C-stick attacks in 1P modes
+ * and training too, as the Action Replay code does, instead of the camera: no 1P zoom from it */
+int xsdk_cstick_1p(void);
+#define pc_cstick_1p() xsdk_cstick_1p()
+#else
+#define pc_cstick_1p() 0
+#endif
+
 /* 029AAC */ static void Camera_80029AAC(CameraBounds* bounds,
                                          CameraTransformState* transform,
                                          f32 speed);
@@ -1409,7 +1419,8 @@ void Camera_8002B0E0(void)
     f32 var_f2;
 
     if ((gm_IsCurrently1PMode_inline() != 0) && (game_camera.x2C0 > 0.0f)) {
-        var_f1 = HSD_PadGetNmlSubStickY(Player_GetPadPort(0));
+        /* PORT: the C-stick is the fighter's with pc_cstick_1p() (above) */
+        var_f1 = pc_cstick_1p() ? 0.0f : HSD_PadGetNmlSubStickY(Player_GetPadPort(0));
         var_f2 = var_f1;
         if (var_f2 < 0.0f) {
             var_f1 = -var_f1;

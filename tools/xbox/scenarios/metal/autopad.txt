@@ -1,0 +1,12 @@
+# Rainbow Cruise, metal Zelda and Mario (MELEE_DEBUG_VS_METAL; GitHub #17:
+# the metal shading, the ship's chrome flicker).
+env MELEE_BOOT_SCENE=vs
+env MELEE_DEBUG_VS_STAGE=11
+env MELEE_DEBUG_VS_CHARS=18,8
+env MELEE_DEBUG_VS_METAL=3
+env MELEE_DEBUG_VS_TIME=60
+env MELEE_SEED=1
+400 SHOT
+430 SHOT
+460 SHOT
+700 SHOT

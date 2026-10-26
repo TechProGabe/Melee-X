@@ -10,10 +10,12 @@
  *                       ; default: a modchip that drives the LED fights it
  *   [input]
  *   rumble = 100        ; percent
+ *   cstick_1p = 0       ; 1: the C-stick attacks in 1P modes (training...), not the camera
  *   [port1] .. [port4]
  *   stick_deadzone = 20 ; percent, radial
  *   cstick_deadzone = 25
  *   trigger_click = 230 ; 0-255: analog L/R from which the digital click fires
+ *   trigger_z = off     ; left / right: that trigger is Z (grab), no longer L/R
  *   a = A               ; Xbox button = GameCube button (A B X Y Z L R START
  *   b = X               ; UP DOWN LEFT RIGHT, or NONE)
  *   ...
@@ -159,12 +161,17 @@ static int parse(FILE* f, xsdk_settings* st) {
             else if (_stricmp(key, "led_effects") == 0) st->led = atoi(val) != 0, saw |= SAW_LED;
         } else if (_stricmp(section, "input") == 0) {
             if (_stricmp(key, "rumble") == 0) st->rumble = clampi(atoi(val), 0, 100) / 100.0f;
+            else if (_stricmp(key, "cstick_1p") == 0) st->cstick_1p = atoi(val) != 0;
         } else if (_strnicmp(section, "port", 4) == 0 && section[4] >= '1' && section[4] <= '4') {
             xsdk_port_settings* ps = &st->port[section[4] - '1'];
             int i;
             if (_stricmp(key, "stick_deadzone") == 0) ps->stick_deadzone = clampi(atoi(val), 0, 60) / 100.0f;
             else if (_stricmp(key, "cstick_deadzone") == 0) ps->cstick_deadzone = clampi(atoi(val), 0, 60) / 100.0f;
             else if (_stricmp(key, "trigger_click") == 0) ps->trigger_click = (uint8_t)clampi(atoi(val), 1, 255);
+            else if (_stricmp(key, "trigger_z") == 0)
+                ps->trigger_z = _stricmp(val, "left") == 0    ? XSDK_TRIGGER_Z_LEFT
+                                : _stricmp(val, "right") == 0 ? XSDK_TRIGGER_Z_RIGHT
+                                                              : XSDK_TRIGGER_Z_OFF;
             else
                 for (i = 0; i < N_XBOX; i++)
                     if (_stricmp(key, k_xbox[i].name) == 0) ps->bind[i].gc = gc_bits(val);
@@ -178,12 +185,12 @@ int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
     int p, i;
     if (a->video_720p != b->video_720p || a->progressive != b->progressive || a->widescreen != b->widescreen ||
         a->fps != b->fps || a->shots != b->shots || a->led != b->led ||
-        pct(a->rumble) != pct(b->rumble))
+        pct(a->rumble) != pct(b->rumble) || a->cstick_1p != b->cstick_1p)
         return 0;
     for (p = 0; p < 4; p++) {
         const xsdk_port_settings *x = &a->port[p], *y = &b->port[p];
         if (pct(x->stick_deadzone) != pct(y->stick_deadzone) || pct(x->cstick_deadzone) != pct(y->cstick_deadzone) ||
-            x->trigger_click != y->trigger_click)
+            x->trigger_click != y->trigger_click || x->trigger_z != y->trigger_z)
             return 0;
         for (i = 0; i < N_XBOX; i++)
             if (x->bind[i].gc != y->bind[i].gc) return 0;
@@ -191,14 +198,16 @@ int xsdk_settings_equal(const xsdk_settings* a, const xsdk_settings* b) {
     return 1;
 }
 
+int xsdk_cstick_1p(void) { return g_xsdk_settings.cstick_1p; }
+
 static void log_summary(const char* what) {
     const xsdk_settings* st = &g_xsdk_settings;
     const xsdk_port_settings* p1 = &st->port[0];
     xhw_logf("[SETTINGS] %s: 720p %d, progressive %d, widescreen %d, fps %d, screenshots %d, led %d, "
-             "rumble %d, port 1 dead zones %d/%d, trigger click %d",
+             "rumble %d, C-stick in 1P %d, port 1 dead zones %d/%d, trigger click %d, trigger Z %d",
              what, st->video_720p, st->progressive, st->widescreen, st->fps, st->shots, st->led,
-             pct(st->rumble),
-             pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click);
+             pct(st->rumble), st->cstick_1p,
+             pct(p1->stick_deadzone), pct(p1->cstick_deadzone), p1->trigger_click, p1->trigger_z);
 }
 
 static xsdk_settings s_scratch;   /* read-backs and recovery */
@@ -266,11 +275,16 @@ static void write_all(FILE* f, const xsdk_settings* st) {
     fprintf(f, "; led_effects = 1: the front LED flashes on KOs, in the last seconds and on GAME!.\n");
     fprintf(f, "; Leave it 0 on a console with a modchip that drives the LED (Kronos and similar).\n");
     fprintf(f, "[system]\nscreenshots = %d\nled_effects = %d\n\n", st->shots, st->led);
-    fprintf(f, "[input]\nrumble = %d\n\n", pct(st->rumble));
+    fprintf(f, "; cstick_1p = 1: the C-stick does smash attacks in 1P modes and training too (not the camera).\n");
+    fprintf(f, "[input]\nrumble = %d\ncstick_1p = %d\n\n", pct(st->rumble), st->cstick_1p);
+    fprintf(f, "; trigger_z = left or right: that trigger is Z (grab) instead of L/R; off: both are L/R.\n");
     for (port = 0; port < 4; port++) {
         const xsdk_port_settings* ps = &st->port[port];
-        fprintf(f, "[port%d]\nstick_deadzone = %d\ncstick_deadzone = %d\ntrigger_click = %d\n", port + 1,
-                pct(ps->stick_deadzone), pct(ps->cstick_deadzone), ps->trigger_click);
+        fprintf(f, "[port%d]\nstick_deadzone = %d\ncstick_deadzone = %d\ntrigger_click = %d\ntrigger_z = %s\n",
+                port + 1, pct(ps->stick_deadzone), pct(ps->cstick_deadzone), ps->trigger_click,
+                ps->trigger_z == XSDK_TRIGGER_Z_LEFT    ? "left"
+                : ps->trigger_z == XSDK_TRIGGER_Z_RIGHT ? "right"
+                                                        : "off");
         for (i = 0; i < N_XBOX; i++) fprintf(f, "%s = %s\n", k_xbox[i].name, gc_name(ps->bind[i].gc));
         fprintf(f, "\n");
     }

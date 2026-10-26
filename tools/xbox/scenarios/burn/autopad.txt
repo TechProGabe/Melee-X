@@ -1,0 +1,21 @@
+# Burn test (v4.2): Pokemon Stadium, four CPUs (Link metal), capsules and
+# crates, a 40-minute match: transformations, EFB copies, the metal path,
+# memory over time. Read [BEAT]/[MEMB]/[NV2A] and any fault; shots every
+# 9000 frames.
+env MELEE_BOOT_SCENE=vs
+env MELEE_DEBUG_VS_STAGE=3
+env MELEE_DEBUG_VS=cpu4
+env MELEE_DEBUG_VS_METAL=1
+env MELEE_DEBUG_VS_ITEMS=3
+env MELEE_DEBUG_VS_TIME=2400
+env MELEE_SEED=1
+2000 SHOT
+11000 SHOT
+20000 SHOT
+29000 SHOT
+38000 SHOT
+47000 SHOT
+56000 SHOT
+65000 SHOT
+74000 SHOT
+83000 SHOT
