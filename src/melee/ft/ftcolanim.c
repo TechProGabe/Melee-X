@@ -110,7 +110,10 @@ void ftCo_800BFFAC(Fighter* fp)
     lb_80014498(&fp->x488);
 }
 
-bool ftCo_800BFFD0(Fighter* fp, FtColAnim arg1, bool arg2)
+/* PORT: arg2 is a duration in frames (melee-pc ebf45b7ed): as bool, C's
+ * _Bool made every value above 1 into 1 and the overlay ended the next
+ * frame (Marth's Dancing Blade, Roy's Double-Edge Dance lost their glow) */
+bool ftCo_800BFFD0(Fighter* fp, FtColAnim arg1, int arg2)
 {
     if (arg1 >= FtColAnim_SpycloakStart) {
         if (lb_800144C8(&fp->x508, Fighter_804D6538,
