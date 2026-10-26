@@ -219,6 +219,77 @@ static s32 parseWait(u8** adp)
     return wait;
 }
 
+#ifdef TARGET_XBOX
+/* PORT: strobe tracks. Some stage materials and textures are animated to
+ * flip between two values on every frame (Brinstar's background pieces
+ * black/white): the GameCube draws them so too, and its 480i output on a CRT
+ * shows one value per field, which reads as a steady half-tone. Progressive
+ * output, a modern TV or a frame rate under 60 shows whole frames, and the
+ * piece flickers. A track whose every key (CON, LIN or KEY) lasts one frame
+ * and whose values alternate between two different ones, four keys at
+ * least, is flagged here once at load (the last key's wait, if any, may be
+ * anything: Brinstar's is 0); FObjStrobe shows the mean of the two while
+ * HSD_FObjStrobeKind is set (fobj.h). */
+u32 HSD_FObjStrobeKind;
+#define STROBE_T_TIMG 1    /* HSD_A_T_TIMG, tobj.h */
+#define STROBE_T_TCLT 10   /* HSD_A_T_TCLT */
+
+static void FObjStrobeScan(HSD_FObj* fobj)
+{
+    u8* ad = fobj->ad_head;
+    u8* end = ad + fobj->length;
+    f32 v[2] = { 0.0F, 0.0F };
+    u32 n = 0;
+
+    fobj->strobe = 0;
+    if (ad == NULL) {
+        return;
+    }
+    while (ad < end) {
+        u8 op = parseOpCode(&ad);
+        u32 nb_pack = parsePackInfo(&ad);
+
+        if (op != HSD_A_OP_CON && op != HSD_A_OP_LIN && op != HSD_A_OP_KEY) {
+            return;
+        }
+        for (; nb_pack != 0; nb_pack--) {
+            f32 x;
+
+            if (ad >= end) {
+                return;
+            }
+            x = parseFloat(&ad, fobj->frac_value);
+            if (ad < end && parseWait(&ad) != 1 && ad < end) {
+                return;   /* the last key's wait may be anything (Brinstar's: 0) */
+            }
+            if (n < 2) {
+                v[n] = x;
+            } else if (x != v[n & 1]) {
+                return;
+            }
+            n++;
+        }
+    }
+    if (n >= 4 && v[0] != v[1]) {
+        fobj->strobe = 1;
+        fobj->strobe_a = v[0];
+        fobj->strobe_b = v[1];
+    }
+}
+
+/* The value a strobe track shows: the mean of its two, every update. A
+ * texture's image or palette index can't be averaged: the first is held. */
+static f32 FObjStrobe(HSD_FObj* fobj)
+{
+    if (HSD_FObjStrobeKind == HSD_FOBJ_STROBE_TOBJ &&
+        (fobj->obj_type == STROBE_T_TIMG || fobj->obj_type == STROBE_T_TCLT))
+    {
+        return fobj->strobe_a;
+    }
+    return (fobj->strobe_a + fobj->strobe_b) * 0.5F;
+}
+#endif
+
 static u32 FObjLoadWait(HSD_FObj* fobj)
 {
     u32 st = HSD_FObjGetState(fobj);
@@ -429,6 +500,12 @@ void FObjUpdateAnim(HSD_FObj* fobj, void* obj, HSD_ObjUpdateFunc obj_update)
     default:
         break;
     }
+#ifdef TARGET_XBOX
+    /* PORT: a strobe track shows its mean (FObjStrobe above) */
+    if (HSD_FObjStrobeKind != 0 && fobj->strobe) {
+        fobjdata.fv = FObjStrobe(fobj);
+    }
+#endif
     obj_update(obj, fobj->obj_type, &fobjdata);
 }
 
@@ -523,6 +600,9 @@ HSD_FObj* HSD_FObjLoadDesc(HSD_FObjDesc* desc)
         fobj->ad_head = DP(u8, desc->ad);
         fobj->length = desc->length;
         fobj->flags = 0;
+#ifdef TARGET_XBOX
+        FObjStrobeScan(fobj);   /* PORT: strobe tracks (above) */
+#endif
         return fobj;
     }
     return NULL;

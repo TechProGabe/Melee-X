@@ -48,7 +48,25 @@ struct HSD_FObj {
     f32 p1;
     f32 d0;
     f32 d1;
+#ifdef TARGET_XBOX
+    /* PORT: a strobe track (fobj.c FObjStrobeScan; strobe 0: not one) and
+     * its two values */
+    f32 strobe_a, strobe_b;
+    u8 strobe;
+#endif
 };
+
+#ifdef TARGET_XBOX
+/* PORT: strobe tracks (fobj.c FObjStrobeScan: every key one frame long,
+ * alternating between two values) show the mean of the two while
+ * HSD_FObjStrobeKind is set: by the material and texture animators
+ * (HSD_MObjAnim, HSD_TObjAnim) from xsdk_strobe_blend (xbox/src/sdk/vi.c),
+ * never for joints. */
+#define HSD_FOBJ_STROBE_MOBJ 1
+#define HSD_FOBJ_STROBE_TOBJ 2
+extern u32 HSD_FObjStrobeKind;
+int xsdk_strobe_blend(void);
+#endif
 
 typedef struct DISC_STRUCT _HSD_FObjDesc {
     DISC_PTR(struct _HSD_FObjDesc) next;

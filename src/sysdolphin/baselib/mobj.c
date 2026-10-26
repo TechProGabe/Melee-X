@@ -150,7 +150,14 @@ void HSD_MObjAnim(HSD_MObj* mobj)
     HSD_PREFETCH(mobj->tobj);   /* PORT: xbox_game_prelude.h */
     /* PORT: no calls for what has nothing to animate (aobj.h) */
     if (HSD_AObjIsPlaying(mobj->aobj)) {
+#ifdef TARGET_XBOX
+        /* PORT: strobe tracks show their mean (fobj.h) */
+        HSD_FObjStrobeKind = xsdk_strobe_blend() ? HSD_FOBJ_STROBE_MOBJ : 0;
+#endif
         HSD_AObjInterpretAnim(mobj->aobj, mobj, MObjUpdateFunc);
+#ifdef TARGET_XBOX
+        HSD_FObjStrobeKind = 0;
+#endif
     }
     if (mobj->tobj != NULL) {
         HSD_TObjAnimAll(mobj->tobj);
